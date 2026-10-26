@@ -11,7 +11,8 @@ from flask import Flask, render_template, jsonify
 app = Flask(__name__)
 
 API_URL = "https://wtxmd52.tele68.com/v1/txmd5/sessions"
-DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "predictions_db.json")
+# Sử dụng thư mục /tmp/ để tránh lỗi phân quyền ghi file trên Render
+DB_FILE = "/tmp/predictions_db.json" 
 LOCK = threading.Lock()
 
 # ============ DATABASE ============
@@ -29,13 +30,12 @@ def save_db(db):
         with open(DB_FILE, 'w', encoding='utf-8') as f:
             json.dump(db, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"Save DB error: {e}")
+        print(f"Lưu DB thất bại (không sao, bot vẫn chạy): {e}")
 
 PREDICTIONS_DB = load_db()
 
 # ============ FETCH API ============
 def generate_fallback(base=7114893):
-    """Fallback động theo thời gian thực - luôn trông như đang chạy"""
     elapsed = int(time.time() / 60)
     current = base + elapsed
     random.seed(elapsed)
@@ -66,10 +66,6 @@ def fetch_sessions():
 
 # ============ THUẬT TOÁN DỰ ĐOÁN ============
 def analyze_pattern(results):
-    """
-    results: list kết quả MỚI -> CŨ (index 0 là mới nhất)
-    Trả về: (prediction, confidence, reason)
-    """
     if not results:
         return "Tài", 72.0, "Khởi đầu"
 
@@ -110,14 +106,7 @@ def analyze_pattern(results):
             scores[p[0]] += 1.8
             reasons.append("Cầu 2-2")
 
-    # 4) CẦU 3-3
-    if len(results) >= 6:
-        p = results[:6]
-        if p[0] == p[1] == p[2] and p[3] == p[4] == p[5] and p[0] != p[3]:
-            scores[p[0]] += 2.0
-            reasons.append("Cầu 3-3")
-
-    # 5) MARKOV TRANSITION
+    # 4) MARKOV TRANSITION
     if len(results) >= 4:
         trans = {"Tài": 0, "Xỉu": 0}
         for i in range(len(results) - 1):
@@ -128,29 +117,6 @@ def analyze_pattern(results):
             best = max(trans, key=trans.get)
             scores[best] += (trans[best] / total) * 1.5
             reasons.append(f"Markov->{best}")
-
-    # 6) CÂN BẰNG TẦN SUẤT
-    recent = results[:10]
-    if len(recent) >= 6:
-        t = recent.count("Tài")
-        x = recent.count("Xỉu")
-        if t >= x * 1.6:
-            scores["Xỉu"] += 0.9
-            reasons.append(f"Cân bằng T{t}/X{x}")
-        elif x >= t * 1.6:
-            scores["Tài"] += 0.9
-            reasons.append(f"Cân bằng T{t}/X{x}")
-
-    # 7) PATTERN MATCHING
-    if len(results) >= 8:
-        seq_len = 3
-        current_seq = tuple(results[:seq_len])
-        for i in range(1, len(results) - seq_len):
-            if tuple(results[i:i+seq_len]) == current_seq and i >= 1:
-                next_val = results[i-1]
-                scores[next_val] += 1.3
-                reasons.append("Khớp mẫu")
-                break
 
     # QUYẾT ĐỊNH
     if scores["Tài"] > scores["Xỉu"]:
@@ -172,16 +138,14 @@ def analyze_pattern(results):
 
     return pred, conf, " + ".join(reasons) if reasons else "Trung tính"
 
-# ============ XÚC XẮC DETERMINISTIC ============
+# ============ XÚC XẮC ============
 def get_dice(sid, actual_result=None):
-    """Tạo 3 xúc xắc cố định theo session_id (không đổi mỗi lần load)"""
     h = hashlib.md5(str(sid).encode()).hexdigest()
     n1 = int(h[0], 16) % 6 + 1
     n2 = int(h[1], 16) % 6 + 1
     n3 = int(h[2], 16) % 6 + 1
     total = n1 + n2 + n3
 
-    # Điều chỉnh để khớp kết quả
     if actual_result == "Tài" and total < 11:
         diff = 11 - total
         for i, n in enumerate([n1, n2, n3]):
@@ -206,14 +170,16 @@ def get_dice(sid, actual_result=None):
 
 # ============ XỬ LÝ CHÍNH ============
 def process_sessions(rows):
-    """
-    Logic hoàn chỉnh:
-    1. Xác định phiên running và phiên đã kết thúc
-    2. Cập nhật đúng/sai cho phiên đã kết thúc (tự nhận diện)
-    3. Tạo prediction cho phiên đang chạy (nếu chưa có)
-    """
     with LOCK:
-        valid = [r for r in rows if isinstance(r, dict) and 'phien' in r]
+        valid = []
+        for r in rows:
+            if isinstance(r, dict) and 'phien' in r:
+                try:
+                    r['phien'] = int(r['phien']) # Đảm bảo là số
+                    valid.append(r)
+                except:
+                    pass
+                    
         valid.sort(key=lambda x: x['phien'], reverse=True)
         if not valid:
             return []
@@ -227,7 +193,7 @@ def process_sessions(rows):
             elif running_session is None:
                 running_session = r
 
-        # BƯỚC 1: Cập nhật đúng/sai cho các phiên đã kết thúc
+        # 1. Cập nhật đúng sai
         for s in past_sessions:
             sid = str(s['phien'])
             actual = s['result']
@@ -236,100 +202,56 @@ def process_sessions(rows):
                 if rec.get('actual') != actual:
                     rec['actual'] = actual
                     rec['is_correct'] = (rec['prediction'] == actual)
-                    rec['verified_at'] = datetime.now().isoformat()
 
-        # BƯỚC 2: Khởi tạo prediction cho các phiên cũ (lần đầu chạy bot)
-        # -> Giúp giao diện có dữ liệu ngay từ lần đầu vào
+        # 2. Khởi tạo dự đoán cho phiên cũ (nếu bot mới chạy)
         past_sorted = sorted(past_sessions, key=lambda x: x['phien'])
         for idx, s in enumerate(past_sorted):
             sid = str(s['phien'])
             if sid not in PREDICTIONS_DB:
                 history = [r['result'] for r in past_sorted[:idx]]
-                if history:
-                    pred, conf, reason = analyze_pattern(history[::-1])
-                else:
-                    pred, conf, reason = "Tài", 72.0, "Khởi đầu"
+                pred, conf, reason = analyze_pattern(history[::-1]) if history else ("Tài", 72.0, "Khởi đầu")
                 PREDICTIONS_DB[sid] = {
-                    'session_id': sid,
-                    'prediction': pred,
-                    'confidence': conf,
-                    'reason': reason,
-                    'created_at': datetime.now().isoformat(),
-                    'actual': s['result'],
-                    'is_correct': (pred == s['result'])
+                    'session_id': sid, 'prediction': pred, 'confidence': conf,
+                    'reason': reason, 'actual': s['result'], 'is_correct': (pred == s['result'])
                 }
 
-        # BƯỚC 3: Tạo prediction cho phiên đang chạy (+0 phiên hiện tại)
+        # 3. Dự đoán phiên đang chạy
         if running_session is not None:
             sid = str(running_session['phien'])
             if sid not in PREDICTIONS_DB:
                 history = [s['result'] for s in past_sessions]
                 pred, conf, reason = analyze_pattern(history)
                 PREDICTIONS_DB[sid] = {
-                    'session_id': sid,
-                    'prediction': pred,
-                    'confidence': conf,
-                    'reason': reason,
-                    'created_at': datetime.now().isoformat(),
-                    'actual': None,
-                    'is_correct': None
+                    'session_id': sid, 'prediction': pred, 'confidence': conf,
+                    'reason': reason, 'actual': None, 'is_correct': None
                 }
 
-        # BƯỚC 4: Nếu không có phiên running (hiếm), dự đoán +1 phiên tương lai
-        if running_session is None and past_sessions:
-            next_sid = str(past_sessions[0]['phien'] + 1)
-            if next_sid not in PREDICTIONS_DB:
-                history = [s['result'] for s in past_sessions]
-                pred, conf, reason = analyze_pattern(history)
-                PREDICTIONS_DB[next_sid] = {
-                    'session_id': next_sid,
-                    'prediction': pred,
-                    'confidence': conf,
-                    'reason': reason,
-                    'created_at': datetime.now().isoformat(),
-                    'actual': None,
-                    'is_correct': None
-                }
-
-        # BƯỚC 5: Build response
+        # 4. Build kết quả trả về
         out = []
-
-        # Phiên đang chạy
         if running_session is not None:
             sid = str(running_session['phien'])
             rec = PREDICTIONS_DB.get(sid, {})
             n1, n2, n3, total = get_dice(sid)
             bet = 2000 if rec.get('confidence', 75) < 88 else 4000
             out.append({
-                'phien': int(sid),
-                'is_next': True,
+                'phien': int(sid), 'is_next': True,
                 'prediction': rec.get('prediction', 'Tài'),
                 'confidence': rec.get('confidence', 75.0),
-                'reason': rec.get('reason', ''),
-                'bet_amount': bet,
-                'dice': f"{n1} + {n2} + {n3}",
-                'total': total,
-                'result': 'Chờ...',
-                'is_correct': None
+                'bet_amount': bet, 'dice': f"{n1} + {n2} + {n3}", 'total': total,
+                'result': 'Chờ...', 'is_correct': None
             })
 
-        # Các phiên quá khứ
         for s in past_sessions[:15]:
             sid = str(s['phien'])
             rec = PREDICTIONS_DB.get(sid, {})
             n1, n2, n3, total = get_dice(sid, s['result'])
             bet = 2000 if rec.get('confidence', 75) < 88 else 4000
             out.append({
-                'phien': int(sid),
-                'is_next': False,
+                'phien': int(sid), 'is_next': False,
                 'prediction': rec.get('prediction', '---'),
                 'confidence': rec.get('confidence', 0),
-                'reason': rec.get('reason', ''),
-                'bet_amount': bet,
-                'dice': f"{n1} + {n2} + {n3}",
-                'total': total,
-                'result': s['result'],
-                'is_correct': rec.get('is_correct')
+                'bet_amount': bet, 'dice': f"{n1} + {n2} + {n3}", 'total': total,
+                'result': s['result'], 'is_correct': rec.get('is_correct')
             })
 
         save_db(PREDICTIONS_DB)
@@ -338,25 +260,32 @@ def process_sessions(rows):
 # ============ ROUTES ============
 @app.route('/')
 def index():
-    return render_template('index.html')
+    try:
+        return render_template('index.html')
+    except Exception as e:
+        return f"<h1>Lỗi giao diện: {e}</h1><p>Vui lòng kiểm tra lại thư mục templates/index.html</p>"
 
 @app.route('/api/history')
 def history():
-    rows, source = fetch_sessions()
-    processed = process_sessions(rows)
+    try:
+        rows, source = fetch_sessions()
+        processed = process_sessions(rows)
 
-    # Stats
-    with LOCK:
-        total = sum(1 for v in PREDICTIONS_DB.values() if v.get('actual'))
-        correct = sum(1 for v in PREDICTIONS_DB.values() if v.get('is_correct'))
-        winrate = round(correct / total * 100, 1) if total > 0 else 0
+        with LOCK:
+            total = sum(1 for v in PREDICTIONS_DB.values() if v.get('actual'))
+            correct = sum(1 for v in PREDICTIONS_DB.values() if v.get('is_correct'))
+            winrate = round(correct / total * 100, 1) if total > 0 else 0
 
-    return jsonify({
-        'rows': processed,
-        'stats': {'total': total, 'correct': correct, 'winrate': winrate},
-        'source': source,
-        'updated_at': datetime.now().strftime('%H:%M:%S')
-    })
+        return jsonify({
+            'rows': processed,
+            'stats': {'total': total, 'correct': correct, 'winrate': winrate},
+            'source': source,
+            'updated_at': datetime.now().strftime('%H:%M:%S')
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
+# BẮT BUỘC ĐỂ CHẠY TRÊN RENDER
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
