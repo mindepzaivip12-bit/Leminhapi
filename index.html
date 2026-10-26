@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SICSUN BOT</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="logo">
+      <span class="pulse"></span>
+      <h2>SICSUN BOT</h2>
+    </div>
+    <div class="stats" id="stats">
+      <span id="winrate">--%</span>
+      <small id="total">0 phiên</small>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <span id="source-badge" class="badge">● LIVE</span>
+    <span id="updated">Đang tải...</span>
+  </div>
+
+  <div class="session-list" id="session-list">
+    <div class="loading">Đang tải dữ liệu phiên...</div>
+  </div>
+</div>
+
+<script>
+async function fetchData() {
+  try {
+    const r = await fetch('/api/history', { cache: 'no-store' });
+    const data = await r.json();
+    render(data);
+  } catch (e) {
+    console.error(e);
+    document.getElementById('updated').textContent = 'Mất kết nối';
+  }
+}
+
+function render(data) {
+  const list = document.getElementById('session-list');
+  const rows = data.rows || [];
+  if (!rows.length) {
+    list.innerHTML = '<div class="loading">Không có dữ liệu</div>';
+    return;
+  }
+
+  // Stats
+  const s = data.stats || {};
+  document.getElementById('winrate').textContent = (s.winrate || 0) + '%';
+  document.getElementById('total').textContent = (s.total || 0) + ' phiên';
+  document.getElementById('winrate').style.color =
+    s.winrate >= 70 ? '#3fb950' : s.winrate >= 50 ? '#d29922' : '#f85149';
+
+  // Source badge
+  const badge = document.getElementById('source-badge');
+  if (data.source === 'live') {
+    badge.textContent = '● LIVE';
+    badge.className = 'badge live';
+  } else {
+    badge.textContent = '● DEMO';
+    badge.className = 'badge demo';
+  }
+  document.getElementById('updated').textContent = 'Cập nhật: ' + data.updated_at;
+
+  list.innerHTML = '';
+  rows.forEach(row => {
+    const isTai = row.prediction === 'Tài';
+    const betClass = isTai ? 'tai' : 'xiu';
+    const textClass = isTai ? 'text-tai' : 'text-xiu';
+
+    let status = '';
+    if (row.is_next) {
+      status = `<div class="stt waiting"><span class="spin"></span> Chờ KQ</div>`;
+    } else if (row.is_correct === true) {
+      status = `<div class="stt ok">Đúng cửa ✅</div>`;
+    } else if (row.is_correct === false) {
+      status = `<div class="stt err">Sai cửa ❌</div>`;
+    } else {
+      status = `<div class="stt na">—</div>`;
+    }
+
+    const card = document.createElement('div');
+    card.className = 'card' + (row.is_next ? ' next' : '');
+    card.innerHTML = `
+      <div class="col left">
+        <div class="sid">#${row.phien}</div>
+        <div class="botline">
+          <span class="bot-label">Bot:</span>
+          <span class="bet ${betClass}">CƯỢC ${row.prediction.toUpperCase()}</span>
+          <span class="amt">(${row.bet_amount.toLocaleString('vi-VN')}đ)</span>
+        </div>
+        <div class="conf">(Tin cậy: ${row.confidence}%)</div>
+      </div>
+      <div class="col mid">
+        <div class="pred ${textClass}">${row.prediction.toUpperCase()}</div>
+        <div class="dice">${row.dice}</div>
+        <div class="sum">(${row.total})</div>
+      </div>
+      <div class="col right">${status}</div>
+    `;
+    list.appendChild(card);
+  });
+}
+
+fetchData();
+setInterval(fetchData, 5000);
+</script>
+</body>
+</html>
