@@ -7,7 +7,6 @@ from flask import Flask, render_template_string, jsonify
 
 app = Flask(__name__)
 
-# Đã thay bằng API mới của bạn
 API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=ab36aa88e2c9868ae0e8bc61adbd18dc"
 
 # ============ GIAO DIỆN HTML/CSS ============
@@ -17,7 +16,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SICSUN BOT</title>
+<title>SICSUN BOT - AI PREDICTOR</title>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Montserrat', sans-serif; }
@@ -50,7 +49,8 @@ HTML_TEMPLATE = """
     .bet.tai { background: #1f6feb; color: #fff; }
     .bet.xiu { background: #d0356c; color: #fff; }
     .amt { color: #8b949e; font-size: 11px; }
-    .conf { color: #6e7681; font-size: 11px; font-style: italic; }
+    .conf { color: #6e7681; font-size: 11px; font-style: italic; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .pattern { background: rgba(88,166,255,0.1); color: #58a6ff; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; border: 1px solid rgba(88,166,255,0.2); }
     .pred { font-size: 17px; font-weight: 800; letter-spacing: 0.5px; margin-bottom: 3px; }
     .text-tai { color: #58a6ff; }
     .text-xiu { color: #f85149; }
@@ -63,7 +63,7 @@ HTML_TEMPLATE = """
     .stt.na { color: #6e7681; }
     .spin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid #d29922; border-top-color: transparent; animation: spin 0.8s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    @media (max-width: 400px) { .pred { font-size: 15px; } .sid { font-size: 14px; } .dice { font-size: 12px; } }
+    @media (max-width: 400px) { .pred { font-size: 15px; } .sid { font-size: 14px; } .dice { font-size: 12px; } .conf { flex-direction: column; align-items: flex-start; gap: 2px; } }
     .loading { text-align: center; color: #8b949e; padding: 40px; }
 </style>
 </head>
@@ -72,7 +72,7 @@ HTML_TEMPLATE = """
   <div class="header">
     <div class="logo">
       <span class="pulse"></span>
-      <h2>SICSUN BOT</h2>
+      <h2>SICSUN AI</h2>
     </div>
     <div class="stats" id="stats">
       <span id="winrate">--%</span>
@@ -86,7 +86,7 @@ HTML_TEMPLATE = """
   </div>
 
   <div class="session-list" id="session-list">
-    <div class="loading">Đang tải dữ liệu phiên...</div>
+    <div class="loading">Đang phân tích cầu...</div>
   </div>
 </div>
 
@@ -151,7 +151,10 @@ function render(data) {
           <span class="bet ${betClass}">CƯỢC ${row.prediction.toUpperCase()}</span>
           <span class="amt">(${row.bet_amount.toLocaleString('vi-VN')}đ)</span>
         </div>
-        <div class="conf">(Tin cậy: ${row.confidence}%)</div>
+        <div class="conf">
+          <span>(Tin cậy: ${row.confidence}%)</span>
+          ${row.pattern ? `<span class="pattern">${row.pattern}</span>` : ''}
+        </div>
       </div>
       <div class="col mid">
         <div class="pred ${textClass}">${row.prediction.toUpperCase()}</div>
@@ -172,10 +175,7 @@ setInterval(fetchData, 5000);
 """
 # =======================================================
 
-# Bỏ hoàn toàn phần load_db và save_db vì đã chuyển sang tính trực tiếp
-
 def generate_fallback(base=7116040):
-    """Tạo dữ liệu giả nếu API sập"""
     elapsed = int(time.time() / 60)
     current = base + elapsed
     random.seed(elapsed)
@@ -193,12 +193,8 @@ def generate_fallback(base=7116040):
     return rows
 
 def fetch_sessions():
-    """Gọi API mới và chuyển đổi dữ liệu sang chuẩn của Bot"""
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            'Accept': 'application/json'
-        }
+        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
         r = requests.get(API_URL, timeout=8, headers=headers)
         if r.status_code == 200:
             data = r.json()
@@ -206,12 +202,10 @@ def fetch_sessions():
                 raw_list = data['list']
                 rows = []
                 for item in raw_list:
-                    # API trả về TAI/XIU viết hoa
                     res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
                     dices = item.get('dices', [0, 0, 0])
                     dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
                     total = item.get('point', sum(dices))
-                    
                     rows.append({
                         'phien': int(item['id']),
                         'result': res,
@@ -221,69 +215,84 @@ def fetch_sessions():
                 return rows, 'live'
     except Exception as e:
         print(f"[API ERROR] {e}")
-    
     return generate_fallback(), 'fallback'
 
+# =======================================================
+# THUẬT TOÁN DỰ ĐOÁN NÂNG CAO (BẺ BỆT - ĐẢO CẦU)
+# =======================================================
 def analyze_pattern(results):
-    """Thuật toán dự đoán (results là list mới nhất -> cũ nhất)"""
-    if not results:
-        return "Tài", 72.0
-    
-    scores = {"Tài": 0.0, "Xỉu": 0.0}
-    
-    # 1) Bám/Bẻ cầu bệt
-    streak = 1
+    """
+    results: list kết quả (Mới nhất -> Cũ nhất) vd: ['Tài', 'Tài', 'Xỉu', ...]
+    Trả về: (prediction, confidence, pattern_name)
+    """
+    if not results or len(results) < 3:
+        return "Tài", 72.0, "Khởi tạo"
+
     last = results[0]
-    for r in results[1:]:
-        if r == last: streak += 1
-        else: break
-        
-    if 3 <= streak <= 6:
-        scores[last] += 2.5
-    elif streak >= 7:
-        other = "Xỉu" if last == "Tài" else "Tài"
-        scores[other] += 2.2
-    elif streak == 2:
-        scores[last] += 1.0
-
-    # 2) Cầu 1-1
-    if len(results) >= 4:
-        is_1_1 = all(results[i] != results[i+1] for i in range(min(6, len(results)-1)))
-        if is_1_1:
-            other = "Xỉu" if results[0] == "Tài" else "Tài"
-            scores[other] += 2.0
-
-    # 3) Cầu 2-2
-    if len(results) >= 4:
-        p = results[:4]
-        if p[0] == p[1] and p[2] == p[3] and p[0] != p[2]:
-            scores[p[0]] += 1.8
-
-    # 4) Markov
-    if len(results) >= 4:
-        trans = {"Tài": 0, "Xỉu": 0}
-        for i in range(len(results) - 1):
-            if results[i] == last:
-                trans[results[i+1]] += 1
-        total = trans["Tài"] + trans["Xỉu"]
-        if total > 0:
-            best = max(trans, key=trans.get)
-            scores[best] += (trans[best] / total) * 1.5
-
-    # Quyết định
-    if scores["Tài"] > scores["Xỉu"]:
-        pred, margin = "Tài", scores["Tài"] - scores["Xỉu"]
-    elif scores["Xỉu"] > scores["Tài"]:
-        pred, margin = "Xỉu", scores["Xỉu"] - scores["Tài"]
-    else:
-        pred = "Xỉu" if results[0] == "Tài" else "Tài"
-        margin = 0.1
-
-    total_score = scores["Tài"] + scores["Xỉu"]
-    conf = 70.0 + (margin / total_score) * 30.0 if total_score > 0 else 75.0
-    conf = min(96.0, max(72.0, round(conf, 1)))
+    opposite = "Xỉu" if last == "Tài" else "Tài"
     
-    return pred, conf
+    # 1. NHẬN DIỆN CẦU BỆT (STREAK)
+    streak = 1
+    for r in results[1:]:
+        if r == last:
+            streak += 1
+        else:
+            break
+
+    # Thuật toán Bẻ Bệt (Streak >= 5 là bắt đầu bẻ mạnh)
+    if streak >= 6:
+        return opposite, 95.5, f"Bẻ bệt {streak} (Cực mạnh)"
+    elif streak == 5:
+        return opposite, 88.0, f"Bẻ bệt {streak}"
+    elif streak == 4:
+        return opposite, 80.0, f"Bẻ bệt {streak}"
+    elif streak == 3:
+        # Bệt 3 thì bám thêm 1 nhịp hoặc bẻ tùy biên độ, ưu tiên bám
+        return last, 78.0, f"Bám bệt {streak}"
+
+    # 2. NHẬN DIỆN CẦU ĐẢO (1-1, 2-2, 3-3)
+    if len(results) >= 6:
+        # Cầu 1-1 (T-X-T-X-T-X)
+        if results[0] != results[1] and results[1] != results[2] and results[2] != results[3]:
+            if results[3] != results[4] and results[4] != results[5]:
+                return opposite, 92.0, "Đảo cầu 1-1"
+
+        # Cầu 2-2 (T-T-X-X-T-T)
+        if results[0] == results[1] and results[2] == results[3] and results[4] == results[5]:
+            if results[1] != results[2] and results[3] != results[4]:
+                return opposite, 90.0, "Đảo cầu 2-2"
+
+    if len(results) >= 9:
+        # Cầu 3-3 (T-T-T-X-X-X-T-T-T)
+        if results[0] == results[1] == results[2] and results[3] == results[4] == results[5] and results[6] == results[7] == results[8]:
+            if results[2] != results[3] and results[5] != results[6]:
+                return opposite, 94.0, "Đảo cầu 3-3"
+
+    # 3. CẦU 1-2-1 hoặc 2-1-2 (Cầu hỗn hợp)
+    if len(results) >= 4:
+        # 1-2-1 (T-X-X-T) -> dự đoán X
+        if results[0] == results[3] and results[1] == results[2] and results[0] != results[1]:
+            return results[1], 85.0, "Cầu 1-2-1"
+        # 2-1-2 (T-T-X-T-T) -> dự đoán X
+        if results[0] == results[1] == results[3] == results[4] and results[2] != results[0]:
+            return results[2], 85.0, "Cầu 2-1-2"
+
+    # 4. CHUỖI MARKOV (Xác suất chuyển đổi)
+    # Đếm xem sau chữ 'last' thì kết quả tiếp theo thường là gì
+    trans = {"Tài": 0, "Xỉu": 0}
+    for i in range(len(results) - 1):
+        if results[i] == last:
+            trans[results[i+1]] += 1
+    
+    total_trans = trans["Tài"] + trans["Xỉu"]
+    if total_trans > 2:
+        if trans["Tài"] > trans["Xỉu"]:
+            return "Tài", 78.0, "Xác suất Markov"
+        elif trans["Xỉu"] > trans["Tài"]:
+            return "Xỉu", 78.0, "Xác suất Markov"
+
+    # 5. FALLBACK (Nếu cầu gãy, đánh ngược lại nhịp trước)
+    return opposite, 75.0, "Đảo nhịp"
 
 @app.route('/')
 def index():
@@ -292,31 +301,27 @@ def index():
 @app.route('/api/history')
 def history():
     try:
-        # 1. Lấy dữ liệu mới
         raw_rows, source = fetch_sessions()
-        
-        # 2. Sắp xếp thời gian (Cũ -> Mới) để chạy thuật toán
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         
         out = []
         correct_count = 0
         total_past = 0
 
-        # 3. Dự đoán cho phiên tiếp theo (+1 phiên so với mới nhất)
+        # --- 1. DỰ ĐOÁN PHIÊN TIẾP THEO (+1) ---
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
-        
-        # Lịch sử cho phiên tiếp theo (đảo ngược thành Mới -> Cũ cho thuật toán)
         history_for_next = [v['result'] for v in valid][::-1]
-        next_pred, next_conf = analyze_pattern(history_for_next)
         
-        bet = 2000 if next_conf < 88 else 4000
+        next_pred, next_conf, next_pattern = analyze_pattern(history_for_next)
+        bet = 2000 if next_conf < 85 else (4000 if next_conf < 92 else 10000)
         
         out.append({
             'phien': next_phien,
             'is_next': True,
             'prediction': next_pred,
             'confidence': next_conf,
+            'pattern': next_pattern,
             'bet_amount': bet,
             'dice': "? + ? + ?",
             'total': "?",
@@ -324,32 +329,30 @@ def history():
             'is_correct': None
         })
 
-        # 4. Chạy thuật toán ngược lại cho các phiên quá khứ (để hiển thị đúng/sai)
-        # Chạy từ phiên mới nhất lùi về 15 phiên
+        # --- 2. CHẠY LẠI QUÁ KHỨ ĐỂ TÍNH ĐÚNG/SAI ---
         for i in range(len(valid) - 1, -1, -1):
-            if len(out) > 15: # Chỉ lấy 15 phiên
-                break
+            if len(out) > 15: break
                 
             current_session = valid[i]
-            # Lịch sử của phiên này là các phiên TRƯỚC NÓ
             history = [v['result'] for v in valid[:i]][::-1]
             
             if history:
-                pred, conf = analyze_pattern(history)
+                pred, conf, pattern = analyze_pattern(history)
                 is_correct = (pred == current_session['result'])
                 total_past += 1
                 if is_correct: correct_count += 1
             else:
-                pred, conf = "Tài", 75.0 # Phiên đầu tiên không có lịch sử
+                pred, conf, pattern = "Tài", 75.0, "Khởi tạo"
                 is_correct = None
                 
-            bet_past = 2000 if conf < 88 else 4000
+            bet_past = 2000 if conf < 85 else (4000 if conf < 92 else 10000)
             
             out.append({
                 'phien': current_session['phien'],
                 'is_next': False,
                 'prediction': pred,
                 'confidence': conf,
+                'pattern': pattern,
                 'bet_amount': bet_past,
                 'dice': current_session['dice'],
                 'total': current_session['total'],
