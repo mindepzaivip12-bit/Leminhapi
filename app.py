@@ -239,7 +239,6 @@ def analyze_pattern(results):
         else:
             break
 
-    # Thuật toán Bẻ Bệt (Streak >= 5 là bắt đầu bẻ mạnh)
     if streak >= 6:
         return opposite, 95.5, f"Bẻ bệt {streak} (Cực mạnh)"
     elif streak == 5:
@@ -247,38 +246,31 @@ def analyze_pattern(results):
     elif streak == 4:
         return opposite, 80.0, f"Bẻ bệt {streak}"
     elif streak == 3:
-        # Bệt 3 thì bám thêm 1 nhịp hoặc bẻ tùy biên độ, ưu tiên bám
         return last, 78.0, f"Bám bệt {streak}"
 
     # 2. NHẬN DIỆN CẦU ĐẢO (1-1, 2-2, 3-3)
     if len(results) >= 6:
-        # Cầu 1-1 (T-X-T-X-T-X)
         if results[0] != results[1] and results[1] != results[2] and results[2] != results[3]:
             if results[3] != results[4] and results[4] != results[5]:
                 return opposite, 92.0, "Đảo cầu 1-1"
 
-        # Cầu 2-2 (T-T-X-X-T-T)
         if results[0] == results[1] and results[2] == results[3] and results[4] == results[5]:
             if results[1] != results[2] and results[3] != results[4]:
                 return opposite, 90.0, "Đảo cầu 2-2"
 
     if len(results) >= 9:
-        # Cầu 3-3 (T-T-T-X-X-X-T-T-T)
         if results[0] == results[1] == results[2] and results[3] == results[4] == results[5] and results[6] == results[7] == results[8]:
             if results[2] != results[3] and results[5] != results[6]:
                 return opposite, 94.0, "Đảo cầu 3-3"
 
-    # 3. CẦU 1-2-1 hoặc 2-1-2 (Cầu hỗn hợp)
+    # 3. CẦU 1-2-1 hoặc 2-1-2
     if len(results) >= 4:
-        # 1-2-1 (T-X-X-T) -> dự đoán X
         if results[0] == results[3] and results[1] == results[2] and results[0] != results[1]:
             return results[1], 85.0, "Cầu 1-2-1"
-        # 2-1-2 (T-T-X-T-T) -> dự đoán X
         if results[0] == results[1] == results[3] == results[4] and results[2] != results[0]:
             return results[2], 85.0, "Cầu 2-1-2"
 
-    # 4. CHUỖI MARKOV (Xác suất chuyển đổi)
-    # Đếm xem sau chữ 'last' thì kết quả tiếp theo thường là gì
+    # 4. CHUỖI MARKOV
     trans = {"Tài": 0, "Xỉu": 0}
     for i in range(len(results) - 1):
         if results[i] == last:
@@ -291,8 +283,11 @@ def analyze_pattern(results):
         elif trans["Xỉu"] > trans["Tài"]:
             return "Xỉu", 78.0, "Xác suất Markov"
 
-    # 5. FALLBACK (Nếu cầu gãy, đánh ngược lại nhịp trước)
     return opposite, 75.0, "Đảo nhịp"
+
+# =======================================================
+# CÁC ROUTES API
+# =======================================================
 
 @app.route('/')
 def index():
@@ -300,6 +295,7 @@ def index():
 
 @app.route('/api/history')
 def history():
+    """API lấy toàn bộ lịch sử để hiển thị lên giao diện Web"""
     try:
         raw_rows, source = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
@@ -308,7 +304,7 @@ def history():
         correct_count = 0
         total_past = 0
 
-        # --- 1. DỰ ĐOÁN PHIÊN TIẾP THEO (+1) ---
+        # 1. Dự đoán phiên tiếp theo (+1)
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
@@ -329,7 +325,7 @@ def history():
             'is_correct': None
         })
 
-        # --- 2. CHẠY LẠI QUÁ KHỨ ĐỂ TÍNH ĐÚNG/SAI ---
+        # 2. Chạy lại quá khứ để tính đúng/sai
         for i in range(len(valid) - 1, -1, -1):
             if len(out) > 15: break
                 
@@ -370,6 +366,37 @@ def history():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/predict')
+def predict_only():
+    """API CHUYÊN BIỆT: Chỉ trả về kết quả phiên sắp tới và % tin cậy"""
+    try:
+        raw_rows, source = fetch_sessions()
+        valid = sorted(raw_rows, key=lambda x: x['phien'])
+        
+        if not valid:
+            return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 404
+
+        latest_session = valid[-1]
+        next_phien = latest_session['phien'] + 1
+        history_for_next = [v['result'] for v in valid][::-1]
+        
+        next_pred, next_conf, next_pattern = analyze_pattern(history_for_next)
+        
+        # Tính tiền cược đề xuất
+        bet = 2000 if next_conf < 85 else (4000 if next_conf < 92 else 10000)
+
+        return jsonify({
+            'status': 'success',
+            'next_session': next_phien,
+            'prediction': next_pred,       # Trả về "Tài" hoặc "Xỉu"
+            'confidence': next_conf,       # Trả về % (VD: 88.5)
+            'pattern': next_pattern,       # Thuật toán đang bắt cầu gì
+            'bet_amount': bet,             # Tiền cược đề xuất
+            'updated_at': datetime.now().strftime('%H:%M:%S')
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
