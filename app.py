@@ -12,7 +12,7 @@ API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at
 # Biến toàn cục lưu mốc phiên bắt đầu lại
 RESET_SESSION_ID = 0
 
-# ============ GIAO DIỆN HTML/CSS (CHUẨN THEO ẢNH) ============
+# ============ GIAO DIỆN HTML/CSS (DẠNG CARD THEO ẢNH) ============
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -26,14 +26,24 @@ HTML_TEMPLATE = """
 <style>
     :root {
         --bg-dark: #0f1115;
-        --bg-row: #15171e;
-        --text-main: #e2e8f0;
+        --bg-card: #161a23;
+        --text-main: #f8fafc;
         --text-muted: #94a3b8;
-        --gold: #d69e2e;
-        --blue-tai: #22c55e; /* Xanh lá cho Tài */
-        --blue-xiu: #3b82f6; /* Xanh dương cho Xỉu */
-        --red-lose: #ef4444;
         --border-color: #2d3748;
+        
+        /* Màu Tài (Xanh lam) */
+        --tai-bg: #0891b2;
+        --tai-text: #cffafe;
+        --tai-bet-bg: rgba(8, 145, 178, 0.2);
+        
+        /* Màu Xỉu (Hồng) */
+        --xiu-bg: #be185d;
+        --xiu-text: #fbcfe8;
+        --xiu-bet-bg: rgba(190, 24, 93, 0.2);
+
+        --win-color: #22c55e;
+        --lose-color: #ef4444;
+        --wait-color: #eab308;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
@@ -48,74 +58,78 @@ HTML_TEMPLATE = """
     .header { 
         display: flex; justify-content: space-between; align-items: center; 
         padding: 15px 20px; border-bottom: 1px solid var(--border-color);
-        background: var(--bg-row);
+        background: var(--bg-dark);
         position: sticky; top: 0; z-index: 100;
     }
-    .header-title { font-size: 18px; font-weight: 700; color: var(--gold); letter-spacing: 0.5px; }
+    .header-title { font-size: 18px; font-weight: 700; color: #eab308; letter-spacing: 0.5px; }
     .btn-reset {
-        background: rgba(239, 68, 68, 0.1); color: var(--red-lose);
-        border: 1px solid var(--red-lose); padding: 6px 12px;
+        background: rgba(239, 68, 68, 0.1); color: var(--lose-color);
+        border: 1px solid var(--lose-color); padding: 6px 12px;
         border-radius: 6px; font-weight: 600; font-size: 13px;
         cursor: pointer; transition: 0.3s;
     }
-    .btn-reset:hover { background: var(--red-lose); color: #fff; }
+    .btn-reset:hover { background: var(--lose-color); color: #fff; }
 
-    /* TABLE HEADER */
-    .table-header {
-        display: flex; padding: 15px 10px; border-bottom: 1px solid var(--border-color);
-        font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;
-        text-align: center;
+    /* CARD LIST CONTAINER */
+    .container {
+        padding: 15px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        max-width: 600px;
+        margin: 0 auto;
     }
-    /* Độ rộng các cột */
-    .col-phien { flex: 1.2; text-align: left; padding-left: 10px; }
-    .col-dice { flex: 1; }
-    .col-pred { flex: 1; }
-    .col-res { flex: 1; }
-    .col-conf { flex: 1; }
-    .col-status { flex: 1.2; text-align: right; padding-right: 10px; display: flex; justify-content: flex-end;}
 
-    /* TABLE BODY */
-    .row-item {
-        display: flex; align-items: center; padding: 14px 10px;
-        border-bottom: 1px solid rgba(255,255,255,0.03);
-        transition: background 0.2s;
+    /* CARD ITEM */
+    .card-item {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 14px 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        transition: transform 0.2s, box-shadow 0.2s;
     }
-    .row-item:hover { background: rgba(255,255,255,0.02); }
-    .row-item.active { background: rgba(59, 130, 246, 0.05); } /* Highlight phiên đang chờ */
+    .card-item:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .card-item.active {
+        border-color: #3b82f6;
+        box-shadow: 0 0 15px rgba(59, 130, 246, 0.15);
+    }
 
-    /* CỘT CHI TIẾT */
-    .phien-text { color: var(--gold); font-weight: 700; font-size: 15px; }
-    .dice-text { color: #8b949e; font-family: monospace; font-size: 14px; font-weight: 600; }
+    /* CỘT TRÁI */
+    .col-left { display: flex; flex-direction: column; gap: 5px; flex: 1.2; }
+    .id-text { font-size: 15px; font-weight: 700; color: #fff; }
+    .bot-line { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+    .bot-label { color: var(--text-muted); }
     
-    /* BADGES TÀI XỈU */
-    .badge {
-        display: inline-block; padding: 6px 0; width: 60px; border-radius: 6px;
-        font-weight: 700; font-size: 13px; text-transform: uppercase; text-align: center;
-        color: #fff;
-    }
-    .badge-tai { background-color: var(--blue-tai); box-shadow: 0 0 10px rgba(34, 197, 94, 0.2); }
-    .badge-xiu { background-color: var(--blue-xiu); box-shadow: 0 0 10px rgba(59, 130, 246, 0.2); }
-    .badge-empty { 
-        background-color: transparent; border: 1px solid #334155; color: #475569; 
-        box-shadow: none; 
-    }
-
-    /* ĐỘ TIN CẬY */
-    .conf-text { color: #60a5fa; font-weight: 700; font-size: 15px; }
-
-    /* TRẠNG THÁI */
-    .status-box { display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-size: 14px; font-weight: 600; }
-    .status-wait { color: #94a3b8; }
-    .status-win { color: var(--blue-tai); }
-    .status-lose { color: var(--red-lose); }
+    /* Badge Cược */
+    .bet-badge { padding: 3px 10px; border-radius: 12px; font-weight: 700; font-size: 12px; text-transform: lowercase; }
+    .bet-tai { background: var(--tai-bet-bg); color: #22d3ee; border: 1px solid rgba(34, 211, 238, 0.3); }
+    .bet-xiu { background: var(--xiu-bet-bg); color: #f472b6; border: 1px solid rgba(244, 114, 182, 0.3); }
     
-    /* ICONS */
-    .icon { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; font-size: 12px; }
-    .icon-win { background: var(--blue-tai); color: #fff; }
-    .icon-lose { background: var(--red-lose); color: #fff; }
-    .icon-wait { color: #94a3b8; animation: spin 2s linear infinite; }
+    .conf-text { color: var(--text-muted); font-size: 11px; font-style: italic; margin-top: 2px; }
+
+    /* CỘT GIỮA */
+    .col-mid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; flex: 1; }
     
-    @keyframes spin { 100% { transform: rotate(360deg); } }
+    /* Badge Dự đoán (Giữa) */
+    .pred-badge { padding: 5px 14px; border-radius: 20px; font-weight: 800; font-size: 13px; text-transform: uppercase; }
+    .pred-tai { background: var(--tai-bg); color: #fff; }
+    .pred-xiu { background: var(--xiu-bg); color: #fff; }
+    .pred-empty { background: transparent; border: 1px solid var(--border-color); color: var(--text-muted); }
+    
+    .dice-text { font-size: 13px; font-weight: 500; color: #e2e8f0; white-space: nowrap; }
+
+    /* CỘT PHẢI */
+    .col-right { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; flex: 0.8; }
+    .status-text { font-size: 13px; font-weight: 700; text-align: right; display: flex; align-items: center; gap: 4px;}
+    .status-win { color: var(--win-color); }
+    .status-lose { color: var(--lose-color); }
+    .status-wait { color: var(--wait-color); }
 
     /* LOADING */
     .loading { text-align: center; padding: 40px; color: var(--text-muted); }
@@ -129,18 +143,8 @@ HTML_TEMPLATE = """
     <button class="btn-reset" onclick="confirmReset()">↻ Bắt đầu lại</button>
 </div>
 
-<!-- TABLE HEADER -->
-<div class="table-header">
-    <div class="col-phien">Phiên</div>
-    <div class="col-dice">Xúc xắc</div>
-    <div class="col-pred">Dự đoán</div>
-    <div class="col-res">Kết quả</div>
-    <div class="col-conf">Độ tin cậy</div>
-    <div class="col-status" style="text-align: center; justify-content: center;">Trạng thái</div>
-</div>
-
-<!-- TABLE BODY -->
-<div id="list-container">
+<!-- LIST BODY -->
+<div class="container" id="list-container">
     <div class="loading">Đang tải dữ liệu...</div>
 </div>
 
@@ -169,44 +173,64 @@ function renderList(rows) {
   container.innerHTML = '';
   rows.forEach((row) => {
     const div = document.createElement('div');
-    div.className = 'row-item' + (row.is_next ? ' active' : '');
+    div.className = 'card-item' + (row.is_next ? ' active' : '');
     
-    // 1. Xử lý Xúc Xắc
-    let diceDisplay = "[?]";
-    if (row.dice !== "? + ? + ?") {
-        diceDisplay = "[" + row.dice.replace(/ \+ /g, ", ") + "]";
+    // 1. Xử lý Dự đoán (Cược & Badge Giữa)
+    let predBadge = `<span class="pred-badge pred-empty">-</span>`;
+    let betBadge = `<span class="bet-badge" style="background:#334155;color:#fff;">cược -</span>`;
+    
+    if (row.prediction === "Tài") {
+        predBadge = `<span class="pred-badge pred-tai">TÀI</span>`;
+        betBadge = `<span class="bet-badge bet-tai">cược tài</span>`;
+    }
+    if (row.prediction === "Xỉu") {
+        predBadge = `<span class="pred-badge pred-xiu">XỈU</span>`;
+        betBadge = `<span class="bet-badge bet-xiu">cược xỉu</span>`;
     }
 
-    // 2. Xử lý Dự đoán
-    let predBadge = `<span class="badge badge-empty">-</span>`;
-    if (row.prediction === "Tài") predBadge = `<span class="badge badge-tai">TÀI</span>`;
-    if (row.prediction === "Xỉu") predBadge = `<span class="badge badge-xiu">XỈU</span>`;
+    // 2. Xử lý Kết quả
+    let resultBadge = `<span class="pred-badge pred-empty">-</span>`;
+    if (row.result === "Tài") resultBadge = `<span class="pred-badge pred-tai">TÀI</span>`;
+    if (row.result === "Xỉu") resultBadge = `<span class="pred-badge pred-xiu">XỈU</span>`;
 
-    // 3. Xử lý Kết quả
-    let resultBadge = `<span class="badge badge-empty">-</span>`;
-    if (row.result === "Tài") resultBadge = `<span class="badge badge-tai">TÀI</span>`;
-    if (row.result === "Xỉu") resultBadge = `<span class="badge badge-xiu">XỈU</span>`;
+    // 3. Xử lý Xúc Xắc (Dạng x + y + z (tổng))
+    let diceDisplay = "? + ? + ?";
+    if (row.dice !== "? + ? + ?") {
+        let parts = row.dice.split(" + ");
+        let sum = parseInt(parts[0]) + parseInt(parts[1]) + parseInt(parts[2]);
+        diceDisplay = `${row.dice} (${sum})`;
+    }
 
     // 4. Xử lý Trạng thái
     let statusHtml = '';
     if (row.is_next) {
-        statusHtml = `<div class="status-box status-wait"><span class="icon icon-wait">⚙️</span> Chờ</div>`;
+        statusHtml = `<div class="status-text status-wait">Chờ <span class="spin">⏳</span></div>`;
     } else if (row.is_correct === true) {
-        statusHtml = `<div class="status-box status-win"><span class="icon icon-win">✓</span> Thắng</div>`;
+        statusHtml = `<div class="status-text status-win">Đúng cửa ✅</div>`;
     } else if (row.is_correct === false) {
-        statusHtml = `<div class="status-box status-lose"><span class="icon icon-lose">✕</span> Thua</div>`;
+        statusHtml = `<div class="status-text status-lose">Sai cửa ❌</div>`;
     } else {
-        statusHtml = `<div class="status-box status-wait">-</div>`;
+        statusHtml = `<div class="status-text" style="color:var(--text-muted)">-</div>`;
     }
 
     // Render HTML
     div.innerHTML = `
-        <div class="col-phien"><span class="phien-text">#${row.phien}</span></div>
-        <div class="col-dice" style="text-align: center;"><span class="dice-text">${diceDisplay}</span></div>
-        <div class="col-pred" style="text-align: center;">${predBadge}</div>
-        <div class="col-res" style="text-align: center;">${resultBadge}</div>
-        <div class="col-conf" style="text-align: center;"><span class="conf-text">${row.is_next ? row.confidence : (row.confidence + '%')}</span></div>
-        <div class="col-status">${statusHtml}</div>
+        <div class="col-left">
+            <div class="id-text">#${row.phien}</div>
+            <div class="bot-line">
+                <span class="bot-label">Bot:</span> ${betBadge}
+            </div>
+            <div class="conf-text">(Tin cậy: ${row.confidence}%)</div>
+        </div>
+        
+        <div class="col-mid">
+            ${row.is_next ? predBadge : resultBadge}
+            <div class="dice-text">${diceDisplay}</div>
+        </div>
+        
+        <div class="col-right">
+            ${statusHtml}
+        </div>
     `;
     container.appendChild(div);
   });
@@ -215,7 +239,7 @@ function renderList(rows) {
 async function confirmReset() {
     Swal.fire({
         title: 'Bắt đầu lại?',
-        text: "Xóa lịch sử hiển thị và đặt mốc tính tỷ lệ thắng từ phiên hiện tại!",
+        text: "Xóa lịch sử hiển thị cũ. Bot vẫn chạy ngầm và dự đoán tiếp từ mốc này!",
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#ef4444',
@@ -232,7 +256,7 @@ async function confirmReset() {
                 const data = await res.json();
                 
                 if (data.status === 'success') {
-                    Swal.fire('Thành công!', 'Đã reset từ phiên #' + data.reset_to, 'success');
+                    Swal.fire('Thành công!', 'Đã reset mốc hiển thị từ phiên #' + data.reset_to, 'success');
                     isResetting = false;
                     fetchData(); 
                 } else {
@@ -246,7 +270,6 @@ async function confirmReset() {
     });
 }
 
-// Khởi chạy
 fetchData();
 setInterval(fetchData, 5000);
 </script>
@@ -370,7 +393,7 @@ def history():
         correct_count = 0
         total_past = 0
 
-        # Dự đoán phiên tiếp theo
+        # 1. Dự đoán phiên tiếp theo (Luôn dựa trên toàn bộ lịch sử thực tế)
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
@@ -386,10 +409,11 @@ def history():
             'is_correct': None
         })
 
-        # Lấy lịch sử quá khứ
+        # 2. Lấy lịch sử hiển thị (Dừng lại ở mốc Reset)
         for i in range(len(valid) - 1, -1, -1):
             current_session = valid[i]
             
+            # Nếu phiên này nằm trước mốc reset -> Dừng vòng lặp, không hiển thị nữa
             if current_session['phien'] <= RESET_SESSION_ID:
                 break 
                 
@@ -453,6 +477,7 @@ def reset_api():
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         if valid:
+            # Chốt mốc phiên hiện tại. Các phiên nhỏ hơn hoặc bằng mốc này sẽ bị ẩn khỏi giao diện
             RESET_SESSION_ID = valid[-1]['phien']
             return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
         return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
