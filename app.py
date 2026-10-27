@@ -4,15 +4,17 @@ import random
 from datetime import datetime
 import requests
 from flask import Flask, render_template_string, jsonify
+from flask_cors import CORS  # Thêm thư viện CORS
 
 app = Flask(__name__)
+CORS(app)  # Bật CORS để các trang HTML khác có thể gọi API này
 
 API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=ab36aa88e2c9868ae0e8bc61adbd18dc"
 
 # Biến toàn cục lưu mốc phiên bắt đầu lại
 RESET_SESSION_ID = 0
 
-# ============ GIAO DIỆN HTML/CSS (DẠNG CARD THEO ẢNH) ============
+# ============ GIAO DIỆN HTML/CSS (GIỮ NGUYÊN) ============
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -175,7 +177,6 @@ function renderList(rows) {
     const div = document.createElement('div');
     div.className = 'card-item' + (row.is_next ? ' active' : '');
     
-    // 1. Xử lý Dự đoán (Cược & Badge Giữa)
     let predBadge = `<span class="pred-badge pred-empty">-</span>`;
     let betBadge = `<span class="bet-badge" style="background:#334155;color:#fff;">cược -</span>`;
     
@@ -188,12 +189,10 @@ function renderList(rows) {
         betBadge = `<span class="bet-badge bet-xiu">cược xỉu</span>`;
     }
 
-    // 2. Xử lý Kết quả
     let resultBadge = `<span class="pred-badge pred-empty">-</span>`;
     if (row.result === "Tài") resultBadge = `<span class="pred-badge pred-tai">TÀI</span>`;
     if (row.result === "Xỉu") resultBadge = `<span class="pred-badge pred-xiu">XỈU</span>`;
 
-    // 3. Xử lý Xúc Xắc (Dạng x + y + z (tổng))
     let diceDisplay = "? + ? + ?";
     if (row.dice !== "? + ? + ?") {
         let parts = row.dice.split(" + ");
@@ -201,7 +200,6 @@ function renderList(rows) {
         diceDisplay = `${row.dice} (${sum})`;
     }
 
-    // 4. Xử lý Trạng thái
     let statusHtml = '';
     if (row.is_next) {
         statusHtml = `<div class="status-text status-wait">Chờ <span class="spin">⏳</span></div>`;
@@ -213,7 +211,6 @@ function renderList(rows) {
         statusHtml = `<div class="status-text" style="color:var(--text-muted)">-</div>`;
     }
 
-    // Render HTML
     div.innerHTML = `
         <div class="col-left">
             <div class="id-text">#${row.phien}</div>
@@ -382,6 +379,35 @@ def analyze_pattern(results):
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+# ROUTE API DÀNH CHO CÁC TRANG HTML BÊN NGOÀI GỌI
+@app.route('/api')
+def api_root():
+    try:
+        raw_rows, _ = fetch_sessions()
+        valid = sorted(raw_rows, key=lambda x: x['phien'])
+        if not valid:
+            return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 404
+
+        latest_session = valid[-1]
+        next_phien = latest_session['phien'] + 1
+        history_for_next = [v['result'] for v in valid][::-1]
+        next_pred, next_conf, next_pattern = analyze_pattern(history_for_next)
+
+        # Trả về JSON gọn gàng cho API
+        return jsonify({
+            'status': 'success',
+            'message': 'API LC MD5 MINHLE đang hoạt động',
+            'data': {
+                'next_session': next_phien,
+                'prediction': next_pred,
+                'confidence': f"{next_conf}%",
+                'pattern': next_pattern,
+                'updated_at': datetime.now().strftime('%H:%M:%S')
+            }
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @app.route('/api/history')
 def history():
     global RESET_SESSION_ID
@@ -413,7 +439,6 @@ def history():
         for i in range(len(valid) - 1, -1, -1):
             current_session = valid[i]
             
-            # Nếu phiên này nằm trước mốc reset -> Dừng vòng lặp, không hiển thị nữa
             if current_session['phien'] <= RESET_SESSION_ID:
                 break 
                 
@@ -477,7 +502,6 @@ def reset_api():
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         if valid:
-            # Chốt mốc phiên hiện tại. Các phiên nhỏ hơn hoặc bằng mốc này sẽ bị ẩn khỏi giao diện
             RESET_SESSION_ID = valid[-1]['phien']
             return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
         return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
