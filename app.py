@@ -3,7 +3,7 @@ import time
 import random
 from datetime import datetime
 import requests
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify
 
 app = Flask(__name__)
 
@@ -12,7 +12,7 @@ API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at
 # Biến toàn cục lưu mốc phiên bắt đầu lại
 RESET_SESSION_ID = 0
 
-# ============ GIAO DIỆN HTML/CSS (BOOTSTRAP 5) ============
+# ============ GIAO DIỆN HTML/CSS (CHUẨN THEO ẢNH) ============
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -20,259 +20,207 @@ HTML_TEMPLATE = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>API LC MD5 MINHLE</title>
-<!-- Bootstrap 5 CSS -->
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- SweetAlert2 -->
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
     :root {
-        --bg-color: #0b0f19;
-        --card-bg: #151b2b;
+        --bg-dark: #0f1115;
+        --bg-row: #15171e;
         --text-main: #e2e8f0;
         --text-muted: #94a3b8;
-        --neon-blue: #3b82f6;
-        --neon-green: #10b981;
-        --neon-red: #ef4444;
-        --neon-gold: #f59e0b;
+        --gold: #d69e2e;
+        --blue-tai: #22c55e; /* Xanh lá cho Tài */
+        --blue-xiu: #3b82f6; /* Xanh dương cho Xỉu */
+        --red-lose: #ef4444;
+        --border-color: #2d3748;
     }
-    body {
-        background-color: var(--bg-color);
-        color: var(--text-main);
-        font-family: 'Inter', sans-serif;
-        min-height: 100vh;
-    }
-    /* HEADER */
-    .header-glass {
-        background: rgba(21, 27, 43, 0.7);
-        backdrop-filter: blur(10px);
-        border-bottom: 1px solid rgba(255,255,255,0.05);
-        padding: 15px 20px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        position: sticky;
-        top: 0;
-        z-index: 100;
-    }
-    .brand-title {
-        font-size: 20px;
-        font-weight: 700;
-        letter-spacing: 1px;
-        background: linear-gradient(90deg, #60a5fa, #a78bfa);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    /* TABLE CONTAINER */
-    .table-container {
-        background: var(--card-bg);
-        border-radius: 16px;
-        padding: 15px;
-        margin: 20px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        border: 1px solid rgba(255,255,255,0.05);
-        animation: fadeIn 0.5s ease-in-out;
-    }
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    /* CUSTOM TABLE */
-    .table {
-        color: var(--text-main);
-        margin-bottom: 0;
-        border-collapse: separate;
-        border-spacing: 0 8px;
-    }
-    .table thead th {
-        border-bottom: 1px solid rgba(255,255,255,0.1);
-        color: var(--text-muted);
-        font-size: 12px;
-        font-weight: 600;
-        text-transform: uppercase;
-        padding: 12px;
-    }
-    .table tbody tr {
-        background: #1e293b;
-        transition: all 0.3s ease;
-    }
-    .table tbody tr:hover {
-        background: #2a3b54;
-        transform: scale(1.005);
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    }
-    .table tbody td {
-        padding: 14px 12px;
-        vertical-align: middle;
-        border: none;
-    }
-    .table tbody td:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
-    .table tbody td:last-child { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
     
-    /* BADGES */
-    .badge-custom {
-        padding: 6px 12px;
-        border-radius: 6px;
-        font-weight: 700;
-        font-size: 12px;
-        letter-spacing: 0.5px;
-        display: inline-block;
-        min-width: 55px;
+    body { 
+        background-color: var(--bg-dark); 
+        color: var(--text-main); 
+        padding-bottom: 20px;
+    }
+
+    /* HEADER */
+    .header { 
+        display: flex; justify-content: space-between; align-items: center; 
+        padding: 15px 20px; border-bottom: 1px solid var(--border-color);
+        background: var(--bg-row);
+        position: sticky; top: 0; z-index: 100;
+    }
+    .header-title { font-size: 18px; font-weight: 700; color: var(--gold); letter-spacing: 0.5px; }
+    .btn-reset {
+        background: rgba(239, 68, 68, 0.1); color: var(--red-lose);
+        border: 1px solid var(--red-lose); padding: 6px 12px;
+        border-radius: 6px; font-weight: 600; font-size: 13px;
+        cursor: pointer; transition: 0.3s;
+    }
+    .btn-reset:hover { background: var(--red-lose); color: #fff; }
+
+    /* TABLE HEADER */
+    .table-header {
+        display: flex; padding: 15px 10px; border-bottom: 1px solid var(--border-color);
+        font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;
         text-align: center;
     }
-    .badge-tai { background: rgba(16, 185, 129, 0.15); color: var(--neon-green); border: 1px solid rgba(16, 185, 129, 0.3); }
-    .badge-xiu { background: rgba(59, 130, 246, 0.15); color: var(--neon-blue); border: 1px solid rgba(59, 130, 246, 0.3); }
-    .badge-empty { background: rgba(255,255,255,0.05); color: var(--text-muted); border: 1px solid rgba(255,255,255,0.1); }
+    /* Độ rộng các cột */
+    .col-phien { flex: 1.2; text-align: left; padding-left: 10px; }
+    .col-dice { flex: 1; }
+    .col-pred { flex: 1; }
+    .col-res { flex: 1; }
+    .col-conf { flex: 1; }
+    .col-status { flex: 1.2; text-align: right; padding-right: 10px; display: flex; justify-content: flex-end;}
 
-    /* TEXT COLORS */
-    .text-gold { color: var(--neon-gold); font-weight: 700; }
-    .text-conf { color: #c084fc; font-weight: 700; }
-    
-    /* STATUS INDICATORS */
-    .status-waiting { color: #fbbf24; font-weight: 600; display: flex; align-items: center; gap: 5px; }
-    .status-win { color: var(--neon-green); font-weight: 600; display: flex; align-items: center; gap: 5px; }
-    .status-lose { color: var(--neon-red); font-weight: 600; display: flex; align-items: center; gap: 5px; }
-    
-    .spin {
-        width: 12px; height: 12px; border: 2px solid #fbbf24; border-top-color: transparent;
-        border-radius: 50%; animation: spin 1s linear infinite; display: inline-block;
+    /* TABLE BODY */
+    .row-item {
+        display: flex; align-items: center; padding: 14px 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.03);
+        transition: background 0.2s;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .row-item:hover { background: rgba(255,255,255,0.02); }
+    .row-item.active { background: rgba(59, 130, 246, 0.05); } /* Highlight phiên đang chờ */
 
-    /* RESET BUTTON */
-    .btn-reset {
-        background: linear-gradient(135deg, #ef4444, #b91c1c);
-        color: white; border: none; padding: 8px 16px; border-radius: 8px;
-        font-weight: 600; transition: all 0.3s; display: flex; align-items: center; gap: 6px;
+    /* CỘT CHI TIẾT */
+    .phien-text { color: var(--gold); font-weight: 700; font-size: 15px; }
+    .dice-text { color: #8b949e; font-family: monospace; font-size: 14px; font-weight: 600; }
+    
+    /* BADGES TÀI XỈU */
+    .badge {
+        display: inline-block; padding: 6px 0; width: 60px; border-radius: 6px;
+        font-weight: 700; font-size: 13px; text-transform: uppercase; text-align: center;
+        color: #fff;
     }
-    .btn-reset:hover { transform: translateY(-2px); box-shadow: 0 0 15px rgba(239, 68, 68, 0.5); color: white; }
+    .badge-tai { background-color: var(--blue-tai); box-shadow: 0 0 10px rgba(34, 197, 94, 0.2); }
+    .badge-xiu { background-color: var(--blue-xiu); box-shadow: 0 0 10px rgba(59, 130, 246, 0.2); }
+    .badge-empty { 
+        background-color: transparent; border: 1px solid #334155; color: #475569; 
+        box-shadow: none; 
+    }
 
-    /* CUSTOM SCROLLBAR */
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-track { background: var(--bg-color); }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    /* ĐỘ TIN CẬY */
+    .conf-text { color: #60a5fa; font-weight: 700; font-size: 15px; }
+
+    /* TRẠNG THÁI */
+    .status-box { display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-size: 14px; font-weight: 600; }
+    .status-wait { color: #94a3b8; }
+    .status-win { color: var(--blue-tai); }
+    .status-lose { color: var(--red-lose); }
+    
+    /* ICONS */
+    .icon { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; font-size: 12px; }
+    .icon-win { background: var(--blue-tai); color: #fff; }
+    .icon-lose { background: var(--red-lose); color: #fff; }
+    .icon-wait { color: #94a3b8; animation: spin 2s linear infinite; }
+    
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    /* LOADING */
+    .loading { text-align: center; padding: 40px; color: var(--text-muted); }
 </style>
 </head>
 <body>
 
 <!-- HEADER -->
-<div class="header-glass">
-    <div class="brand-title">API LC MD5 MINHLE</div>
-    <button class="btn-reset" onclick="confirmReset()">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-counterclockwise" viewBox="0 0 16 16">
-          <path fill-rule="evenodd" d="M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 1 0 8 2z"/>
-          <path d="M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466"/>
-        </svg>
-        Bắt đầu lại
-    </button>
+<div class="header">
+    <div class="header-title">API LC MD5 MINHLE</div>
+    <button class="btn-reset" onclick="confirmReset()">↻ Bắt đầu lại</button>
 </div>
 
-<!-- MAIN CONTENT -->
-<div class="container-fluid">
-    <div class="table-container">
-        <div class="table-responsive">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>Phiên</th>
-                        <th>Xúc Xắc</th>
-                        <th>Dự Đoán</th>
-                        <th>Kết Quả</th>
-                        <th>Độ Tin Cậy</th>
-                        <th>Trạng Thái</th>
-                    </tr>
-                </thead>
-                <tbody id="table-body">
-                    <tr><td colspan="6" class="text-center text-muted py-4">Đang tải dữ liệu...</td></tr>
-                </tbody>
-            </table>
-        </div>
-        <div class="mt-3 text-muted text-end" style="font-size: 12px;">
-            <span id="stats-display">Tỷ lệ thắng: --% | Tổng: 0 phiên</span>
-        </div>
-    </div>
+<!-- TABLE HEADER -->
+<div class="table-header">
+    <div class="col-phien">Phiên</div>
+    <div class="col-dice">Xúc xắc</div>
+    <div class="col-pred">Dự đoán</div>
+    <div class="col-res">Kết quả</div>
+    <div class="col-conf">Độ tin cậy</div>
+    <div class="col-status" style="text-align: center; justify-content: center;">Trạng thái</div>
+</div>
+
+<!-- TABLE BODY -->
+<div id="list-container">
+    <div class="loading">Đang tải dữ liệu...</div>
 </div>
 
 <script>
 let isResetting = false;
 
 async function fetchData() {
-  if (isResetting) return; // Không fetch khi đang reset
+  if (isResetting) return;
   
   try {
     const r = await fetch('/api/history', { cache: 'no-store' });
     const data = await r.json();
-    renderTable(data);
+    renderList(data.rows || []);
   } catch (e) {
     console.error("Lỗi tải dữ liệu:", e);
   }
 }
 
-function renderTable(data) {
-  const tbody = document.getElementById('table-body');
-  const rows = data.rows || [];
-  
-  // Cập nhật Stats
-  const stats = data.stats || {};
-  document.getElementById('stats-display').innerText = 
-      `Tỷ lệ thắng: ${stats.winrate || 0}% | Tổng: ${stats.total || 0} phiên`;
-
+function renderList(rows) {
+  const container = document.getElementById('list-container');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Không có dữ liệu. Hãy chờ phiên tiếp theo.</td></tr>';
+    container.innerHTML = '<div class="loading">Không có dữ liệu. Hãy đợi phiên mới.</div>';
     return;
   }
 
-  tbody.innerHTML = '';
-  rows.forEach((row, index) => {
-    const tr = document.createElement('tr');
+  container.innerHTML = '';
+  rows.forEach((row) => {
+    const div = document.createElement('div');
+    div.className = 'row-item' + (row.is_next ? ' active' : '');
     
-    // Xử lý Xúc Xắc
-    let diceDisplay = row.dice === "? + ? + ?" ? "[?]" : "[" + row.dice.replace(/ \+ /g, ", ") + "]";
-
-    // Xử lý Dự đoán
-    let predBadge = `<span class="badge-custom badge-empty">-</span>`;
-    if (row.prediction === "Tài") predBadge = `<span class="badge-custom badge-tai">TÀI</span>`;
-    if (row.prediction === "Xỉu") predBadge = `<span class="badge-custom badge-xiu">XỈU</span>`;
-
-    // Xử lý Kết quả
-    let resultBadge = `<span class="badge-custom badge-empty">-</span>`;
-    if (row.result === "Tài") resultBadge = `<span class="badge-custom badge-tai">TÀI</span>`;
-    if (row.result === "Xỉu") resultBadge = `<span class="badge-custom badge-xiu">XỈU</span>`;
-
-    // Xử lý Trạng thái
-    let statusHtml = '';
-    if (row.is_next) {
-        statusHtml = `<div class="status-waiting"><span class="spin"></span> Chờ...</div>`;
-    } else if (row.is_correct === true) {
-        statusHtml = `<div class="status-win">✅ Thắng</div>`;
-    } else if (row.is_correct === false) {
-        statusHtml = `<div class="status-lose">❌ Thua</div>`;
-    } else {
-        statusHtml = `<div class="text-muted">-</div>`;
+    // 1. Xử lý Xúc Xắc
+    let diceDisplay = "[?]";
+    if (row.dice !== "? + ? + ?") {
+        diceDisplay = "[" + row.dice.replace(/ \+ /g, ", ") + "]";
     }
 
-    tr.innerHTML = `
-        <td class="text-gold">#${row.phien}</td>
-        <td class="text-muted font-monospace">${diceDisplay}</td>
-        <td>${predBadge}</td>
-        <td>${resultBadge}</td>
-        <td class="text-conf">${row.is_next ? row.confidence : (row.confidence + '%')}</td>
-        <td>${statusHtml}</td>
+    // 2. Xử lý Dự đoán
+    let predBadge = `<span class="badge badge-empty">-</span>`;
+    if (row.prediction === "Tài") predBadge = `<span class="badge badge-tai">TÀI</span>`;
+    if (row.prediction === "Xỉu") predBadge = `<span class="badge badge-xiu">XỈU</span>`;
+
+    // 3. Xử lý Kết quả
+    let resultBadge = `<span class="badge badge-empty">-</span>`;
+    if (row.result === "Tài") resultBadge = `<span class="badge badge-tai">TÀI</span>`;
+    if (row.result === "Xỉu") resultBadge = `<span class="badge badge-xiu">XỈU</span>`;
+
+    // 4. Xử lý Trạng thái
+    let statusHtml = '';
+    if (row.is_next) {
+        statusHtml = `<div class="status-box status-wait"><span class="icon icon-wait">⚙️</span> Chờ</div>`;
+    } else if (row.is_correct === true) {
+        statusHtml = `<div class="status-box status-win"><span class="icon icon-win">✓</span> Thắng</div>`;
+    } else if (row.is_correct === false) {
+        statusHtml = `<div class="status-box status-lose"><span class="icon icon-lose">✕</span> Thua</div>`;
+    } else {
+        statusHtml = `<div class="status-box status-wait">-</div>`;
+    }
+
+    // Render HTML
+    div.innerHTML = `
+        <div class="col-phien"><span class="phien-text">#${row.phien}</span></div>
+        <div class="col-dice" style="text-align: center;"><span class="dice-text">${diceDisplay}</span></div>
+        <div class="col-pred" style="text-align: center;">${predBadge}</div>
+        <div class="col-res" style="text-align: center;">${resultBadge}</div>
+        <div class="col-conf" style="text-align: center;"><span class="conf-text">${row.is_next ? row.confidence : (row.confidence + '%')}</span></div>
+        <div class="col-status">${statusHtml}</div>
     `;
-    tbody.appendChild(tr);
+    container.appendChild(div);
   });
 }
 
 async function confirmReset() {
     Swal.fire({
         title: 'Bắt đầu lại?',
-        text: "Toàn bộ lịch sử dự đoán và tỷ lệ thắng sẽ được đặt lại từ phiên hiện tại!",
+        text: "Xóa lịch sử hiển thị và đặt mốc tính tỷ lệ thắng từ phiên hiện tại!",
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#ef4444',
         cancelButtonColor: '#334155',
-        confirmButtonText: 'Đồng ý Reset',
+        confirmButtonText: 'Đồng ý',
         cancelButtonText: 'Hủy'
     }).then(async (result) => {
         if (result.isConfirmed) {
@@ -284,9 +232,9 @@ async function confirmReset() {
                 const data = await res.json();
                 
                 if (data.status === 'success') {
-                    Swal.fire('Thành công!', 'Đã đặt lại mốc dự đoán tại phiên #' + data.reset_to, 'success');
+                    Swal.fire('Thành công!', 'Đã reset từ phiên #' + data.reset_to, 'success');
                     isResetting = false;
-                    fetchData(); // Tải lại dữ liệu ngay lập tức
+                    fetchData(); 
                 } else {
                     throw new Error(data.message);
                 }
@@ -298,6 +246,7 @@ async function confirmReset() {
     });
 }
 
+// Khởi chạy
 fetchData();
 setInterval(fetchData, 5000);
 </script>
@@ -437,14 +386,14 @@ def history():
             'is_correct': None
         })
 
-        # Lấy lịch sử quá khứ (Chỉ lấy các phiên LỚN HƠN RESET_SESSION_ID)
+        # Lấy lịch sử quá khứ
         for i in range(len(valid) - 1, -1, -1):
             current_session = valid[i]
             
             if current_session['phien'] <= RESET_SESSION_ID:
-                break # Dừng lại nếu chạm mốc reset
+                break 
                 
-            if len(out) > 20: break # Giới hạn 20 phiên
+            if len(out) > 20: break
                 
             history = [v['result'] for v in valid[:i]][::-1]
             
@@ -467,12 +416,9 @@ def history():
                 'is_correct': is_correct
             })
 
-        winrate = round((correct_count / total_past) * 100, 1) if total_past > 0 else 0
-
         return jsonify({
             'rows': out,
-            'stats': {'total': total_past, 'correct': correct_count, 'winrate': winrate},
-            'source': source
+            'stats': {'total': total_past, 'correct': correct_count}
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -507,7 +453,6 @@ def reset_api():
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         if valid:
-            # Đặt mốc reset bằng ID của phiên mới nhất hiện tại
             RESET_SESSION_ID = valid[-1]['phien']
             return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
         return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
