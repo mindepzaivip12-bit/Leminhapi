@@ -13,19 +13,7 @@ API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at
 RESET_SESSION_ID = 0
 
 # =====================================================================
-# HỆ THỐNG 81 MẪU CẦU (3^4 = 81 TỔ HỢP)
-# =====================================================================
-ALL_81_PATTERNS = {}
-for _i in range(81):
-    _sig = ''
-    _temp = _i
-    for _ in range(4):
-        _sig = 'SML'[_temp % 3] + _sig
-        _temp //= 3
-    ALL_81_PATTERNS[_i] = _sig
-
-# =====================================================================
-# GIAO DIỆN HTML (VIP - FULL HIỆU ỨNG ĐỘNG - GIỮ NGUYÊN MÀU)
+# GIAO DIỆN HTML (VIP - FULL HIỆU ỨNG ĐỘNG - KHÔNG ĐỔI MÀU)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -33,7 +21,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>LC MD5 LEMINH</title>
+<title>BON LCMD5 </title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -54,125 +42,47 @@ HTML_TEMPLATE = """
     
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
     
-    @keyframes bgMove {
-        0% { background-position: 0% 0%; }
-        50% { background-position: 100% 100%; }
-        100% { background-position: 0% 0%; }
-    }
-    @keyframes floatStars {
-        0% { transform: translateY(0px); opacity: 0.3; }
-        50% { transform: translateY(-20px); opacity: 0.8; }
-        100% { transform: translateY(0px); opacity: 0.3; }
-    }
-    @keyframes borderGlow {
-        0%, 100% { box-shadow: 0 0 10px rgba(251, 191, 36, 0.2), inset 0 0 10px rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.4); }
-        50% { box-shadow: 0 0 25px rgba(251, 191, 36, 0.6), inset 0 0 20px rgba(251, 191, 36, 0.3); border-color: rgba(251, 191, 36, 0.8); }
-    }
-    @keyframes shimmer {
-        0% { background-position: -200% 0; }
-        100% { background-position: 200% 0; }
-    }
-    @keyframes pulseNum {
-        0%, 100% { text-shadow: 0 0 10px rgba(14, 165, 233, 0.3); transform: scale(1); }
-        50% { text-shadow: 0 0 25px rgba(14, 165, 233, 0.8); transform: scale(1.05); }
-    }
-    @keyframes spinWait {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
+    @keyframes bgMove { 0% { background-position: 0% 0%; } 50% { background-position: 100% 100%; } 100% { background-position: 0% 0%; } }
+    @keyframes floatStars { 0% { transform: translateY(0px); opacity: 0.3; } 50% { transform: translateY(-20px); opacity: 0.8; } 100% { transform: translateY(0px); opacity: 0.3; } }
+    @keyframes borderGlow { 0%, 100% { box-shadow: 0 0 10px rgba(251, 191, 36, 0.2), inset 0 0 10px rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.4); } 50% { box-shadow: 0 0 25px rgba(251, 191, 36, 0.6), inset 0 0 20px rgba(251, 191, 36, 0.3); border-color: rgba(251, 191, 36, 0.8); } }
+    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+    @keyframes pulseNum { 0%, 100% { text-shadow: 0 0 10px rgba(14, 165, 233, 0.3); transform: scale(1); } 50% { text-shadow: 0 0 25px rgba(14, 165, 233, 0.8); transform: scale(1.05); } }
+    @keyframes spinWait { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
     body { 
-        background-color: var(--bg-dark); 
-        color: var(--text-main); 
-        padding-bottom: 30px; 
-        min-height: 100vh; 
-        background-image: 
-            radial-gradient(circle at 15% 50%, rgba(14, 165, 233, 0.15) 0%, transparent 40%),
-            radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.15) 0%, transparent 40%),
-            radial-gradient(circle at 50% 90%, rgba(251, 191, 36, 0.05) 0%, transparent 50%);
-        background-size: 200% 200%;
-        animation: bgMove 15s ease infinite;
-        overflow-x: hidden; 
-        position: relative; 
+        background-color: var(--bg-dark); color: var(--text-main); padding-bottom: 30px; min-height: 100vh; 
+        background-image: radial-gradient(circle at 15% 50%, rgba(14, 165, 233, 0.15) 0%, transparent 40%), radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.15) 0%, transparent 40%), radial-gradient(circle at 50% 90%, rgba(251, 191, 36, 0.05) 0%, transparent 50%);
+        background-size: 200% 200%; animation: bgMove 15s ease infinite; overflow-x: hidden; position: relative; 
     }
 
     body::before {
         content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-        background-image: radial-gradient(1px 1px at 10% 20%, #fff, transparent),
-                          radial-gradient(1.5px 1.5px at 80% 40%, #fff, transparent),
-                          radial-gradient(1px 1px at 40% 80%, #fff, transparent),
-                          radial-gradient(2px 2px at 70% 10%, #fff, transparent);
-        background-size: 200px 200px;
-        animation: floatStars 4s ease-in-out infinite;
-        opacity: 0.4;
+        background-image: radial-gradient(1px 1px at 10% 20%, #fff, transparent), radial-gradient(1.5px 1.5px at 80% 40%, #fff, transparent), radial-gradient(1px 1px at 40% 80%, #fff, transparent), radial-gradient(2px 2px at 70% 10%, #fff, transparent);
+        background-size: 200px 200px; animation: floatStars 4s ease-in-out infinite; opacity: 0.4;
     }
 
-    .header { 
-        display: flex; justify-content: space-between; align-items: center; 
-        padding: 16px 20px; 
-        background: rgba(5, 8, 20, 0.8); 
-        backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-        border-bottom: 1px solid var(--border-glass);
-        position: sticky; top: 0; z-index: 100; 
-    }
+    .header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background: rgba(5, 8, 20, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid var(--border-glass); position: sticky; top: 0; z-index: 100; }
     .header-left { display: flex; align-items: center; gap: 10px; }
-    .live-dot { 
-        width: 8px; height: 8px; border-radius: 50%; background: var(--win); 
-        box-shadow: 0 0 12px var(--win); animation: pulseNum 1.5s infinite; 
-    }
-    .header-title { 
-        font-size: 18px; font-weight: 800; 
-        background: linear-gradient(90deg, #fff, #bae6fd, #f472b6, #fff); 
-        background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; 
-        animation: shimmer 3s linear infinite; letter-spacing: -0.5px;
-    }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--win); box-shadow: 0 0 12px var(--win); animation: pulseNum 1.5s infinite; }
+    .header-title { font-size: 18px; font-weight: 800; background: linear-gradient(90deg, #fff, #bae6fd, #f472b6, #fff); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: shimmer 3s linear infinite; letter-spacing: -0.5px; }
     
-    .btn-reset { 
-        background: rgba(239, 68, 68, 0.1); color: #fca5a5; 
-        border: 1px solid rgba(239, 68, 68, 0.3); 
-        padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 12px; 
-        cursor: pointer; transition: all 0.3s; 
-    }
+    .btn-reset { background: rgba(239, 68, 68, 0.1); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.3s; }
     .btn-reset:hover { background: rgba(239, 68, 68, 0.2); box-shadow: 0 0 15px rgba(239, 68, 68, 0.4); transform: translateY(-2px); }
 
-    .stats-bar { 
-        max-width: 600px; margin: 16px auto 0; padding: 0 16px; 
-        display: flex; gap: 12px; position: relative; z-index: 1;
-    }
-    .stat-box { 
-        flex: 1; background: var(--bg-card); border: 1px solid var(--border-glass); 
-        border-radius: 16px; padding: 12px; text-align: center; 
-        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-        position: relative; overflow: hidden;
-        transition: transform 0.3s;
-    }
+    .stats-bar { max-width: 600px; margin: 16px auto 0; padding: 0 16px; display: flex; gap: 12px; position: relative; z-index: 1; }
+    .stat-box { flex: 1; background: var(--bg-card); border: 1px solid var(--border-glass); border-radius: 16px; padding: 12px; text-align: center; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); position: relative; overflow: hidden; transition: transform 0.3s; }
     .stat-box:hover { transform: translateY(-3px); border-color: rgba(255,255,255,0.2); }
-    .stat-box::before {
-        content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-        background: linear-gradient(90deg, transparent, var(--tai-color), transparent);
-        background-size: 200% 100%; animation: shimmer 2s linear infinite;
-    }
+    .stat-box::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--tai-color), transparent); background-size: 200% 100%; animation: shimmer 2s linear infinite; }
     .stat-lbl { font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 4px; }
     .stat-val { font-size: 20px; font-weight: 800; color: #fff; animation: pulseNum 2.5s infinite; }
     .stat-val.highlight { color: var(--tai-color); }
 
     .container { padding: 16px; display: flex; flex-direction: column; gap: 12px; max-width: 600px; margin: 0 auto; position: relative; z-index: 1; }
     
-    .card { 
-        background: var(--bg-card); 
-        border: 1px solid var(--border-glass); 
-        border-radius: 16px; padding: 16px; 
-        display: flex; justify-content: space-between; align-items: center; 
-        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
-        position: relative;
-    }
+    .card { background: var(--bg-card); border: 1px solid var(--border-glass); border-radius: 16px; padding: 16px; display: flex; justify-content: space-between; align-items: center; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: relative; }
     .card:hover { transform: translateY(-3px) scale(1.01); border-color: rgba(255,255,255,0.2); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
     
-    .card.active { 
-        animation: borderGlow 2s infinite alternate;
-        background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.8));
-    }
+    .card.active { animation: borderGlow 2s infinite alternate; background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.8)); }
 
     .col-left { display: flex; flex-direction: column; gap: 6px; flex: 1.2; }
     .session-id { font-size: 16px; font-weight: 800; color: #fff; letter-spacing: 0.5px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
@@ -186,20 +96,12 @@ HTML_TEMPLATE = """
     .conf-wrap { margin-top: 6px; width: 100%; max-width: 150px; }
     .conf-text { font-size: 10px; color: var(--text-muted); font-weight: 600; display: flex; justify-content: space-between; margin-bottom: 2px; }
     .conf-bg { height: 5px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; position: relative; }
-    .conf-bar { 
-        height: 100%; border-radius: 4px; 
-        background: linear-gradient(90deg, var(--tai-color), #818cf8, var(--tai-color)); 
-        background-size: 200% 100%;
-        animation: shimmer 2s linear infinite;
-        transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); 
-    }
+    .conf-bar { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--tai-color), #818cf8, var(--tai-color)); background-size: 200% 100%; animation: shimmer 2s linear infinite; transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
     .conf-bar.xiu { background: linear-gradient(90deg, var(--xiu-color), #f472b6, var(--xiu-color)); background-size: 200% 100%; animation: shimmer 2s linear infinite; }
+    .engine-tag { font-size: 8px; color: var(--gold); opacity: 0.8; margin-top: 4px; display: block; text-transform: uppercase; letter-spacing: 1px;}
 
     .col-mid { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 4px; }
-    .pred-circle { 
-        padding: 6px 16px; border-radius: 20px; font-weight: 800; font-size: 14px; 
-        letter-spacing: 1px; text-transform: uppercase; transition: all 0.3s;
-    }
+    .pred-circle { padding: 6px 16px; border-radius: 20px; font-weight: 800; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; transition: all 0.3s; }
     .pred-tai { background: linear-gradient(135deg, #0284c7, #38bdf8); color: #fff; box-shadow: 0 0 15px var(--tai-glow); border: 1px solid #7dd3fc; }
     .pred-xiu { background: linear-gradient(135deg, #be185d, #ec4899); color: #fff; box-shadow: 0 0 15px var(--xiu-glow); border: 1px solid #f9a8d4; }
     .pred-wait { border: 1px dashed rgba(255,255,255,0.2); color: var(--text-muted); }
@@ -212,7 +114,6 @@ HTML_TEMPLATE = """
     .st-wait { color: var(--gold); text-shadow: 0 0 12px rgba(251, 191, 36, 0.5); }
     
     .spin-icon { display: inline-block; animation: spinWait 2s linear infinite; }
-
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; animation: pulseNum 2s infinite; }
     
     @media (max-width: 380px) {
@@ -229,7 +130,7 @@ HTML_TEMPLATE = """
 <div class="header">
     <div class="header-left">
         <div class="live-dot"></div>
-        <div class="header-title">⚡ LC MD5 🐻 </div>
+        <div class="header-title">⚡ LC MD5 API</div>
     </div>
     <button class="btn-reset" onclick="confirmReset()">↻ Reset</button>
 </div>
@@ -241,7 +142,7 @@ HTML_TEMPLATE = """
 </div>
 
 <div class="container" id="list-container">
-    <div class="loading">Khởi động Hyperion Engine...</div>
+    <div class="loading">Khởi động 30 Models Engine...</div>
 </div>
 
 <script>
@@ -319,7 +220,7 @@ function renderList(rows, stats) {
 
         let statusHtml = `<div class="status" style="color:#64748b">-</div>`;
         if (row.is_next) {
-            statusHtml = `<div class="status st-wait">Chờ <span class="spin-icon">⏳</span></div>`;
+            statusHtml = `<div class="status st-wait">Chờ <span class="spin-icon"></span></div>`;
         } else if (row.is_correct === true) {
             statusHtml = `<div class="status st-win">Đúng </div>`;
         } else if (row.is_correct === false) {
@@ -334,6 +235,7 @@ function renderList(rows, stats) {
                     <div class="conf-wrap">
                         <div class="conf-text"><span>Độ tin cậy</span><span>${row.confidence}%</span></div>
                         <div class="conf-bg"><div class="${confClass}" style="width:${row.confidence}%"></div></div>
+                        <span class="engine-tag">30 Models Active</span>
                     </div>
                 </div>
                 <div class="col-mid">
@@ -380,7 +282,7 @@ fetchData(); setInterval(fetchData, 4000);
 """
 
 # =====================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS (HOÀN TOÀN TẤT ĐỊNH - KHÔNG RANDOM)
 # =====================================================================
 def build_blocks(results):
     if not results: return []
@@ -409,161 +311,182 @@ def encode_pattern_81(block_lengths):
         code = code * 3 + {'S': 0, 'M': 1, 'L': 2}[block_class(L)]
     return code
 
-def learn_81_patterns(results):
-    stats = {}
+# =====================================================================
+# THUẬT TOÁN V10.1 - TÍCH HỢP 30 MÔ HÌNH DỰ ĐOÁN (NO RANDOM)
+# =====================================================================
+def evaluate_30_models(results, dice_sums=None):
+    models = []
     n = len(results)
-    for k in range(10, n):
-        sub = results[k:]
-        blocks = build_blocks(sub)
-        if len(blocks) < 5: continue
-        four_lens = [b['len'] for b in blocks[1:5]]
-        code = encode_pattern_81(four_lens)
-        if code is None: continue
-        
-        continued = (results[k - 1] == blocks[0]['val'])
-        current_len = min(blocks[0]['len'], 4)
-        
-        for key in [(code, current_len), code]:
-            if key not in stats: stats[key] = {'continue': 0, 'break': 0}
-            stats[key]['continue' if continued else 'break'] += 1
-    return stats
+    if n < 10:
+        return models
 
-# =====================================================================
-# THUẬT TOÁN V9.1 - HYPERION ENGINE (NO RANDOM)
-# =====================================================================
-def analyze_pattern(results, dice_sums=None):
-    if not results or len(results) < 5:
-        return "Tài", 50.0, "Khởi tạo"
-    
-    n = len(results)
-    candidates = []
-    
     blocks = build_blocks(results)
     curr_val = blocks[0]['val']
     curr_len = blocks[0]['len']
     opp_val = "Xỉu" if curr_val == "Tài" else "Tài"
+    last = results[0]
 
-    # 1. CẦU BỆT & ĐẢO 1-1
-    if curr_len >= 8: candidates.append((opp_val, 0.95, 12.0, "Bẻ bệt dài"))
-    elif curr_len >= 6: candidates.append((opp_val, 0.85, 10.0, "Bẻ bệt"))
-    elif curr_len == 5: candidates.append((opp_val, 0.75, 8.0, "Bẻ bệt"))
-    elif curr_len == 4: candidates.append((curr_val, 0.70, 6.0, "Bám bệt"))
-    elif curr_len == 3: candidates.append((curr_val, 0.60, 4.0, "Bám bệt"))
-    
+    # --- NHÓM 1: 10 MÔ HÌNH CẦU BỆT (Streak Models 1 -> 10+) ---
+    for target_len in range(1, 11):
+        if curr_len == target_len or (target_len == 10 and curr_len >= 10):
+            cont, brk = 0, 0
+            for k in range(10, n):
+                sub_blocks = build_blocks(results[k:])
+                if len(sub_blocks) >= 2 and sub_blocks[0]['len'] == target_len and sub_blocks[0]['val'] == curr_val:
+                    if results[k-1] == curr_val: cont += 1
+                    else: brk += 1
+            tot = cont + brk
+            if tot >= 2:
+                p_cont = (cont + 1) / (tot + 2)
+                if p_cont > 0.55:
+                    models.append({'id': f'S{target_len}', 'name': f'Bám bệt {target_len}', 'prediction': curr_val, 'win_rate': p_cont, 'weight': 5.0 + target_len*0.5})
+                elif p_cont < 0.45:
+                    models.append({'id': f'S{target_len}', 'name': f'Bẻ bệt {target_len}', 'prediction': opp_val, 'win_rate': 1-p_cont, 'weight': 5.0 + target_len*0.5})
+
+    # --- NHÓM 2: 5 MÔ HÌNH ĐẢO 1-1 (Alternating Models 1 -> 5+) ---
     alt_len = 0
     for i in range(n - 1):
         if results[i] != results[i + 1]: alt_len += 1
         else: break
         
-    if alt_len >= 8: candidates.append((opp_val, 0.95, 11.0, "Đảo 1-1 dài"))
-    elif alt_len >= 5: candidates.append((opp_val, 0.85, 9.0, "Đảo 1-1"))
-    elif alt_len >= 3: candidates.append((opp_val, 0.70, 5.0, "Đảo 1-1 ngắn"))
+    for target_alt in range(1, 6):
+        if alt_len == target_alt or (target_alt == 5 and alt_len >= 5):
+            cont, brk = 0, 0
+            for k in range(10, n):
+                sub_alt = 0
+                for i in range(k, n - 1):
+                    if results[i] != results[i + 1]: sub_alt += 1
+                    else: break
+                if sub_alt == target_alt:
+                    if results[k-1] != results[k]: cont += 1
+                    else: brk += 1
+            tot = cont + brk
+            if tot >= 2:
+                p_cont = (cont + 1) / (tot + 2)
+                if p_cont > 0.55:
+                    models.append({'id': f'A{target_alt}', 'name': f'Đảo {target_alt} tiếp', 'prediction': opp_val if target_alt % 2 != 0 else curr_val, 'win_rate': p_cont, 'weight': 4.0 + target_alt*0.8})
+                elif p_cont < 0.45:
+                    models.append({'id': f'A{target_alt}', 'name': f'Đảo {target_alt} gãy', 'prediction': curr_val if target_alt % 2 != 0 else opp_val, 'win_rate': 1-p_cont, 'weight': 4.0 + target_alt*0.8})
 
-    # 2. CẦU ĐỐI XỨNG
-    if len(blocks) >= 3:
-        is_alt_block = all(blocks[i]['val'] != blocks[i-1]['val'] for i in range(1, min(len(blocks), 5)))
-        if is_alt_block:
-            p1, p2 = blocks[1]['len'], blocks[2]['len']
-            if p1 == p2 and p1 >= 2:
-                if curr_len < p1: candidates.append((curr_val, 0.90, 9.0, "Bám đối xứng"))
-                elif curr_len == p1: candidates.append((opp_val, 0.98, 12.0, "Bẻ đối xứng"))
-            if len(blocks) >= 4:
-                p3 = blocks[3]['len']
-                if p1 == p3 and p2 != p1 and p1 <= 4:
-                    candidates.append((opp_val, 0.85, 7.0, "Cầu Palindrom"))
-
-    # 3. HỆ THỐNG 81 MẪU
-    if len(blocks) >= 5:
-        stats = learn_81_patterns(results)
-        four_lens = [b['len'] for b in blocks[1:5]]
-        code = encode_pattern_81(four_lens)
-        
-        if code is not None:
-            for key in [(code, min(curr_len, 4)), code]:
-                if key in stats:
-                    s = stats[key]
-                    total = s['continue'] + s['break']
-                    if total >= 3:
-                        p_cont = (s['continue'] + 1) / (total + 2)
-                        if p_cont > 0.65:
-                            candidates.append((curr_val, p_cont, 6.0, "Mẫu 81 Tiếp"))
-                        elif p_cont < 0.35:
-                            candidates.append((opp_val, 1 - p_cont, 6.0, "Mẫu 81 Gãy"))
-                        break
-
-    # 4. N-GRAM & MARKOV
-    for ns in [7, 6, 5, 4]:
+    # --- NHÓM 3: 5 MÔ HÌNH N-GRAM (N-gram Sequence 4 -> 8) ---
+    for ns in [4, 5, 6, 7, 8]:
         if n < ns + 1: continue
         curr_seq = tuple(results[:ns])
         m_tai, m_xiu = 0, 0
-        for i in range(len(results) - ns):
-            if tuple(results[i:i+ns]) == curr_seq and i + ns < len(results):
+        for i in range(n - ns):
+            if tuple(results[i:i+ns]) == curr_seq and i + ns < n:
                 if results[i+ns] == "Tài": m_tai += 1
                 else: m_xiu += 1
         tot = m_tai + m_xiu
-        if tot >= 3 and abs(m_tai - m_xiu) >= 2:
-            w = "Tài" if m_tai > m_xiu else "Xỉu"
-            p_win = (max(m_tai, m_xiu) + 1) / (tot + 2)
-            if p_win >= 0.65:
-                candidates.append((w, p_win, 5.0 + ns*0.1, "N-gram"))
-                break
+        if tot >= 2:
+            p_win_tai = (m_tai + 1) / (tot + 2)
+            if p_win_tai > 0.55:
+                models.append({'id': f'NG{ns}', 'name': f'N-gram {ns} (Tài)', 'prediction': 'Tài', 'win_rate': p_win_tai, 'weight': 3.0 + ns*0.2})
+            elif p_win_tai < 0.45:
+                models.append({'id': f'NG{ns}', 'name': f'N-gram {ns} (Xỉu)', 'prediction': 'Xỉu', 'win_rate': 1-p_win_tai, 'weight': 3.0 + ns*0.2})
 
+    # --- NHÓM 4: 5 MÔ HÌNH 81 MẪU (Pattern 81 variations) ---
+    if len(blocks) >= 5:
+        four_lens = [b['len'] for b in blocks[1:5]]
+        code = encode_pattern_81(four_lens)
+        if code is not None:
+            stats_81 = {}
+            for k in range(10, n):
+                sub_blocks = build_blocks(results[k:])
+                if len(sub_blocks) < 5: continue
+                sub_code = encode_pattern_81([b['len'] for b in sub_blocks[1:5]])
+                if sub_code is None: continue
+                cont = (results[k-1] == sub_blocks[0]['val'])
+                key = (sub_code, min(sub_blocks[0]['len'], 4))
+                if key not in stats_81: stats_81[key] = {'c':0, 'b':0}
+                stats_81[key]['c' if cont else 'b'] += 1
+            
+            key_exact = (code, min(curr_len, 4))
+            if key_exact in stats_81:
+                s = stats_81[key_exact]
+                tot = s['c'] + s['b']
+                if tot >= 2:
+                    p_c = (s['c'] + 1) / (tot + 2)
+                    models.append({'id': 'M81_EX', 'name': 'Mẫu 81 Exact', 'prediction': curr_val if p_c>0.5 else opp_val, 'win_rate': max(p_c, 1-p_c), 'weight': 7.0})
+            
+            key_class = code
+            if key_class in stats_81:
+                s = stats_81[key_class]
+                tot = s['c'] + s['b']
+                if tot >= 3:
+                    p_c = (s['c'] + 1) / (tot + 2)
+                    models.append({'id': 'M81_CL', 'name': 'Mẫu 81 Class', 'prediction': curr_val if p_c>0.5 else opp_val, 'win_rate': max(p_c, 1-p_c), 'weight': 5.0})
+
+    # --- NHÓM 5: 3 MÔ HÌNH MARKOV ---
     if n >= 10:
         trans = {"Tài": 0, "Xỉu": 0}
-        last = results[0]
-        for i in range(len(results) - 1):
+        for i in range(n - 1):
             if results[i] == last: trans[results[i + 1]] += 1
         tot_t = trans["Tài"] + trans["Xỉu"]
-        if tot_t >= 4 and trans["Tài"] != trans["Xỉu"]:
-            w = "Tài" if trans["Tài"] > trans["Xỉu"] else "Xỉu"
-            p_win = (max(trans["Tài"], trans["Xỉu"]) + 1) / (tot_t + 2)
-            candidates.append((w, p_win, 4.5, "Markov"))
+        if tot_t >= 3:
+            p_tai = (trans["Tài"] + 1) / (tot_t + 2)
+            models.append({'id': 'MK1', 'name': 'Markov Bậc 1', 'prediction': 'Tài' if p_tai>0.5 else 'Xỉu', 'win_rate': max(p_tai, 1-p_tai), 'weight': 4.0})
+        
+        if n >= 10:
+            seq2 = (results[0], results[1])
+            m2_tai, m2_xiu = 0, 0
+            for i in range(n - 2):
+                if (results[i], results[i+1]) == seq2:
+                    if results[i+2] == "Tài": m2_tai += 1
+                    else: m2_xiu += 1
+            tot_m2 = m2_tai + m2_xiu
+            if tot_m2 >= 2:
+                p_t2 = (m2_tai + 1) / (tot_m2 + 2)
+                models.append({'id': 'MK2', 'name': 'Markov Bậc 2', 'prediction': 'Tài' if p_t2>0.5 else 'Xỉu', 'win_rate': max(p_t2, 1-p_t2), 'weight': 5.0})
 
-    # 5. XÚC XẮC BIAS
+    # --- NHÓM 6: 2 MÔ HÌNH XÚC XẮC (Dice Bias) ---
     if dice_sums and len(dice_sums) >= 5:
-        recent_dice = dice_sums[:8]
-        avg = sum(recent_dice) / len(recent_dice)
-        if avg >= 12.5: candidates.append(("Tài", 0.75, 4.0, "Bias Xúc Xắc"))
-        elif avg <= 8.5: candidates.append(("Xỉu", 0.75, 4.0, "Bias Xúc Xắc"))
+        avg_recent = sum(dice_sums[:8]) / min(8, len(dice_sums))
+        if avg_recent >= 12.0:
+            models.append({'id': 'DICE_H', 'name': 'Bias Xúc Xắc (Cao)', 'prediction': 'Tài', 'win_rate': 0.65, 'weight': 3.0})
+        elif avg_recent <= 9.0:
+            models.append({'id': 'DICE_L', 'name': 'Bias Xúc Xắc (Thấp)', 'prediction': 'Xỉu', 'win_rate': 0.65, 'weight': 3.0})
 
-    # === TÍNH ĐIỂM TỔNG HỢP ===
-    if not candidates:
-        return opp_val, 50.0, "Nhiễu"
+    return models
 
-    tai_score = sum(prob * weight for pred, prob, weight, name in candidates if pred == "Tài")
-    xiu_score = sum(prob * weight for pred, prob, weight, name in candidates if pred == "Xỉu")
+def analyze_pattern(results, dice_sums=None):
+    if not results or len(results) < 5:
+        return "Tài", 50.0, "Khởi tạo"
+    
+    models = evaluate_30_models(results, dice_sums)
+    
+    if not models:
+        return results[0], 50.0, "Nhiễu (Không đủ data)"
+
+    tai_score = sum(m['win_rate'] * m['weight'] for m in models if m['prediction'] == 'Tài')
+    xiu_score = sum(m['win_rate'] * m['weight'] for m in models if m['prediction'] == 'Xỉu')
     
     total_score = tai_score + xiu_score
     if total_score == 0:
-         return opp_val, 50.0, "Nhiễu"
+        return results[0], 50.0, "Nhiễu"
 
     win_ratio = max(tai_score, xiu_score) / total_score
     winner = "Tài" if tai_score > xiu_score else "Xỉu"
 
-    # === HÀM SIGMOID ÉP GIẢI 50% - 100% ===
     shift_ratio = win_ratio - 0.5
-    sigmoid_val = 1 / (1 + math.exp(-16 * shift_ratio))
+    sigmoid_val = 1 / (1 + math.exp(-14 * shift_ratio))
     final_conf = 50.0 + ((sigmoid_val - 0.5) * 2 * 50.0)
     
     min_score = min(tai_score, xiu_score)
-    if min_score > max(tai_score, xiu_score) * 0.7:
-        final_conf -= 10.0 # Phạt nếu xung đột
+    if min_score > max(tai_score, xiu_score) * 0.6:
+        final_conf -= 8.0 
 
     final_conf = max(50.0, min(100.0, final_conf))
     
-    best_signal = max(candidates, key=lambda x: (x[2], x[1]))
-    best_name = best_signal[3] if best_signal[0] == winner else "Tổng hợp đa cầu"
+    best_model = max(models, key=lambda x: x['weight'] if x['prediction'] == winner else 0)
+    best_name = best_model['name'] if best_model['prediction'] == winner else "Tổng hợp 30 Models"
 
     return winner, round(final_conf, 1), best_name
 
 # =====================================================================
-# FETCH DỮ LIỆU (ĐÃ XÓA HOÀN TOÀN RANDOM)
+# FETCH DỮ LIỆU (TỪ API - KHÔNG RANDOM)
 # =====================================================================
 def fetch_sessions():
-    """
-    Lấy dữ liệu thực tế từ API.
-    Nếu lỗi, trả về danh sách rỗng [] để Frontend báo lỗi, KHÔNG dùng dữ liệu random.
-    """
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Accept': 'application/json'}
         r = requests.get(API_URL, timeout=8, headers=headers)
@@ -595,9 +518,8 @@ def history():
     global RESET_SESSION_ID
     try:
         valid = sorted(fetch_sessions(), key=lambda x: x['phien'])
-        
         if not valid:
-            return jsonify({'error': 'Không lấy được dữ liệu từ API. Vui lòng kiểm tra lại kết nối mạng hoặc Token!'}), 500
+            return jsonify({'error': 'Không lấy được dữ liệu từ API'}), 500
 
         out = []
         correct_count = 0
@@ -653,14 +575,29 @@ def predict_only():
         h_next = [v['result'] for v in valid][::-1]
         d_next = [v.get('total', 0) for v in valid][::-1]
         
+        models = evaluate_30_models(h_next, d_next)
         pred, conf, pattern = analyze_pattern(h_next, d_next)
         
+        model_details = []
+        for m in models:
+            model_details.append({
+                'model_id': m['id'],
+                'model_name': m['name'],
+                'predicts': m['prediction'],
+                'historical_winrate': f"{round(m['win_rate']*100, 1)}%",
+                'weight_priority': m['weight']
+            })
+            
+        model_details.sort(key=lambda x: x['weight_priority'], reverse=True)
+
         return jsonify({
             'status': 'success', 
             'next_session': next_phien, 
-            'prediction': pred,
-            'confidence': conf,
-            'hidden_pattern': pattern, 
+            'final_prediction': pred,
+            'final_confidence': conf,
+            'strongest_pattern': pattern, 
+            'total_models_active': len(model_details),
+            'api_models_breakdown': model_details,
             'updated_at': datetime.now().strftime('%H:%M:%S')
         })
     except Exception as e:
@@ -674,7 +611,7 @@ def reset_api():
         if valid:
             RESET_SESSION_ID = valid[-1]['phien']
             return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
-        return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu từ API'}), 400
+        return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
