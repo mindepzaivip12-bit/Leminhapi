@@ -13,7 +13,7 @@ API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at
 RESET_SESSION_ID = 0
 
 # =====================================================================
-# GIAO DIỆN HTML (PREMIUM UI)
+# GIAO DIỆN HTML PREMIUM (TÍCH HỢP SẴN)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -37,7 +37,6 @@ HTML_TEMPLATE = """
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
     @keyframes bgFloat { 0%, 100% { transform: translateY(0) translateX(0); opacity: 0.6; } 50% { transform: translateY(-30px) translateX(20px); opacity: 1; } }
     @keyframes bgFloat2 { 0%, 100% { transform: translateY(0) translateX(0); opacity: 0.5; } 50% { transform: translateY(20px) translateX(-25px); opacity: 0.9; } }
-    @keyframes pulse-blue { 0%, 100% { box-shadow: 0 0 8px var(--blue-glow), inset 0 0 6px rgba(56,189,248,0.15); border-color: var(--blue-main); } 50% { box-shadow: 0 0 30px var(--blue-glow), inset 0 0 12px rgba(56,189,248,0.25); border-color: #7dd3fc; } }
     @keyframes rainbow-border { 0% { border-color: #38bdf8; box-shadow: 0 0 20px rgba(56,189,248,0.55); } 25% { border-color: #a78bfa; box-shadow: 0 0 22px rgba(167,139,250,0.55); } 50% { border-color: #f472b6; box-shadow: 0 0 22px rgba(244,114,182,0.55); } 75% { border-color: #fbbf24; box-shadow: 0 0 22px rgba(251,191,36,0.55); } 100% { border-color: #38bdf8; box-shadow: 0 0 20px rgba(56,189,248,0.55); } }
     @keyframes textGlow { 0%, 100% { text-shadow: 0 0 6px var(--blue-glow); } 50% { text-shadow: 0 0 18px var(--blue-main), 0 0 30px rgba(56,189,248,0.5); } }
     @keyframes titleShine { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
@@ -235,116 +234,114 @@ fetchData(); setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# THUẬT TOÁN V4.0 - ĐA TẦNG VOTING & BLOCK DETECTION
+# THUẬT TOÁN FULL: ĐẢO CẦU - BẺ CẦU - BÁM CẦU (V5.0)
 # =====================================================================
-def check_block_alternation(results, block_size, min_blocks=2):
-    n = len(results)
-    if n < block_size: return None
-    blocks = []
-    i = 0
-    while i < n and len(blocks) < 12:
-        val = results[i]
-        run_len = 1
-        while i + run_len < n and results[i + run_len] == val:
-            run_len += 1
-        if run_len > block_size: return None
-        blocks.append((val, run_len))
-        i += run_len
-    full_blocks = sum(1 for v, l in blocks if l == block_size)
-    if full_blocks < min_blocks: return None
-    for j in range(1, len(blocks)):
-        if blocks[j][0] == blocks[j - 1][0]: return None
-    last_val, last_len = blocks[0]
-    if last_len == block_size:
-        next_val = "Xỉu" if last_val == "Tài" else "Tài"
-        state = "complete"
-    else:
-        next_val = last_val
-        state = "partial"
-    return next_val, full_blocks, state, blocks
-
 def analyze_pattern(results, dice_sums=None):
-    if not results or len(results) < 3: return "Tài", 50.0, "Khởi tạo"
+    if not results or len(results) < 3:
+        return "Tài", 50.0, "Khởi tạo"
+    
     last = results[0]
     opposite = "Xỉu" if last == "Tài" else "Tài"
     n = len(results)
-    candidates = []
+    candidates = [] # Lưu trữ các dự đoán: (Kết quả, Độ tin cậy, Tên cầu, Độ ưu tiên)
 
-    # 1. Streak / Bệt
+    # ---------------------------------------------------------
+    # 1. CẦU BỆT (BÁM BỆT & BẺ BỆT)
+    # ---------------------------------------------------------
     streak = 1
     for r in results[1:]:
         if r == last: streak += 1
         else: break
-    if streak >= 12: candidates.append((opposite, 95.0, f"Bẻ bệt {streak} siêu cấp", 100))
-    elif streak >= 10: candidates.append((opposite, 92.0, f"Bẻ bệt {streak} cực mạnh", 96))
-    elif streak >= 8: candidates.append((opposite, 88.0, f"Bẻ bệt {streak} mạnh", 92))
-    elif streak >= 6: candidates.append((opposite, 82.0, f"Bẻ bệt {streak}", 86))
-    elif streak == 5: candidates.append((opposite, 74.0, f"Bẻ bệt {streak}", 75))
-    elif streak == 4: candidates.append((last, 62.0, f"Bám bệt {streak}", 60))
-    elif streak == 3: candidates.append((last, 55.0, f"Bám bệt {streak}", 50))
-    elif streak == 2: candidates.append((last, 52.0, f"Bám bệt {streak}", 42))
 
-    # 2. Đảo 1-1
+    if streak >= 10: candidates.append((opposite, 90.0, f"Bẻ bệt {streak} siêu mạnh", 90))
+    elif streak >= 7: candidates.append((opposite, 85.0, f"Bẻ bệt {streak} mạnh", 85))
+    elif streak == 6: candidates.append((opposite, 75.0, f"Bẻ bệt {streak}", 75))
+    elif streak == 5: candidates.append((opposite, 65.0, f"Bẻ bệt {streak}", 65))
+    elif streak == 4: candidates.append((last, 60.0, f"Bám bệt {streak}", 60))
+    elif streak == 3: candidates.append((last, 55.0, f"Bám bệt {streak}", 55))
+    elif streak == 2: candidates.append((last, 52.0, f"Bám bệt {streak}", 52))
+
+    # ---------------------------------------------------------
+    # 2. ĐẢO 1-1 (TÀI XỈU TÀI XỈU LIÊN TỤC)
+    # ---------------------------------------------------------
     alt_len = 0
     for i in range(n - 1):
         if results[i] != results[i + 1]: alt_len += 1
         else: break
-    if alt_len >= 12: candidates.append((opposite, 94.0, f"Đảo 1-1 siêu dài {alt_len}", 99))
-    elif alt_len >= 10: candidates.append((opposite, 90.0, f"Đảo 1-1 dài {alt_len}", 95))
-    elif alt_len >= 7: candidates.append((opposite, 85.0, f"Đảo 1-1 {alt_len}", 87))
-    elif alt_len >= 5: candidates.append((opposite, 78.0, f"Đảo 1-1 {alt_len}", 78))
-    elif alt_len >= 4: candidates.append((opposite, 68.0, "Đảo 1-1 ngắn", 63))
 
-    # 3. Block 2-2, 3-3, 4-4, 5-5
-    for bs in [2, 3, 4, 5]:
-        res = check_block_alternation(results, bs, min_blocks=2)
-        if res:
-            next_val, full_count, state, _ = res
-            conf = 88.0 if full_count >= 4 else (80.0 if full_count == 3 else 70.0)
-            conf = min(92.0, conf + (bs - 2) * 2)
-            pri = 82 if bs==2 else (85 if bs==3 else (88 if bs==4 else 90))
-            if bs == 2 and full_count == 3: pri = 72
-            count_str = str(full_count) + ("+" if state == "partial" else "")
-            candidates.append((next_val, conf, f"Cầu {bs}-{bs} x{count_str}", pri))
+    if alt_len >= 9: candidates.append((opposite, 88.0, f"Đảo 1-1 dài ({alt_len})", 88))
+    elif alt_len >= 6: candidates.append((opposite, 80.0, f"Đảo 1-1 ({alt_len})", 80))
+    elif alt_len >= 4: candidates.append((opposite, 70.0, "Đảo 1-1 ngắn", 70))
 
-    # 4. Short patterns
-    if n >= 5:
-        if results[0] == results[3] and results[1] == results[2] and results[0] != results[1]:
-            candidates.append((results[1], 83.0, "Cầu 1-2-1", 72))
-        if results[0] == results[1] and results[3] == results[4] and results[1] != results[2] and results[2] != results[3]:
-            candidates.append((opposite, 82.0, "Cầu 2-1-2", 71))
-        if results[0] != results[1] and results[1] == results[2] and results[2] != results[3] and results[3] == results[4]:
-            candidates.append((results[1], 75.0, "Cầu 2-2-1", 65))
-    if n >= 6:
-        if results[0] == results[1] and results[1] != results[2] and results[3] == results[4] and results[4] != results[5]:
-            candidates.append((results[2], 82.0, "Cầu 1-1-2", 71))
-        if results[0] != results[1] and results[1] == results[2] and results[2] != results[3] and results[3] == results[4] == results[5]:
-            candidates.append((results[3], 80.0, "Cầu 1-2-3", 69))
-        if results[0] == results[1] == results[2] and results[2] != results[3] and results[3] == results[4] and results[4] != results[5]:
-            candidates.append((results[3], 80.0, "Cầu 3-2-1", 69))
-    if n >= 7:
-        if results[0] == results[1] == results[2] and results[3] != results[0] and results[3] == results[4] == results[5] == results[6]:
-            candidates.append((results[3], 85.0, "Cầu 3-1-3", 76))
-        if results[0] == results[1] and results[2] == results[3] == results[4] and results[5] == results[6] and results[1] != results[2] and results[4] != results[5]:
-            candidates.append((results[2], 83.0, "Cầu 2-3-2", 74))
+    # ---------------------------------------------------------
+    # 3. ĐẢO KHỐI ĐỘNG (2-2, 3-3, 4-4) - XƯƠNG SỐNG CỦA THUẬT TOÁN
+    # ---------------------------------------------------------
+    # Chia chuỗi thành các khối liên tiếp (VD: T,T,X,X,T -> [(T,2), (X,2), (T,1)])
+    blocks = []
+    curr_val = results[0]
+    curr_count = 1
+    for r in results[1:]:
+        if r == curr_val:
+            curr_count += 1
+        else:
+            blocks.append({'val': curr_val, 'len': curr_count})
+            curr_val = r
+            curr_count = 1
+    blocks.append({'val': curr_val, 'len': curr_count})
 
-    # 5. N-Gram
-    for ns in [6, 5, 4, 3]:
+    # Dò mẫu đảo khối nếu có ít nhất 3 khối
+    if len(blocks) >= 3:
+        # Kiểm tra xen kẽ (T-X-T hoặc X-T-X)
+        is_alternating = True
+        for i in range(1, min(len(blocks), 5)):
+            if blocks[i]['val'] == blocks[i-1]['val']:
+                is_alternating = False
+                break
+        
+        if is_alternating:
+            # Lấy độ dài của 2 khối đã hoàn thành gần nhất (bỏ qua khối đang chạy)
+            prev_len = blocks[1]['len']
+            prev2_len = blocks[2]['len']
+            
+            # Nếu 2 khối trước có độ dài bằng nhau -> Cầu chu kỳ (2-2, 3-3, 4-4)
+            if prev_len == prev2_len and prev_len >= 2:
+                cycle = prev_len
+                curr_block = blocks[0]
+                
+                # Trường hợp A: Khối hiện tại đang dở dang (chưa đủ chu kỳ)
+                if curr_block['len'] < cycle:
+                    candidates.append((curr_block['val'], 92.0, f"Bám cầu {cycle}-{cycle} (dở)", 92))
+                
+                # Trường hợp B: Khối hiện tại đã đủ chu kỳ -> Bẻ sang khối mới
+                elif curr_block['len'] == cycle:
+                    candidates.append((opposite, 95.0, f"Bẻ cầu {cycle}-{cycle}", 95))
+            
+            # Cầu 1-2-1 hoặc 2-1-2
+            if {prev_len, prev2_len} == {1, 2} and blocks[1]['val'] != blocks[2]['val']:
+                candidates.append((opposite, 80.0, "Cầu 1-2-1 / 2-1-2", 80))
+
+    # ---------------------------------------------------------
+    # 4. N-GRAM (DÒ LỊCH SỬ)
+    # ---------------------------------------------------------
+    for ns in [6, 5, 4]:
         if n < ns + 1: continue
-        current = tuple(results[:ns])
-        matches = {"Tài": 0, "Xỉu": 0}
-        total = 0
+        current_seq = tuple(results[:ns])
+        match_tai, match_xiu = 0, 0
         for i in range(len(results) - ns):
-            if tuple(results[i:i + ns]) == current and i + ns < len(results):
-                matches[results[i + ns]] += 1
-                total += 1
-        if total >= 2 and matches["Tài"] != matches["Xỉu"]:
-            winner = "Tài" if matches["Tài"] > matches["Xỉu"] else "Xỉu"
-            ratio = matches[winner] / total
+            if tuple(results[i:i+ns]) == current_seq and i + ns < len(results):
+                if results[i+ns] == "Tài": match_tai += 1
+                else: match_xiu += 1
+        
+        total_matches = match_tai + match_xiu
+        if total_matches >= 2 and match_tai != match_xiu:
+            winner = "Tài" if match_tai > match_xiu else "Xỉu"
+            ratio = max(match_tai, match_xiu) / total_matches
             if ratio >= 0.6:
-                candidates.append((winner, 55 + ratio * 35, f"N-gram({ns}) {winner} {matches[winner]}/{total}", 55 + ns * 3))
+                candidates.append((winner, 60 + ratio * 20, f"Trùng lịch sử {ns} phiên", 60))
 
-    # 6. Markov 1 & 2
+    # ---------------------------------------------------------
+    # 5. MARKOV & DICE BIAS
+    # ---------------------------------------------------------
     if n >= 6:
         trans = {"Tài": 0, "Xỉu": 0}
         for i in range(len(results) - 1):
@@ -352,52 +349,37 @@ def analyze_pattern(results, dice_sums=None):
         total = trans["Tài"] + trans["Xỉu"]
         if total >= 3 and trans["Tài"] != trans["Xỉu"]:
             winner = "Tài" if trans["Tài"] > trans["Xỉu"] else "Xỉu"
-            candidates.append((winner, 55 + (trans[winner]/total)*25, f"Markov {winner} {trans[winner]}/{total}", 60))
-    if n >= 8:
-        trans2 = {"Tài": 0, "Xỉu": 0}
-        for i in range(len(results) - 2):
-            if results[i] == results[0] and results[i + 1] == results[1] and i + 2 < len(results):
-                trans2[results[i + 2]] += 1
-        total2 = trans2["Tài"] + trans2["Xỉu"]
-        if total2 >= 2 and trans2["Tài"] != trans2["Xỉu"]:
-            winner = "Tài" if trans2["Tài"] > trans2["Xỉu"] else "Xỉu"
-            candidates.append((winner, 58 + (trans2[winner]/total2)*28, f"Markov-2 {winner} {trans2[winner]}/{total2}", 63))
+            candidates.append((winner, 65.0, f"Markov chuyển tiếp", 65))
 
-    # 7. Nghiêng
-    if n >= 10:
-        tai10 = sum(1 for r in results[:10] if r == "Tài")
-        if tai10 >= 9: candidates.append(("Xỉu", 85.0, "Nghiêng Xỉu cực mạnh", 80))
-        elif tai10 <= 1: candidates.append(("Tài", 85.0, "Nghiêng Tài cực mạnh", 80))
-        elif tai10 >= 8: candidates.append(("Xỉu", 74.0, "Nghiêng Xỉu mạnh", 68))
-        elif tai10 <= 2: candidates.append(("Tài", 74.0, "Nghiêng Tài mạnh", 68))
-        elif tai10 >= 7: candidates.append(("Xỉu", 63.0, "Nghiêng Xỉu", 57))
-        elif tai10 <= 3: candidates.append(("Tài", 63.0, "Nghiêng Tài", 57))
-
-    # 8. Dice Bias
     if dice_sums and len(dice_sums) >= 5:
-        recent = dice_sums[:10]
-        if len(recent) >= 3:
-            avg = sum(recent) / len(recent)
-            if avg >= 12.5: candidates.append(("Tài", 62.0, "Dice lệch Tài", 55))
-            elif avg <= 8.5: candidates.append(("Xỉu", 62.0, "Dice lệch Xỉu", 55))
+        avg = sum(dice_sums[:8]) / 8
+        if avg >= 12.5: candidates.append(("Tài", 60.0, "Xúc xắc lệch Tài", 60))
+        elif avg <= 8.5: candidates.append(("Xỉu", 60.0, "Xúc xắc lệch Xỉu", 60))
 
-    # VOTING
-    if not candidates: return opposite, 55.0, "Đảo nhịp"
-    best = max(candidates, key=lambda x: (x[3], x[1]))
-    pred = best[0]
+    # ---------------------------------------------------------
+    # 6. TỔNG HỢP (VOTING SYSTEM)
+    # ---------------------------------------------------------
+    if not candidates:
+        return opposite, 55.0, "Đảo nhịp (Mặc định)"
+
+    # Sắp xếp theo Độ ưu tiên giảm dần. Nếu bằng ưu tiên, xét Độ tin cậy.
+    candidates.sort(key=lambda x: (x[3], x[1]), reverse=True)
+    best_choice = candidates[0]
     
-    agree_w = sum(c[1] * c[3] for c in candidates if c[0] == pred)
-    disagree_w = sum(c[1] * c[3] for c in candidates if c[0] != pred)
-    total_w = agree_w + disagree_w
+    # Tính toán độ đồng thuận (Agreement) để điều chỉnh độ tin cậy
+    agree_weight = sum(c[1] for c in candidates if c[0] == best_choice[0])
+    total_weight = sum(c[1] for c in candidates)
     
-    conf = best[1]
-    if total_w > 0:
-        conf = best[1] * (0.85 + (agree_w / total_w) * 0.15)
-        
-    return pred, round(min(98.0, conf), 1), best[2]
+    final_conf = best_choice[1]
+    if total_weight > 0:
+        agreement = agree_weight / total_weight
+        # Nếu có nhiều tín hiệu đồng thuận, tăng nhẹ độ tin cậy
+        final_conf = final_conf * (0.9 + agreement * 0.1)
+
+    return best_choice[0], round(min(98.0, final_conf), 1), best_choice[2]
 
 # =====================================================================
-# FETCH API & ROUTES
+# FETCH DỮ LIỆU TỪ API
 # =====================================================================
 def generate_fallback(base=7116040):
     elapsed = int(time.time() / 60)
@@ -430,6 +412,9 @@ def fetch_sessions():
         print(f"[API ERROR] {e}")
     return generate_fallback(), 'fallback'
 
+# =====================================================================
+# FLASK ROUTES
+# =====================================================================
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -448,6 +433,7 @@ def history():
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
         dice_for_next = [v.get('total', 0) for v in valid][::-1]
+        
         next_pred, next_conf, next_pattern = analyze_pattern(history_for_next, dice_for_next)
         
         out.append({
