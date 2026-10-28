@@ -25,132 +25,202 @@ for _i in range(81):
     ALL_81_PATTERNS[_i] = _sig
 
 # =====================================================================
-# GIAO DIỆN HTML (ĐÃ NÂNG CẤP HIỂN THỊ ĐA CẦU)
+# GIAO DIỆN HTML (GIAO DIỆN VIP - ĐÃ XÓA TAG CẦU)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>API LC MD5 MINHLE</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>LC MD5 MINHLE </title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
     :root {
-        --bg-dark: #060913; --bg-card: #0d1424; --bg-card-hover: #131c30;
-        --text-main: #f1f5f9; --text-muted: #64748b; --border-color: #1e293b;
-        --tai-bg: #0284c7; --tai-bet-bg: rgba(2, 132, 199, 0.15);
-        --xiu-bg: #db2777; --xiu-bet-bg: rgba(219, 39, 119, 0.15);
-        --blue-main: #38bdf8; --blue-glow: rgba(56, 189, 248, 0.5);
-        --lose-color: #ef4444; --win-color: #38bdf8;
-        --purple: #a78bfa; --pink: #f472b6; --gold: #fbbf24; --green: #22c55e;
+        --bg-dark: #050814; 
+        --bg-card: rgba(15, 23, 42, 0.65);
+        --text-main: #f8fafc; 
+        --text-muted: #94a3b8; 
+        --border-glass: rgba(255, 255, 255, 0.08);
+        --tai-color: #0ea5e9; 
+        --tai-glow: rgba(14, 165, 233, 0.4);
+        --xiu-color: #ec4899; 
+        --xiu-glow: rgba(236, 72, 153, 0.4);
+        --gold: #fbbf24;
+        --lose: #ef4444;
+        --win: #10b981;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-    @keyframes bgFloat { 0%, 100% { transform: translateY(0) translateX(0); opacity: 0.6; } 50% { transform: translateY(-30px) translateX(20px); opacity: 1; } }
-    @keyframes bgFloat2 { 0%, 100% { transform: translateY(0) translateX(0); opacity: 0.5; } 50% { transform: translateY(20px) translateX(-25px); opacity: 0.9; } }
-    @keyframes rainbow-border { 0% { border-color: #38bdf8; box-shadow: 0 0 20px rgba(56,189,248,0.55); } 25% { border-color: #a78bfa; box-shadow: 0 0 22px rgba(167,139,250,0.55); } 50% { border-color: #f472b6; box-shadow: 0 0 22px rgba(244,114,182,0.55); } 75% { border-color: #fbbf24; box-shadow: 0 0 22px rgba(251,191,36,0.55); } 100% { border-color: #38bdf8; box-shadow: 0 0 20px rgba(56,189,248,0.55); } }
-    @keyframes textGlow { 0%, 100% { text-shadow: 0 0 6px var(--blue-glow); } 50% { text-shadow: 0 0 18px var(--blue-main), 0 0 30px rgba(56,189,248,0.5); } }
-    @keyframes titleShine { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes slideIn { from { opacity: 0; transform: translateY(20px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
-    @keyframes shimmerBar { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-    @keyframes dotPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(56,189,248,0.7); } 70% { box-shadow: 0 0 0 10px rgba(56,189,248,0); } }
     
-    body { background-color: var(--bg-dark); color: var(--text-main); padding-bottom: 30px; min-height: 100vh; background-image: radial-gradient(circle at 50% 0%, #0c1a32 0%, transparent 60%); overflow-x: hidden; position: relative; }
-    body::before, body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; }
-    body::before { background-image: radial-gradient(2px 2px at 15% 20%, rgba(56,189,248,0.45), transparent 50%), radial-gradient(2px 2px at 85% 60%, rgba(167,139,250,0.4), transparent 50%), radial-gradient(1.5px 1.5px at 45% 85%, rgba(56,189,248,0.5), transparent 50%), radial-gradient(1.5px 1.5px at 70% 15%, rgba(244,114,182,0.4), transparent 50%); animation: bgFloat 15s ease-in-out infinite; }
-    body::after { background-image: radial-gradient(1px 1px at 10% 50%, rgba(56,189,248,0.3), transparent 50%), radial-gradient(1px 1px at 90% 30%, rgba(167,139,250,0.35), transparent 50%), radial-gradient(1.5px 1.5px at 55% 90%, rgba(244,114,182,0.3), transparent 50%); animation: bgFloat2 20s ease-in-out infinite; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+    
+    body { 
+        background-color: var(--bg-dark); 
+        color: var(--text-main); 
+        padding-bottom: 30px; 
+        min-height: 100vh; 
+        background-image: 
+            radial-gradient(circle at 15% 50%, rgba(14, 165, 233, 0.08) 0%, transparent 50%),
+            radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.08) 0%, transparent 50%);
+        overflow-x: hidden; 
+        position: relative; 
+    }
 
-    .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; border-bottom: 1px solid var(--border-color); background: rgba(6, 9, 19, 0.85); backdrop-filter: blur(14px); position: sticky; top: 0; z-index: 100; }
+    /* Header VIP */
+    .header { 
+        display: flex; justify-content: space-between; align-items: center; 
+        padding: 16px 20px; 
+        background: rgba(5, 8, 20, 0.7); 
+        backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--border-glass);
+        position: sticky; top: 0; z-index: 100; 
+    }
     .header-left { display: flex; align-items: center; gap: 10px; }
-    .header-live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--blue-main); animation: dotPulse 1.8s infinite; }
-    .header-title { font-size: 20px; font-weight: 900; background: linear-gradient(90deg, #7dd3fc, #38bdf8, #a78bfa, #f472b6, #38bdf8, #7dd3fc); background-size: 300% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; animation: titleShine 4s linear infinite, textGlow 3s infinite; letter-spacing: -0.3px; }
-    .btn-reset { position: relative; overflow: hidden; background: rgba(239, 68, 68, 0.1); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.3s ease; }
-    .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 20px rgba(239,68,68,0.5); transform: translateY(-1px); }
-
-    .stats-bar { max-width: 600px; margin: 15px auto 0; padding: 0 15px; display: flex; justify-content: space-between; gap: 10px; position: relative; z-index: 1; }
-    .stat-item { flex: 1; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px; text-align: center; position: relative; overflow: hidden; transition: all 0.3s; }
-    .stat-item:hover { border-color: rgba(56,189,248,0.4); transform: translateY(-2px); }
-    .stat-item::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px; background: linear-gradient(90deg, transparent, var(--blue-main), transparent); background-size: 200% 100%; animation: shimmerBar 3s linear infinite; }
-    .stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 4px; font-weight: 600; }
-    .stat-value { font-size: 20px; font-weight: 900; color: var(--text-main); animation: textGlow 2.5s infinite; }
-    .stat-value.win { color: var(--blue-main); }
-
-    .container { padding: 15px; display: flex; flex-direction: column; gap: 12px; max-width: 600px; margin: 0 auto; position: relative; z-index: 1; }
-    .card-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; transition: all 0.3s ease; position: relative; animation: slideIn 0.5s ease-out backwards; overflow: hidden; }
-    .card-item::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: linear-gradient(180deg, transparent, var(--blue-main), transparent); opacity: 0; transition: opacity 0.3s; }
-    .card-item:hover { background: var(--bg-card-hover); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
-    .card-item:hover::before { opacity: 1; }
-    .card-item.active { background: linear-gradient(145deg, #0d1424, #0f1a2e); animation: slideIn 0.5s ease-out backwards, rainbow-border 3s linear infinite; border-width: 1.5px; }
-    .card-item.active::after { content: '●'; position: absolute; top: 8px; right: 10px; color: var(--blue-main); font-size: 10px; animation: dotPulse 1.5s infinite; }
-
-    .col-left { display: flex; flex-direction: column; gap: 5px; flex: 1.4; }
-    .id-text { font-size: 16px; font-weight: 800; color: #fff; letter-spacing: 0.5px; background: linear-gradient(90deg, #fff, #7dd3fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .bot-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-    .bot-label { color: var(--text-muted); font-weight: 600; }
-    .bet-badge { padding: 3px 10px; border-radius: 20px; font-weight: 700; font-size: 11px; }
-    .bet-tai { background: var(--tai-bet-bg); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); }
-    .bet-xiu { background: var(--xiu-bet-bg); color: #f472b6; border: 1px solid rgba(244,114,182,0.3); }
-    .conf-text { color: var(--text-muted); font-size: 10.5px; font-style: italic; }
-    .conf-bar-wrap { height: 3px; background: rgba(56,189,248,0.12); border-radius: 2px; overflow: hidden; margin-top: 3px; margin-bottom: 4px;}
-    .conf-bar { height: 100%; border-radius: 2px; background: linear-gradient(90deg, #38bdf8, #7dd3fc, #a78bfa, #38bdf8); background-size: 200% 100%; animation: shimmerBar 2s linear infinite; transition: width 0.6s ease; }
+    .live-dot { 
+        width: 8px; height: 8px; border-radius: 50%; background: var(--gold); 
+        box-shadow: 0 0 10px var(--gold); animation: pulse 1.5s infinite; 
+    }
+    @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.5); opacity: 0.5; } }
+    .header-title { 
+        font-size: 18px; font-weight: 800; 
+        background: linear-gradient(90deg, #fff, #bae6fd, #fff); 
+        background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; 
+        animation: shine 3s linear infinite; letter-spacing: -0.5px;
+    }
+    @keyframes shine { to { background-position: 200% center; } }
     
-    /* CSS CHO ĐA TAG CẦU */
-    .pattern-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
-    .pattern-tag { font-size: 9.5px; color: #94a3b8; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); display: inline-block; }
-    .pattern-tag.hot { color: var(--gold); border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.1); }
-    .pattern-tag.sys { color: var(--purple); border-color: rgba(167,139,250,0.35); background: rgba(167,139,250,0.1); }
-    .pattern-tag.markov { color: #38bdf8; border-color: rgba(56,189,248,0.35); background: rgba(56,189,248,0.1); }
+    .btn-reset { 
+        background: rgba(239, 68, 68, 0.1); color: #fca5a5; 
+        border: 1px solid rgba(239, 68, 68, 0.3); 
+        padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 12px; 
+        cursor: pointer; transition: all 0.3s; 
+    }
+    .btn-reset:hover { background: rgba(239, 68, 68, 0.2); box-shadow: 0 0 15px rgba(239, 68, 68, 0.2); }
 
-    .col-mid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; flex: 1; }
-    .pred-badge { padding: 5px 14px; border-radius: 20px; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; transition: all 0.3s; }
-    .pred-tai { background: var(--tai-bg); color: #fff; box-shadow: 0 0 12px rgba(2,132,199,0.5); }
-    .pred-xiu { background: var(--xiu-bg); color: #fff; box-shadow: 0 0 12px rgba(219,39,119,0.5); }
-    .pred-empty { background: transparent; border: 1px dashed var(--border-color); color: var(--text-muted); }
-    .dice-text { font-size: 13px; font-weight: 600; color: #cbd5e1; white-space: nowrap; }
+    /* Thanh Thống Kê */
+    .stats-bar { 
+        max-width: 600px; margin: 16px auto 0; padding: 0 16px; 
+        display: flex; gap: 12px; 
+    }
+    .stat-box { 
+        flex: 1; background: var(--bg-card); border: 1px solid var(--border-glass); 
+        border-radius: 16px; padding: 12px; text-align: center; 
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        position: relative; overflow: hidden;
+    }
+    .stat-box::before {
+        content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    }
+    .stat-lbl { font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .stat-val { font-size: 20px; font-weight: 800; color: #fff; }
+    .stat-val.highlight { color: var(--tai-color); text-shadow: 0 0 15px var(--tai-glow); }
 
-    .col-right { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; flex: 0.7; gap: 3px; }
-    .status-text { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 5px; }
-    .status-win { color: var(--win-color); text-shadow: 0 0 12px var(--blue-glow); animation: textGlow 2s infinite; }
-    .status-lose { color: var(--lose-color); }
-    .status-wait { color: var(--blue-main); }
-    .spin { display: inline-block; animation: spin 2s linear infinite; }
+    /* Danh sách Card */
+    .container { padding: 16px; display: flex; flex-direction: column; gap: 12px; max-width: 600px; margin: 0 auto; }
     
-    .loading { text-align: center; padding: 50px; color: var(--blue-main); font-weight: 600; letter-spacing: 1px; animation: textGlow 2s infinite; }
-    @media (max-width: 400px) { .header-title { font-size: 16px; } .stat-value { font-size: 16px; } .dice-text { font-size: 11px; } .pattern-tag { font-size: 8.5px; } }
+    .card { 
+        background: var(--bg-card); 
+        border: 1px solid var(--border-glass); 
+        border-radius: 16px; padding: 16px; 
+        display: flex; justify-content: space-between; align-items: center; 
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+        position: relative;
+    }
+    .card:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.15); box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
+    
+    .card.active { 
+        border-color: rgba(251, 191, 36, 0.4); 
+        box-shadow: 0 0 25px rgba(251, 191, 36, 0.15), inset 0 0 20px rgba(251, 191, 36, 0.05); 
+    }
+    .card.active::after { 
+        content: ''; position: absolute; top: 16px; right: 16px; 
+        width: 6px; height: 6px; border-radius: 50%; background: var(--gold); 
+        box-shadow: 0 0 10px var(--gold); animation: pulse 1.5s infinite;
+    }
+
+    /* Cột Trái */
+    .col-left { display: flex; flex-direction: column; gap: 6px; flex: 1.2; }
+    .session-id { font-size: 16px; font-weight: 800; color: #fff; letter-spacing: 0.5px; }
+    .bot-info { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .bot-lbl { color: var(--text-muted); font-weight: 600; }
+    
+    .badge { padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .badge-tai { background: rgba(14, 165, 233, 0.15); color: #7dd3fc; border: 1px solid rgba(14, 165, 233, 0.3); }
+    .badge-xiu { background: rgba(236, 72, 153, 0.15); color: #f9a8d4; border: 1px solid rgba(236, 72, 153, 0.3); }
+    
+    /* Thanh Độ Tin Cậy */
+    .conf-wrap { margin-top: 6px; width: 100%; max-width: 140px; }
+    .conf-text { font-size: 10px; color: var(--text-muted); font-weight: 600; display: flex; justify-content: space-between; margin-bottom: 2px; }
+    .conf-bg { height: 4px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; }
+    .conf-bar { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--tai-color), #818cf8); transition: width 0.8s ease; }
+    .conf-bar.xiu { background: linear-gradient(90deg, var(--xiu-color), #f472b6); }
+
+    /* Cột Giữa */
+    .col-mid { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 4px; }
+    .pred-circle { 
+        padding: 6px 16px; border-radius: 20px; font-weight: 800; font-size: 14px; 
+        letter-spacing: 1px; text-transform: uppercase;
+    }
+    .pred-tai { background: linear-gradient(135deg, #0284c7, #38bdf8); color: #fff; box-shadow: 0 0 15px var(--tai-glow); }
+    .pred-xiu { background: linear-gradient(135deg, #be185d, #ec4899); color: #fff; box-shadow: 0 0 15px var(--xiu-glow); }
+    .pred-wait { border: 1px dashed rgba(255,255,255,0.2); color: var(--text-muted); }
+    .dice { font-size: 12px; font-weight: 600; color: #cbd5e1; white-space: nowrap; }
+
+    /* Cột Phải */
+    .col-right { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; flex: 0.8; }
+    .status { font-size: 13px; font-weight: 800; display: flex; align-items: center; gap: 4px; }
+    .st-win { color: var(--win); text-shadow: 0 0 10px rgba(16, 185, 129, 0.3); }
+    .st-lose { color: var(--lose); }
+    .st-wait { color: var(--gold); }
+    
+    .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; animation: pulse 2s infinite; }
+    
+    @media (max-width: 380px) {
+        .header-title { font-size: 15px; }
+        .stat-val { font-size: 16px; }
+        .session-id { font-size: 14px; }
+        .dice { font-size: 11px; }
+        .pred-circle { font-size: 12px; padding: 4px 12px; }
+    }
 </style>
 </head>
 <body>
+
 <div class="header">
     <div class="header-left">
-        <div class="header-live-dot"></div>
+        <div class="live-dot"></div>
         <div class="header-title">⚡ LC MD5 MINHLE </div>
     </div>
     <button class="btn-reset" onclick="confirmReset()">↻ Reset</button>
 </div>
+
 <div class="stats-bar">
-    <div class="stat-item"><div class="stat-label">Tổng phiên</div><div class="stat-value" id="stat-total">0</div></div>
-    <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
-    <div class="stat-item"><div class="stat-label">Tỷ lệ</div><div class="stat-value win" id="stat-rate">0%</div></div>
+    <div class="stat-box"><div class="stat-lbl">Tổng Phiên</div><div class="stat-val" id="stat-total">0</div></div>
+    <div class="stat-box"><div class="stat-lbl">Thắng</div><div class="stat-val highlight" id="stat-win">0</div></div>
+    <div class="stat-box"><div class="stat-lbl">Tỷ Lệ</div><div class="stat-val highlight" id="stat-rate">0%</div></div>
 </div>
+
 <div class="container" id="list-container">
-    <div class="loading">Đang kết nối Server...</div>
+    <div class="loading">Đang tải dữ liệu siêu tốc...</div>
 </div>
+
 <script>
 let isResetting = false;
 function animateNumber(el, target, suffix = '') {
     const start = parseInt(el.innerText.replace(/[^0-9]/g, '')) || 0;
     if (start === target) { el.innerText = target + suffix; return; }
-    const duration = 700; const startTime = performance.now();
+    const duration = 800; const startTime = performance.now();
     function update(t) {
         const p = Math.min((t - startTime) / duration, 1);
-        const ease = 1 - Math.pow(1 - p, 3);
+        const ease = 1 - Math.pow(1 - p, 4);
         el.innerText = Math.floor(start + (target - start) * ease) + suffix;
         if (p < 1) requestAnimationFrame(update);
     }
     requestAnimationFrame(update);
 }
+
 async function fetchData() {
     if (isResetting) return;
     try {
@@ -158,11 +228,13 @@ async function fetchData() {
         const data = await r.json();
         renderList(data.rows || [], data.stats || {});
     } catch (e) {
-        document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose-color)">Lỗi kết nối Server!</div>';
+        document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose)">Lỗi kết nối Server!</div>';
     }
 }
+
 function renderList(rows, stats) {
     const container = document.getElementById('list-container');
+    
     if (stats.total > 0) {
         animateNumber(document.getElementById('stat-total'), stats.total);
         animateNumber(document.getElementById('stat-win'), stats.correct);
@@ -172,101 +244,121 @@ function renderList(rows, stats) {
         document.getElementById('stat-win').innerText = '0';
         document.getElementById('stat-rate').innerText = '0%';
     }
+
     if (!rows.length) {
-        container.innerHTML = '<div class="loading">Không có dữ liệu. Hãy đợi phiên mới.</div>';
+        container.innerHTML = '<div class="loading">Không có dữ liệu.</div>';
         return;
     }
-    container.innerHTML = '';
+
+    let html = '';
     rows.forEach((row, idx) => {
-        const div = document.createElement('div');
-        div.className = 'card-item' + (row.is_next ? ' active' : '');
-        div.style.animationDelay = (idx * 40) + 'ms';
+        const isActive = row.is_next ? ' active' : '';
+        const delay = (idx * 50);
         
-        let predBadge = `<span class="pred-badge pred-empty">-</span>`;
-        let betBadge = `<span class="bet-badge" style="background:#1e293b;color:#94a3b8;">cược -</span>`;
-        
+        // Xử lý Badge Bot Cược
+        let badgeHtml = `<span class="badge" style="background:rgba(255,255,255,0.05);color:#94a3b8;">Nghỉ</span>`;
+        let confClass = 'conf-bar';
         if (row.prediction === "Tài") {
-            predBadge = `<span class="pred-badge pred-tai">TÀI</span>`;
-            betBadge = `<span class="bet-badge bet-tai">cược tài</span>`;
-        }
-        if (row.prediction === "Xỉu") {
-            predBadge = `<span class="pred-badge pred-xiu">XỈU</span>`;
-            betBadge = `<span class="bet-badge bet-xiu">cược xỉu</span>`;
-        }
-        
-        let resultBadge = `<span class="pred-badge pred-empty">-</span>`;
-        if (row.result === "Tài") resultBadge = `<span class="pred-badge pred-tai">TÀI</span>`;
-        if (row.result === "Xỉu") resultBadge = `<span class="pred-badge pred-xiu">XỈU</span>`;
-        
-        let diceDisplay = "? + ? + ?";
-        if (row.dice !== "? + ? + ?") {
-            const p = row.dice.split(" + ");
-            diceDisplay = `${row.dice} (${parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2])})`;
-        }
-        
-        let statusHtml = '';
-        if (row.is_next) statusHtml = `<div class="status-text status-wait">Chờ <span class="spin">⏳</span></div>`;
-        else if (row.is_correct === true) statusHtml = `<div class="status-text status-win">Đúng ✅</div>`;
-        else if (row.is_correct === false) statusHtml = `<div class="status-text status-lose">Sai ❌</div>`;
-        else statusHtml = `<div class="status-text" style="color:var(--text-muted)">-</div>`;
-        
-        // Render danh sách các cầu đang chạy
-        let patternTagsHtml = '';
-        if (row.patterns && row.patterns.length > 0) {
-            patternTagsHtml = row.patterns.map(p => {
-                let tagClass = 'pattern-tag';
-                if(p.includes('Mẫu')) tagClass += ' sys';
-                else if(p.includes('Markov')) tagClass += ' markov';
-                else if(p.includes('bệt') || p.includes('Bẻ')) tagClass += ' hot';
-                return `<span class="${tagClass}">${p}</span>`;
-            }).join('');
-        } else if (row.pattern) {
-            patternTagsHtml = `<span class="pattern-tag">${row.pattern}</span>`;
+            badgeHtml = `<span class="badge badge-tai">Cược Tài</span>`;
+        } else if (row.prediction === "Xỉu") {
+            badgeHtml = `<span class="badge badge-xiu">Cược Xỉu</span>`;
+            confClass = 'conf-bar xiu';
         }
 
-        div.innerHTML = `
-            <div class="col-left">
-                <div class="id-text">#${row.phien}</div>
-                <div class="bot-line"><span class="bot-label">Bot:</span> ${betBadge}</div>
-                <div class="conf-text">Độ tin cậy: ${row.confidence}%</div>
-                <div class="conf-bar-wrap"><div class="conf-bar" style="width:${row.confidence}%"></div></div>
-                <div class="pattern-list">${patternTagsHtml}</div>
+        // Xử lý Dự đoán & Kết quả
+        let predHtml = `<span class="pred-circle pred-wait">-</span>`;
+        if (row.prediction === "Tài") predHtml = `<span class="pred-circle pred-tai">TÀI</span>`;
+        if (row.prediction === "Xỉu") predHtml = `<span class="pred-circle pred-xiu">XỈU</span>`;
+        
+        let diceHtml = "? + ? + ?";
+        if (row.dice !== "? + ? + ?") {
+            const p = row.dice.split(" + ");
+            diceHtml = `${row.dice} <span style="color:#94a3b8">(${parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2])})</span>`;
+        }
+
+        // Xử lý Trạng thái
+        let statusHtml = `<div class="status" style="color:#64748b">-</div>`;
+        if (row.is_next) {
+            statusHtml = `<div class="status st-wait">Chờ </div>`;
+        } else if (row.is_correct === true) {
+            statusHtml = `<div class="status st-win">Đúng ✅</div>`;
+        } else if (row.is_correct === false) {
+            statusHtml = `<div class="status st-lose">Sai ❌</div>`;
+        }
+
+        html += `
+            <div class="card${isActive}" style="animation-delay: ${delay}ms">
+                <div class="col-left">
+                    <div class="session-id">#${row.phien}</div>
+                    <div class="bot-info"><span class="bot-lbl">Bot:</span> ${badgeHtml}</div>
+                    <div class="conf-wrap">
+                        <div class="conf-text"><span>Độ tin cậy</span><span>${row.confidence}%</span></div>
+                        <div class="conf-bg"><div class="${confClass}" style="width:${row.confidence}%"></div></div>
+                    </div>
+                </div>
+                <div class="col-mid">
+                    ${predHtml}
+                    <div class="dice">${diceHtml}</div>
+                </div>
+                <div class="col-right">
+                    ${statusHtml}
+                </div>
             </div>
-            <div class="col-mid">${row.is_next ? predBadge : resultBadge}<div class="dice-text">${diceDisplay}</div></div>
-            <div class="col-right">${statusHtml}</div>
         `;
-        container.appendChild(div);
     });
+    container.innerHTML = html;
 }
+
 async function confirmReset() {
     Swal.fire({
-        title: 'Xác nhận Reset?', text: "Lịch sử hiển thị trên màn hình sẽ bị ẩn đi. Hệ thống vẫn tính toán ngầm!", icon: 'warning',
-        showCancelButton: true, confirmButtonColor: '#38bdf8', cancelButtonColor: '#1e293b', confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
+        title: 'Xác nhận Reset?', 
+        text: "Ẩn lịch sử hiện tại, tiếp tục tính toán ngầm!",
+        icon: 'warning',
+        background: '#0f172a', color: '#fff',
+        showCancelButton: true, 
+        confirmButtonColor: '#0ea5e9', cancelButtonColor: '#334155', 
+        confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
     }).then(async (result) => {
         if (result.isConfirmed) {
             isResetting = true;
-            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, didOpen: () => { Swal.showLoading() } });
+            Swal.fire({ 
+                title: 'Đang Reset...', 
+                background: '#0f172a', color: '#fff',
+                allowOutsideClick: false, didOpen: () => { Swal.showLoading() } 
+            });
             try {
                 const res = await fetch('/api/reset', { method: 'POST' });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    Swal.fire({ title: 'Thành công!', text: 'Đã chốt mốc ẩn lịch sử từ phiên #' + data.reset_to, icon: 'success', confirmButtonColor: '#38bdf8' });
+                    Swal.fire({ 
+                        title: 'Thành công!', 
+                        text: 'Đã chốt mốc từ phiên #' + data.reset_to, 
+                        icon: 'success', 
+                        background: '#0f172a', color: '#fff',
+                        confirmButtonColor: '#0ea5e9' 
+                    });
                     isResetting = false; fetchData();
                 } else throw new Error(data.message);
             } catch (error) {
-                Swal.fire('Lỗi!', 'Không thể reset: ' + error.message, 'error'); isResetting = false;
+                Swal.fire({
+                    title: 'Lỗi!', text: error.message, icon: 'error',
+                    background: '#0f172a', color: '#fff'
+                }); 
+                isResetting = false;
             }
         }
     });
 }
-fetchData(); setInterval(fetchData, 5000);
+
+fetchData(); 
+setInterval(fetchData, 4000); // Cập nhật nhanh hơn (4s)
 </script>
 </body>
 </html>
 """
 
 # =====================================================================
-# HELPER FUNCTIONS - HỆ THỐNG 81 MẪU
+# HELPER FUNCTIONS
 # =====================================================================
 def build_blocks(results):
     if not results: return []
@@ -295,10 +387,6 @@ def encode_pattern_81(block_lengths):
         code = code * 3 + {'S': 0, 'M': 1, 'L': 2}[block_class(L)]
     return code
 
-def pattern_signature(block_lengths):
-    if len(block_lengths) < 4: return "----"
-    return ''.join(block_class(L) for L in block_lengths[-4:])
-
 def learn_81_patterns(results):
     stats = {}
     n = len(results)
@@ -309,149 +397,159 @@ def learn_81_patterns(results):
         four_lens = [b['len'] for b in blocks[1:5]]
         code = encode_pattern_81(four_lens)
         if code is None: continue
-        current_val = blocks[0]['val']
-        current_len = blocks[0]['len']
-        actual_next = results[k - 1]
-        continued = (actual_next == current_val)
         
-        key1 = (code, min(current_len, 4))
-        if key1 not in stats: stats[key1] = {'continue': 0, 'break': 0}
-        stats[key1]['continue' if continued else 'break'] += 1
+        continued = (results[k - 1] == blocks[0]['val'])
+        current_len = min(blocks[0]['len'], 4)
         
-        key2 = code
-        if key2 not in stats: stats[key2] = {'continue': 0, 'break': 0}
-        stats[key2]['continue' if continued else 'break'] += 1
+        for key in [(code, current_len), code]:
+            if key not in stats: stats[key] = {'continue': 0, 'break': 0}
+            stats[key]['continue' if continued else 'break'] += 1
     return stats
 
 # =====================================================================
-# THUẬT TOÁN V6.0 - ĐA TẦNG & TRẢ VỀ NHIỀU CẦU
+# THUẬT TOÁN V7.0 - TỐI ƯU HÓA ĐA TẦNG (FULL CẦU)
 # =====================================================================
 def analyze_pattern(results, dice_sums=None):
     if not results or len(results) < 3:
-        return "Tài", 50.0, ["Khởi tạo"]
+        return "Tài", 50.0, "Khởi tạo"
     
-    last = results[0]
-    opposite = "Xỉu" if last == "Tài" else "Tài"
     n = len(results)
     candidates = []
     
+    # 1. PHÂN TÍCH KHỐI (Bệt / Đảo)
     blocks = build_blocks(results)
-    current_val = blocks[0]['val']
-    current_len = blocks[0]['len']
+    curr_val = blocks[0]['val']
+    curr_len = blocks[0]['len']
+    opp_val = "Xỉu" if curr_val == "Tài" else "Tài"
+
+    # --- Cầu Bệt (Streak) ---
+    if curr_len >= 10:   
+        candidates.append((opp_val, 96.0, 100, "Bẻ bệt"))
+    elif curr_len >= 8:  
+        candidates.append((opp_val, 92.0, 90, "Bẻ bệt"))
+    elif curr_len >= 6:  
+        candidates.append((opp_val, 85.0, 80, "Bẻ bệt"))
+    elif curr_len == 5:  
+        candidates.append((opp_val, 75.0, 70, "Bẻ bệt"))
+    elif curr_len == 4:  
+        candidates.append((curr_val, 70.0, 65, "Bám bệt"))
+    elif curr_len == 3:  
+        candidates.append((curr_val, 60.0, 55, "Bám bệt"))
     
-    # === 1. CẦU BỆT ===
-    if current_len >= 10:    candidates.append((opposite, 95.0, f"Bẻ bệt {current_len}", 92))
-    elif current_len >= 8:   candidates.append((opposite, 90.0, f"Bẻ bệt {current_len}", 88))
-    elif current_len >= 6:   candidates.append((opposite, 82.0, f"Bẻ bệt {current_len}", 78))
-    elif current_len == 5:   candidates.append((opposite, 72.0, "Bẻ bệt 5", 68))
-    elif current_len == 4:   candidates.append((current_val, 65.0, "Bám bệt 4", 60))
-    elif current_len == 3:   candidates.append((current_val, 58.0, "Bám bệt 3", 55))
-    elif current_len == 2:   candidates.append((current_val, 53.0, "Bám bệt 2", 52))
-    
-    # === 2. ĐẢO 1-1 ===
+    # --- Đảo 1-1 ---
     alt_len = 0
     for i in range(n - 1):
         if results[i] != results[i + 1]: alt_len += 1
         else: break
-    if alt_len >= 10:    candidates.append((opposite, 92.0, f"Đảo 1-1 ({alt_len})", 90))
-    elif alt_len >= 7:   candidates.append((opposite, 85.0, f"Đảo 1-1 ({alt_len})", 80))
-    elif alt_len >= 4:   candidates.append((opposite, 75.0, f"Đảo 1-1 ngắn", 68))
-    
-    # === 3. ĐẢO KHỐI (Cầu 2-2, 1-2-1, 2-1-2) ===
+        
+    if alt_len >= 10:    
+        candidates.append((opp_val, 95.0, 95, "Đảo 1-1 dài"))
+    elif alt_len >= 7:   
+        candidates.append((opp_val, 88.0, 85, "Đảo 1-1"))
+    elif alt_len >= 4:   
+        candidates.append((opp_val, 78.0, 75, "Đảo 1-1 ngắn"))
+
+    # --- Cầu Đảo Khối (2-2, 1-2-1) ---
     if len(blocks) >= 3:
-        is_alt = all(blocks[i]['val'] != blocks[i-1]['val'] for i in range(1, min(len(blocks), 6)))
-        if is_alt:
+        is_alt_block = all(blocks[i]['val'] != blocks[i-1]['val'] for i in range(1, min(len(blocks), 5)))
+        if is_alt_block:
             p1, p2 = blocks[1]['len'], blocks[2]['len']
             if p1 == p2 and p1 >= 2:
-                cycle = p1
-                if current_len < cycle: candidates.append((current_val, 94.0, f"Bám {cycle}-{cycle} dở", 93))
-                elif current_len == cycle: candidates.append((opposite, 96.0, f"Bẻ {cycle}-{cycle}", 95))
+                if curr_len < p1: 
+                    candidates.append((curr_val, 92.0, 90, "Bám cầu đối xứng"))
+                elif curr_len == p1: 
+                    candidates.append((opp_val, 96.0, 98, "Bẻ cầu đối xứng"))
             if len(blocks) >= 4:
                 p3 = blocks[3]['len']
-                if p1 == p3 and p2 != p1 and p1 <= 5: candidates.append((opposite, 82.0, f"Cầu {p1}-{p2}-{p1}", 78))
-            if {p1, p2} == {1, 2}: candidates.append((opposite, 80.0, "Cầu 1-2", 76))
-    
-    # === 4. HỆ THỐNG 81 MẪU ===
+                if p1 == p3 and p2 != p1 and p1 <= 5:
+                    candidates.append((opp_val, 88.0, 85, "Cầu Palindrom"))
+
+    # 2. HỆ THỐNG 81 MẪU (NÂNG CẤP)
     if len(blocks) >= 5:
         stats = learn_81_patterns(results)
         four_lens = [b['len'] for b in blocks[1:5]]
         code = encode_pattern_81(four_lens)
-        sig = pattern_signature(four_lens)
         
         if code is not None:
-            for key in [(code, min(current_len, 4)), code]:
+            for key in [(code, min(curr_len, 4)), code]:
                 if key in stats:
                     s = stats[key]
                     total = s['continue'] + s['break']
-                    if total >= 2:
+                    if total >= 3: # Yêu cầu mẫu lặp lại ít nhất 3 lần
                         cont_rate = s['continue'] / total
-                        if cont_rate >= 0.62:
-                            candidates.append((current_val, 55 + cont_rate * 32, f"Mẫu#{code+1:02d} [{sig}] Tiếp", 75))
-                        elif cont_rate <= 0.38:
-                            candidates.append((opposite, 55 + (1 - cont_rate) * 32, f"Mẫu#{code+1:02d} [{sig}] Gãy", 75))
+                        if cont_rate >= 0.65: 
+                            candidates.append((curr_val, 65 + cont_rate * 25, 70, "Mẫu 81 Tiếp"))
+                        elif cont_rate <= 0.35: 
+                            candidates.append((opp_val, 65 + (1 - cont_rate) * 25, 70, "Mẫu 81 Gãy"))
                         break
-    
-    # === 5. N-GRAM (Dò lịch sử) ===
+
+    # 3. N-GRAM (TÌM CHUỖI TƯƠNG ĐỒNG)
     for ns in [8, 7, 6, 5, 4]:
         if n < ns + 1: continue
-        current_seq = tuple(results[:ns])
-        match_tai, match_xiu = 0, 0
+        curr_seq = tuple(results[:ns])
+        m_tai, m_xiu = 0, 0
         for i in range(len(results) - ns):
-            if tuple(results[i:i+ns]) == current_seq and i + ns < len(results):
-                if results[i+ns] == "Tài": match_tai += 1
-                else: match_xiu += 1
-        total_m = match_tai + match_xiu
-        if total_m >= 2 and match_tai != match_xiu:
-            winner = "Tài" if match_tai > match_xiu else "Xỉu"
-            ratio = max(match_tai, match_xiu) / total_m
-            if ratio >= 0.6:
-                candidates.append((winner, 55 + ratio * 25, f"N-gram {ns} ({match_tai}T-{match_xiu}X)", 62 + ns))
+            if tuple(results[i:i+ns]) == curr_seq and i + ns < len(results):
+                if results[i+ns] == "Tài": m_tai += 1
+                else: m_xiu += 1
+        tot = m_tai + m_xiu
+        if tot >= 3 and abs(m_tai - m_xiu) >= 2: # Cần sự chênh lệch rõ rệt
+            w = "Tài" if m_tai > m_xiu else "Xỉu"
+            ratio = max(m_tai, m_xiu) / tot
+            if ratio >= 0.65:
+                candidates.append((w, 60 + ratio * 20, 65 + ns, "N-gram"))
                 break
-    
-    # === 6. MARKOV TRANSITION ===
-    if n >= 8:
+
+    # 4. MARKOV TRANSITION
+    if n >= 10:
         trans = {"Tài": 0, "Xỉu": 0}
+        last = results[0]
         for i in range(len(results) - 1):
             if results[i] == last: trans[results[i + 1]] += 1
-        total_t = trans["Tài"] + trans["Xỉu"]
-        if total_t >= 3 and trans["Tài"] != trans["Xỉu"]:
-            winner = "Tài" if trans["Tài"] > trans["Xỉu"] else "Xỉu"
-            ratio = max(trans["Tài"], trans["Xỉu"]) / total_t
-            candidates.append((winner, 60 + ratio * 15, f"Markov ({trans['Tài']}T-{trans['Xỉu']}X)", 58))
-    
-    # === 7. XÚC XẮC BIAS (Dựa trên tổng điểm trung bình) ===
+        tot_t = trans["Tài"] + trans["Xỉu"]
+        if tot_t >= 4 and trans["Tài"] != trans["Xỉu"]:
+            w = "Tài" if trans["Tài"] > trans["Xỉu"] else "Xỉu"
+            ratio = max(trans["Tài"], trans["Xỉu"]) / tot_t
+            candidates.append((w, 60 + ratio * 15, 60, "Markov"))
+
+    # 5. XÚC XẮC BIAS (DICE TREND)
     if dice_sums and len(dice_sums) >= 5:
-        avg_recent = sum(dice_sums[:10]) / min(10, len(dice_sums))
-        if avg_recent >= 12.0: candidates.append(("Tài", 65.0, f"Bias Xúc Xắc Tài", 60))
-        elif avg_recent <= 8.5: candidates.append(("Xỉu", 65.0, f"Bias Xúc Xắc Xỉu", 60))
-    
-    # === VOTING SYSTEM ===
+        recent_dice = dice_sums[:8] # Lấy 8 phiên gần nhất
+        avg = sum(recent_dice) / len(recent_dice)
+        if avg >= 12.5: 
+            candidates.append(("Tài", 70.0, 65, "Bias Xúc Xắc"))
+        elif avg <= 8.5: 
+            candidates.append(("Xỉu", 70.0, 65, "Bias Xúc Xắc"))
+
+    # === VOTING SYSTEM (TỔNG HỢP ĐIỂM) ===
     if not candidates:
-        return opposite, 55.0, ["Đảo nhịp (Mặc định)"]
+        return opp_val, 55.0, "Đảo nhịp"
+
+    score_tai = 0
+    score_xiu = 0
     
-    tai_score = sum(c[1] for c in candidates if c[0] == "Tài") * 0.7 + sum(c[3] for c in candidates if c[0] == "Tài") * 0.3
-    xiu_score = sum(c[1] for c in candidates if c[0] == "Xỉu") * 0.7 + sum(c[3] for c in candidates if c[0] == "Xỉu") * 0.3
+    # Tính điểm dựa trên: Confidence * Priority (Độ ưu tiên)
+    for pred, conf, prio, name in candidates:
+        # Cầu có Priority càng cao (Bệt, Đảo dài) thì sức nặng càng lớn
+        point = conf * (prio / 100.0) 
+        if pred == "Tài": score_tai += point
+        else: score_xiu += point
+
+    winner = "Tài" if score_tai > score_xiu else "Xỉu"
     
-    winner = "Tài" if tai_score > xiu_score else "Xỉu"
+    # Tính lại độ tin cậy cuối cùng (Dựa trên tỷ lệ điểm)
+    total_score = score_tai + score_xiu
+    win_score = score_tai if winner == "Tài" else score_xiu
+    base_ratio = win_score / total_score if total_score > 0 else 0.5
     
-    # Lấy danh sách TẤT CẢ các cầu đồng thuận với kết quả (để hiển thị)
-    winning_patterns = [c[2] for c in candidates if c[0] == winner]
-    # Sắp xếp cầu theo độ ưu tiên giảm dần
-    winning_patterns.sort(key=lambda name: next((c[3] for c in candidates if c[2] == name), 0), reverse=True)
+    # Map tỷ lệ ra thang 50 - 98%
+    final_conf = 50 + (base_ratio * 48)
     
-    # Tính toán độ tin cậy cuối cùng
-    agree_score = tai_score if winner == "Tài" else xiu_score
-    total_score = tai_score + xiu_score
-    agree_ratio = agree_score / total_score if total_score > 0 else 0
-    best_conf = max((c[1] for c in candidates if c[0] == winner), default=55.0)
-    
-    final_conf = best_conf * (0.85 + agree_ratio * 0.15)
-    
-    # Nếu không có cầu nào đồng thuận (hiếm), trả về Tổng hợp
-    if not winning_patterns:
-        winning_patterns = [f"Tổng hợp ({len(candidates)} tín hiệu)"]
-        
-    return winner, round(min(98.0, final_conf), 1), winning_patterns
+    # Lấy tên cầu mạnh nhất để trả về (Dù UI không hiện, nhưng API vẫn trả ra cho ông nào dùng API)
+    best_signal = max(candidates, key=lambda x: (x[2], x[1]))
+    best_name = best_signal[3] if best_signal[0] == winner else "Tổng hợp đa cầu"
+
+    return winner, round(final_conf, 1), best_name
 
 # =====================================================================
 # FETCH DỮ LIỆU
@@ -470,7 +568,7 @@ def generate_fallback(base=7116040):
 
 def fetch_sessions():
     try:
-        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Accept': 'application/json'}
         r = requests.get(API_URL, timeout=8, headers=headers)
         if r.status_code == 200:
             data = r.json()
@@ -504,17 +602,20 @@ def history():
         correct_count = 0
         total_past = 0
         
+        # Dự đoán phiên tiếp theo
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
         dice_for_next = [v.get('total', 0) for v in valid][::-1]
-        next_pred, next_conf, next_patterns = analyze_pattern(history_for_next, dice_for_next)
+        
+        next_pred, next_conf, _ = analyze_pattern(history_for_next, dice_for_next)
         
         out.append({
             'phien': next_phien, 'is_next': True, 'prediction': next_pred, 'confidence': next_conf,
-            'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'patterns': next_patterns
+            'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None
         })
         
+        # Đánh giá lịch sử
         for i in range(len(valid) - 1, -1, -1):
             current_session = valid[i]
             if current_session['phien'] <= RESET_SESSION_ID: break
@@ -524,18 +625,17 @@ def history():
             dice_list = [v.get('total', 0) for v in valid[:i]][::-1]
             
             if history_list:
-                pred, conf, patterns = analyze_pattern(history_list, dice_list)
+                pred, conf, _ = analyze_pattern(history_list, dice_list)
                 is_correct = (pred == current_session['result'])
                 total_past += 1
                 if is_correct: correct_count += 1
             else:
-                pred, conf, patterns = "Tài", 50.0, ["Khởi tạo"]
+                pred, conf = "Tài", 50.0
                 is_correct = None
             
             out.append({
                 'phien': current_session['phien'], 'is_next': False, 'prediction': pred, 'confidence': conf,
-                'result': current_session['result'], 'dice': current_session['dice'],
-                'is_correct': is_correct, 'patterns': patterns
+                'result': current_session['result'], 'dice': current_session['dice'], 'is_correct': is_correct
             })
         
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
@@ -547,18 +647,22 @@ def predict_only():
     try:
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
-        if not valid:
-            return jsonify({'status': 'error', 'message': 'Không có dữ liệu'}), 404
+        if not valid: return jsonify({'status': 'error', 'message': 'Lỗi data'}), 404
         
-        latest_session = valid[-1]
-        next_phien = latest_session['phien'] + 1
-        history_for_next = [v['result'] for v in valid][::-1]
-        dice_for_next = [v.get('total', 0) for v in valid][::-1]
-        next_pred, next_conf, next_patterns = analyze_pattern(history_for_next, dice_for_next)
+        latest = valid[-1]
+        next_phien = latest['phien'] + 1
+        h_next = [v['result'] for v in valid][::-1]
+        d_next = [v.get('total', 0) for v in valid][::-1]
+        
+        pred, conf, pattern = analyze_pattern(h_next, d_next)
         
         return jsonify({
-            'status': 'success', 'next_session': next_phien, 'prediction': next_pred,
-            'confidence': next_conf, 'patterns': next_patterns,
+            'status': 'success', 
+            'next_session': next_phien, 
+            'prediction': pred,
+            'confidence': conf,
+            # Cầu vẫn được trả về API nhưng UI đã ẩn
+            'hidden_pattern': pattern, 
             'updated_at': datetime.now().strftime('%H:%M:%S')
         })
     except Exception as e:
