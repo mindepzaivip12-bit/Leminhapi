@@ -12,7 +12,7 @@ CORS(app)
 # =====================================================================
 # BẠN HÃY THAY LINK CLOUDFLARE WORKER CỦA BẠN VÀO ĐÂY
 # =====================================================================
-API_URL = "https://lc79-proxy.ten-ban.workers.dev"  # <-- SỬA DÒNG NÀY
+API_URL = "https://lcmd5apimd5.pages.dev/"  # <-- SỬA DÒNG NÀY
 RESET_SESSION_ID = 0
 
 # =====================================================================
