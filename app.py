@@ -10,29 +10,13 @@ app = Flask(__name__)
 CORS(app)
 
 # =====================================================================
-# CẤU HÌNH - MULTI-TOKEN FALLBACK
+# CẤU HÌNH API
 # =====================================================================
-API_TOKENS = [
-    "d35795e07a393f91815436933a4852df",  # Token mới (ưu tiên)
-    "ab36aa88e2c9868ae0e8bc61adbd18dc",  # Token cũ (fallback)
-]
-API_TEMPLATE = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at={token}"
+API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 RESET_SESSION_ID = 0
 
 # =====================================================================
-# HỆ THỐNG 81 MẪU CẦU (3^4 = 81 TỔ HỢP)
-# =====================================================================
-ALL_81_PATTERNS = {}
-for _i in range(81):
-    _sig = ''
-    _temp = _i
-    for _ in range(4):
-        _sig = 'SML'[_temp % 3] + _sig
-        _temp //= 3
-    ALL_81_PATTERNS[_i] = _sig
-
-# =====================================================================
-# GIAO DIỆN HTML PREMIUM
+# GIAO DIỆN HTML PREMIUM (V6.2 - FIX HIỂN THỊ CẦU)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -40,7 +24,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>API LC MD5 MINHLE - V6.0</title>
+<title>lEHOANGMINH</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -78,7 +62,6 @@ HTML_TEMPLATE = """
     .header-title { font-size: 20px; font-weight: 900; background: linear-gradient(90deg, #7dd3fc, #38bdf8, #a78bfa, #f472b6, #38bdf8, #7dd3fc); background-size: 300% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; animation: titleShine 4s linear infinite, textGlow 3s infinite; letter-spacing: -0.3px; }
     .btn-reset { position: relative; overflow: hidden; background: rgba(239, 68, 68, 0.1); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.3s ease; }
     .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 20px rgba(239,68,68,0.5); transform: translateY(-1px); }
-    .btn-reset:active::after { content: ''; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%) scale(0); animation: ripple 0.6s ease-out; }
 
     .stats-bar { max-width: 600px; margin: 15px auto 0; padding: 0 15px; display: flex; justify-content: space-between; gap: 10px; position: relative; z-index: 1; }
     .stat-item { flex: 1; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px; text-align: center; position: relative; overflow: hidden; transition: all 0.3s; }
@@ -120,8 +103,26 @@ HTML_TEMPLATE = """
     .status-lose { color: var(--lose-color); }
     .status-wait { color: var(--blue-main); }
     .spin { display: inline-block; animation: spin 2s linear infinite; }
-    .pattern-tag { font-size: 9.5px; color: var(--text-muted); font-weight: 600; padding: 2px 8px; border-radius: 10px; background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.15); display: inline-block; margin-top: 2px; }
-    .pattern-tag.m81 { color: var(--gold); border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.08); }
+    
+    /* CSS NỔI BẬT CHO TAG CẦU */
+    .pattern-tag { 
+        font-size: 11px; 
+        color: #e2e8f0; 
+        font-weight: 700; 
+        padding: 4px 10px; 
+        border-radius: 8px; 
+        background: rgba(56,189,248,0.15); 
+        border: 1px solid rgba(56,189,248,0.4); 
+        display: inline-block; 
+        margin-top: 5px; 
+        box-shadow: 0 0 10px rgba(56,189,248,0.2);
+    }
+    .pattern-tag.m81 { 
+        color: var(--gold); 
+        border-color: rgba(251,191,36,0.5); 
+        background: rgba(251,191,36,0.15); 
+        box-shadow: 0 0 10px rgba(251,191,36,0.2);
+    }
     .loading { text-align: center; padding: 50px; color: var(--blue-main); font-weight: 600; letter-spacing: 1px; animation: textGlow 2s infinite; }
     .sparkle-win { position: relative; }
     .sparkle-win::before { content: '✦'; position: absolute; top: -8px; right: -8px; color: var(--gold); font-size: 14px; animation: sparkle 2s ease-in-out infinite; }
@@ -132,7 +133,7 @@ HTML_TEMPLATE = """
 <div class="header">
     <div class="header-left">
         <div class="header-live-dot"></div>
-        <div class="header-title">⚡ LC MD5 MINHLE • V6.0</div>
+        <div class="header-title">⚡ LC MD5 MINHLE</div>
     </div>
     <button class="btn-reset" onclick="confirmReset()">↻ Reset</button>
 </div>
@@ -161,8 +162,13 @@ function animateNumber(el, target, suffix = '') {
 async function fetchData() {
     if (isResetting) return;
     try {
-        const r = await fetch('/api/history', { cache: 'no-store' });
+        // Thêm timestamp để chống cache trình duyệt
+        const r = await fetch('/api/history?v=' + Date.now(), { cache: 'no-store' });
         const data = await r.json();
+        if (data.error) {
+            document.getElementById('list-container').innerHTML = `<div class="loading" style="color:var(--lose-color)">Lỗi: ${data.error}</div>`;
+            return;
+        }
         renderList(data.rows || [], data.stats || {});
     } catch (e) {
         document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose-color)">Lỗi kết nối Server!</div>';
@@ -207,12 +213,16 @@ function renderList(rows, stats) {
             diceDisplay = `${row.dice} (${parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2])})`;
         }
         let statusHtml = '';
-        if (row.is_next) statusHtml = `<div class="status-text status-wait">Chờ <span class="spin">⏳</span></div>`;
-        else if (row.is_correct === true) statusHtml = `<div class="status-text status-win sparkle-win">Đúng ✅</div>`;
-        else if (row.is_correct === false) statusHtml = `<div class="status-text status-lose">Sai ❌</div>`;
+        if (row.is_next) statusHtml = `<div class="status-text status-wait">Chờ <span class="spin"></span></div>`;
+        else if (row.is_correct === true) statusHtml = `<div class="status-text status-win sparkle-win">Đúng </div>`;
+        else if (row.is_correct === false) statusHtml = `<div class="status-text status-lose">Sai </div>`;
         else statusHtml = `<div class="status-text" style="color:var(--text-muted)">-</div>`;
-        const isM81 = row.pattern && row.pattern.includes('81#');
-        const patternTag = row.pattern ? `<span class="pattern-tag ${isM81 ? 'm81' : ''}">${row.pattern}</span>` : '';
+        
+        // Xử lý Tag cầu (Đảm bảo luôn hiện)
+        const pName = row.pattern || 'Đang phân tích...';
+        const isM81 = pName.includes('81#');
+        const patternTag = `<span class="pattern-tag ${isM81 ? 'm81' : ''}">${pName}</span>`;
+        
         div.innerHTML = `
             <div class="col-left">
                 <div class="id-text">#${row.phien}</div>
@@ -255,12 +265,10 @@ fetchData(); setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# V6.0 HELPERS - BLOCK BUILDER & 81-PATTERN
+# V6.2 HELPERS
 # =====================================================================
 def build_blocks(results):
-    """blocks[0] khớp results[0]. Input chrono → blocks[-1] mới nhất."""
-    if not results:
-        return []
+    if not results: return []
     blocks = []
     curr_val = results[0]
     curr_count = 1
@@ -291,7 +299,6 @@ def pattern_signature(block_lengths):
     return ''.join(block_class(L) for L in block_lengths[-4:])
 
 def analyze_streak_history(chrono):
-    """Học % tiếp tục / gãy theo từng độ dài streak (data-driven bệt)."""
     hist = {}
     N = len(chrono)
     i = 0
@@ -305,82 +312,54 @@ def analyze_streak_history(chrono):
             key = min(streak, 8)
             if key not in hist:
                 hist[key] = {'cont': 0, 'brk': 0}
-            if chrono[j] == val:
-                hist[key]['cont'] += 1
-            else:
-                hist[key]['brk'] += 1
+            if chrono[j] == val: hist[key]['cont'] += 1
+            else: hist[key]['brk'] += 1
         i = j
     return hist
 
 def learn_81_weighted(chrono, decay=0.95):
-    """Học 81-mẫu với exponential decay (mẫu gần = trọng số cao)."""
     stats = {}
     N = len(chrono)
     for k in range(6, N):
         blocks = build_blocks(chrono[:k])
-        if len(blocks) < 5:
-            continue
+        if len(blocks) < 5: continue
         last4 = [b['len'] for b in blocks[-5:-1]]
         code = encode_pattern_81(last4)
-        if code is None:
-            continue
+        if code is None: continue
         current_val = blocks[-1]['val']
-        actual_next = chrono[k]
-        continued = (actual_next == current_val)
+        continued = (chrono[k] == current_val)
         weight = decay ** (N - k)
         key = (code, min(blocks[-1]['len'], 4))
-        if key not in stats:
-            stats[key] = {'cont_w': 0.0, 'brk_w': 0.0, 'cont_c': 0, 'brk_c': 0}
-        if continued:
-            stats[key]['cont_w'] += weight
-            stats[key]['cont_c'] += 1
-        else:
-            stats[key]['brk_w'] += weight
-            stats[key]['brk_c'] += 1
+        if key not in stats: stats[key] = {'cont_w': 0.0, 'brk_w': 0.0, 'cont_c': 0, 'brk_c': 0}
+        if continued: stats[key]['cont_w'] += weight; stats[key]['cont_c'] += 1
+        else: stats[key]['brk_w'] += weight; stats[key]['brk_c'] += 1
     return stats
 
 def analyze_dice_trend(dice_chrono):
-    """Phân tích xu hướng xúc xắc gần đây (MA3 vs avg10)."""
-    if len(dice_chrono) < 5:
-        return None
+    if len(dice_chrono) < 5: return None
     recent = dice_chrono[-10:]
     avg = sum(recent) / len(recent)
     ma3 = sum(dice_chrono[-3:]) / 3
-    if ma3 > avg + 1.0 and avg > 10.5:
-        return ("Tài", min(0.9, (ma3 - 10.5) / 7.5), f"Dice Tài (MA3={ma3:.1f})")
-    if ma3 < avg - 1.0 and avg < 10.5:
-        return ("Xỉu", min(0.9, (10.5 - ma3) / 7.5), f"Dice Xỉu (MA3={ma3:.1f})")
+    if ma3 > avg + 1.0 and avg > 10.5: return ("Tài", min(0.9, (ma3 - 10.5) / 7.5), f"Dice Tài (MA3={ma3:.1f})")
+    if ma3 < avg - 1.0 and avg < 10.5: return ("Xỉu", min(0.9, (10.5 - ma3) / 7.5), f"Dice Xỉu (MA3={ma3:.1f})")
     return None
 
 # =====================================================================
-# V6.0 - ENSEMBLE 6 TẦNG VỚI BAYESIAN POSTERIOR
+# THUẬT TOÁN V6.2 - ENSEMBLE 6 TẦNG
 # =====================================================================
 def analyze_pattern(results, dice_sums=None):
-    """
-    V6.0 - Ensemble Bayesian:
-      E1: Streak history (bệt data-driven)
-      E2: Block rhythm (2-2, 3-3, chain x3, x-y-x)
-      E3: 81-pattern weighted decay
-      E4: N-gram (7→4)
-      E5: Markov transition
-      E6: Dice trend (MA3)
-    → Bayesian posterior + adaptive confidence
-    """
-    if not results or len(results) < 3:
-        return "Tài", 50.0, "Khởi tạo"
-
+    if not results or len(results) < 3: return "Tài", 50.0, "Khởi tạo"
     chrono = list(reversed(results))
     dice_chrono = list(reversed(dice_sums)) if dice_sums else []
     N = len(chrono)
     last = chrono[-1]
     opposite = "Xỉu" if last == "Tài" else "Tài"
-
     blocks = build_blocks(chrono)
     current_val = blocks[-1]['val']
     current_len = blocks[-1]['len']
-    evidences = []  # (direction, weight, name, priority)
+    evidences = []
 
-    # ---- E1: STREAK HISTORY ----
+    # E1: STREAK
     streak_hist = analyze_streak_history(chrono)
     if current_len in streak_hist:
         h = streak_hist[current_len]
@@ -391,32 +370,24 @@ def analyze_pattern(results, dice_sums=None):
             weight = min(2.5, tot / 5) * edge * 2
             if weight > 0.3:
                 direction = current_val if cont_rate > 0.5 else opposite
-                evidences.append((direction, weight,
-                    f"Bệt{current_len} hist {h['cont']}/{tot}",
-                    85 if edge > 0.4 else 70))
+                evidences.append((direction, weight, f"Bệt{current_len} hist {h['cont']}/{tot}", 85 if edge > 0.4 else 70))
 
-    # ---- E2: BLOCK RHYTHM ----
+    # E2: RHYTHM
     if len(blocks) >= 3:
         prev_len, prev_val = blocks[-2]['len'], blocks[-2]['val']
         prev2_len, prev2_val = blocks[-3]['len'], blocks[-3]['val']
         is_alt = (prev_val != prev2_val and current_val != prev_val)
-
         if is_alt and prev_len == prev2_len and prev_len >= 2:
             cycle = prev_len
-            if current_len < cycle:
-                evidences.append((current_val, 3.5, f"Rhythm {cycle}-{cycle} dở", 92))
-            elif current_len == cycle:
-                evidences.append((opposite, 4.0, f"Rhythm {cycle}-{cycle} đủ", 96))
-
+            if current_len < cycle: evidences.append((current_val, 3.5, f"Rhythm {cycle}-{cycle} dở", 92))
+            elif current_len == cycle: evidences.append((opposite, 4.0, f"Rhythm {cycle}-{cycle} đủ", 96))
         if is_alt and len(blocks) >= 4:
             b3 = blocks[-4]['len']
             if b3 == prev_len == prev2_len:
-                if current_len < prev_len:
-                    evidences.append((current_val, 2.5, "Chain x3 dở", 85))
-                elif current_len == prev_len:
-                    evidences.append((opposite, 3.0, "Chain x3 đủ", 90))
+                if current_len < prev_len: evidences.append((current_val, 2.5, "Chain x3 dở", 85))
+                elif current_len == prev_len: evidences.append((opposite, 3.0, "Chain x3 đủ", 90))
 
-    # ---- E3: 81-PATTERN WEIGHTED ----
+    # E3: 81-PATTERN
     if len(blocks) >= 5:
         p81 = learn_81_weighted(chrono)
         last4 = [b['len'] for b in blocks[-5:-1]]
@@ -432,15 +403,13 @@ def analyze_pattern(results, dice_sums=None):
                         cr = s['cont_w'] / tot_w
                         if cr >= 0.62:
                             w = min(2.5, raw / 4) * (cr - 0.5) * 4
-                            evidences.append((current_val, w,
-                                f"81#{code+1}[{sig}] tiếp {s['cont_c']}/{raw}", 90))
+                            evidences.append((current_val, w, f"81#{code+1}[{sig}] tiếp {s['cont_c']}/{raw}", 90))
                         elif cr <= 0.38:
                             w = min(2.5, raw / 4) * (0.5 - cr) * 4
-                            evidences.append((opposite, w,
-                                f"81#{code+1}[{sig}] gãy {s['brk_c']}/{raw}", 90))
+                            evidences.append((opposite, w, f"81#{code+1}[{sig}] gãy {s['brk_c']}/{raw}", 90))
                         break
 
-    # ---- E4: N-GRAM ----
+    # E4: N-GRAM
     for ns in [7, 6, 5, 4]:
         if N < ns + 1: continue
         target = tuple(chrono[-ns:])
@@ -455,60 +424,47 @@ def analyze_pattern(results, dice_sums=None):
             if ratio >= 0.6:
                 direction = "Tài" if m_tai > m_xiu else "Xỉu"
                 w = (ratio - 0.5) * 3 * min(1.5, tot / 3)
-                evidences.append((direction, w,
-                    f"Ngram{ns} ({m_tai}T-{m_xiu}X)", 70 + ns))
+                evidences.append((direction, w, f"Ngram{ns} ({m_tai}T-{m_xiu}X)", 70 + ns))
 
-    # ---- E5: MARKOV ----
+    # E5: MARKOV
     if N >= 8:
         trans = {"Tài": 0, "Xỉu": 0}
         for i in range(N - 1):
-            if chrono[i] == last:
-                trans[chrono[i + 1]] += 1
+            if chrono[i] == last: trans[chrono[i + 1]] += 1
         tot = trans["Tài"] + trans["Xỉu"]
         if tot >= 3 and trans["Tài"] != trans["Xỉu"]:
             ratio = max(trans["Tài"], trans["Xỉu"]) / tot
             direction = "Tài" if trans["Tài"] > trans["Xỉu"] else "Xỉu"
-            evidences.append((direction, (ratio - 0.5) * 2.5,
-                f"Markov {trans['Tài']}T-{trans['Xỉu']}X", 60))
+            evidences.append((direction, (ratio - 0.5) * 2.5, f"Markov {trans['Tài']}T-{trans['Xỉu']}X", 60))
 
-    # ---- E6: DICE TREND ----
+    # E6: DICE TREND
     dice_sig = analyze_dice_trend(dice_chrono)
     if dice_sig:
         direction, strength, name = dice_sig
         evidences.append((direction, strength * 2.0, name, 65))
 
-    # ---- ENSEMBLE (Bayesian) ----
-    if not evidences:
-        return opposite, 55.0, "Đảo nhịp (Mặc định)"
-
+    if not evidences: return opposite, 55.0, "Đảo nhịp (Mặc định)"
     tai_w = sum(e[1] for e in evidences if e[0] == "Tài")
     xiu_w = sum(e[1] for e in evidences if e[0] == "Xỉu")
     total_w = tai_w + xiu_w
-    if total_w < 0.01:
-        return opposite, 55.0, "Đảo nhịp (Mặc định)"
+    if total_w < 0.01: return opposite, 55.0, "Đảo nhịp (Mặc định)"
 
     tai_ratio = tai_w / total_w
     winner = "Tài" if tai_ratio > 0.5 else "Xỉu"
     posterior = tai_ratio if winner == "Tài" else (1 - tai_ratio)
-
-    confidence = 52 + (posterior - 0.5) * 2 * 40
-    confidence += min(6, len(evidences) * 0.5)
+    confidence = 52 + (posterior - 0.5) * 2 * 40 + min(6, len(evidences) * 0.5)
 
     same_dir = [e for e in evidences if e[0] == winner]
-    if same_dir:
-        best = max(same_dir, key=lambda x: (x[3], x[1]))
-        pattern_name = best[2]
-    else:
-        pattern_name = f"Tổng hợp ({len(evidences)} tín hiệu)"
-
+    best = max(same_dir, key=lambda x: (x[3], x[1])) if same_dir else None
+    pattern_name = best[2] if best else f"Tổng hợp ({len(evidences)} tín hiệu)"
     return winner, round(min(97.0, confidence), 1), pattern_name
 
 # =====================================================================
-# FETCH DỮ LIỆU - MULTI-TOKEN FALLBACK
+# FETCH DỮ LIỆU
 # =====================================================================
-def generate_fallback(base=7121479):
+def generate_fallback():
     elapsed = int(time.time() / 60)
-    current = base + elapsed
+    current = 7121479 + elapsed
     random.seed(elapsed)
     rows = []
     for i in range(40):
@@ -519,29 +475,30 @@ def generate_fallback(base=7121479):
     return rows
 
 def fetch_sessions():
-    headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
-    for i, token in enumerate(API_TOKENS):
-        try:
-            url = API_TEMPLATE.format(token=token)
-            r = requests.get(url, timeout=8, headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                if 'list' in data and data['list']:
-                    rows = []
-                    for item in data['list']:
-                        res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
-                        dices = item.get('dices', [0, 0, 0])
-                        rows.append({
-                            'phien': int(item['id']), 'result': res,
-                            'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
-                            'total': item.get('point', sum(dices))
-                        })
-                    print(f"[API] Token #{i+1} OK - {len(rows)} sessions")
-                    return rows, 'live'
-        except Exception as e:
-            print(f"[API] Token #{i+1} failed: {e}")
-            continue
-    print("[API] All tokens failed → fallback")
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+        r = requests.get(API_URL, timeout=8, headers=headers)
+        if r.status_code == 200:
+            data = r.json()
+            if 'list' in data and data['list']:
+                rows = []
+                for item in data['list']:
+                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                    dices = item.get('dices', [0, 0, 0])
+                    rows.append({
+                        'phien': int(item['id']), 'result': res,
+                        'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
+                        'total': item.get('point', sum(dices))
+                    })
+                
+                # Nếu API trả về phòng khác (ID < 7 triệu) thì báo lỗi
+                if rows and rows[0]['phien'] < 7000000:
+                    raise Exception(f"LỖI SAI PHÒNG! ID #{rows[0]['phien']} (Không phải LC79).")
+                
+                return rows, 'live'
+    except Exception as e:
+        print(f"[API ERROR] {e}")
+        return generate_fallback(), 'fallback' # Tự động dùng dữ liệu giả lập nếu API lỗi để web không bị sập
     return generate_fallback(), 'fallback'
 
 # =====================================================================
@@ -598,32 +555,6 @@ def history():
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@app.route('/api/predict')
-def predict_only():
-    try:
-        raw_rows, _ = fetch_sessions()
-        valid = sorted(raw_rows, key=lambda x: x['phien'])
-        if not valid:
-            return jsonify({'status': 'error', 'message': 'Không có dữ liệu'}), 404
-
-        latest_session = valid[-1]
-        next_phien = latest_session['phien'] + 1
-        history_for_next = [v['result'] for v in valid][::-1]
-        dice_for_next = [v.get('total', 0) for v in valid][::-1]
-        next_pred, next_conf, next_pattern = analyze_pattern(history_for_next, dice_for_next)
-
-        return jsonify({
-            'status': 'success', 'next_session': next_phien, 'prediction': next_pred,
-            'confidence': next_conf, 'pattern': next_pattern,
-            'updated_at': datetime.now().strftime('%H:%M:%S')
-        })
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/api/patterns')
-def patterns_list():
-    return jsonify({'total': 81, 'patterns': ALL_81_PATTERNS})
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
