@@ -3,18 +3,21 @@ import time
 import math
 from datetime import datetime
 import requests
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request
 from flask_cors import CORS
 import urllib3
 
-# Tắt cảnh báo SSL (do có thể dùng verify=False)
+# Tắt cảnh báo SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 CORS(app)
 
-# ⚠️ LƯU Ý: NẾU TOKEN NÀY CHẾT, BẠN PHẢI LẤY TOKEN MỚI TỪ WEB TELE68
-API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=ab36aa88e2c9868ae0e8bc61adbd18dc"
+# =====================================================================
+# CẤU HÌNH TOKEN ĐỘNG (CÓ THỂ THAY ĐỔI TRÊN WEB)
+# =====================================================================
+API_BASE = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at="
+CURRENT_TOKEN = "ab36aa88e2c9868ae0e8bc61adbd18dc" # Token mặc định ban đầu
 RESET_SESSION_ID = 0
 
 # =====================================================================
@@ -26,7 +29,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>BON LCMD5 36</title>
+<title>BON LCMD5 HEHE</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -55,8 +58,14 @@ HTML_TEMPLATE = """
     .header-left { display: flex; align-items: center; gap: 10px; }
     .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--win); box-shadow: 0 0 12px var(--win); animation: pulseNum 1.5s infinite; }
     .header-title { font-size: 18px; font-weight: 800; background: linear-gradient(90deg, #fff, #bae6fd, #f472b6, #fff); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: shimmer 3s linear infinite; letter-spacing: -0.5px; }
-    .btn-reset { background: rgba(239, 68, 68, 0.1); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.3s; }
+    
+    .header-right { display: flex; gap: 8px; }
+    .btn-header { border: none; padding: 8px 12px; border-radius: 8px; font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.3s; display: flex; align-items: center; gap: 4px; }
+    .btn-token { background: rgba(251, 191, 36, 0.1); color: var(--gold); border: 1px solid rgba(251, 191, 36, 0.3); }
+    .btn-token:hover { background: rgba(251, 191, 36, 0.2); box-shadow: 0 0 15px rgba(251, 191, 36, 0.4); transform: translateY(-2px); }
+    .btn-reset { background: rgba(239, 68, 68, 0.1); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
     .btn-reset:hover { background: rgba(239, 68, 68, 0.2); box-shadow: 0 0 15px rgba(239, 68, 68, 0.4); transform: translateY(-2px); }
+
     .stats-bar { max-width: 600px; margin: 16px auto 0; padding: 0 16px; display: flex; gap: 12px; position: relative; z-index: 1; }
     .stat-box { flex: 1; background: var(--bg-card); border: 1px solid var(--border-glass); border-radius: 16px; padding: 12px; text-align: center; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); position: relative; overflow: hidden; transition: transform 0.3s; }
     .stat-box:hover { transform: translateY(-3px); border-color: rgba(255,255,255,0.2); }
@@ -95,9 +104,10 @@ HTML_TEMPLATE = """
     .spin-icon { display: inline-block; animation: spinWait 2s linear infinite; }
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; animation: pulseNum 2s infinite; }
     @media (max-width: 380px) {
-        .header-title { font-size: 15px; } .stat-val { font-size: 16px; }
+        .header-title { font-size: 14px; } .stat-val { font-size: 16px; }
         .session-id { font-size: 14px; } .dice { font-size: 11px; }
         .pred-circle { font-size: 12px; padding: 4px 12px; }
+        .btn-header { padding: 6px 8px; font-size: 10px; }
     }
 </style>
 </head>
@@ -106,9 +116,12 @@ HTML_TEMPLATE = """
 <div class="header">
     <div class="header-left">
         <div class="live-dot"></div>
-        <div class="header-title">LC79 MD5</div>
+        <div class="header-title">LC79MD5</div>
     </div>
-    <button class="btn-reset" onclick="confirmReset()">↻ Reset</button>
+    <div class="header-right">
+        <button class="btn-header btn-token" onclick="updateToken()">🔑 Token</button>
+        <button class="btn-header btn-reset" onclick="confirmReset()">↻ Reset</button>
+    </div>
 </div>
 
 <div class="stats-bar">
@@ -118,7 +131,7 @@ HTML_TEMPLATE = """
 </div>
 
 <div class="container" id="list-container">
-    <div class="loading">Đang tải tối đa 100 phiên dữ liệu...</div>
+    <div class="loading">Đang tải dữ liệu API...</div>
 </div>
 
 <script>
@@ -135,13 +148,19 @@ function animateNumber(el, target, suffix = '') {
     }
     requestAnimationFrame(update);
 }
+
 async function fetchData() {
     if (isResetting) return;
     try {
         const r = await fetch('/api/history', { cache: 'no-store' });
         const data = await r.json();
         if (data.error) {
-            document.getElementById('list-container').innerHTML = `<div class="loading" style="color:var(--lose)">Lỗi API: ${data.error}.<br><span style="font-size:12px;color:#fff;">(Hãy kiểm tra lại Token API)</span></div>`;
+            // Hiển thị lỗi kèm nút cập nhật token
+            document.getElementById('list-container').innerHTML = `
+                <div class="loading" style="color:var(--lose); display:flex; flex-direction:column; gap:10px; align-items:center;">
+                    <span>Lỗi: ${data.error}</span>
+                    <button onclick="updateToken()" style="background:var(--gold); color:#000; border:none; padding:10px 20px; border-radius:8px; font-weight:bold; cursor:pointer;">Cập nhật Token mới</button>
+                </div>`;
             return;
         }
         renderList(data.rows || [], data.stats || {});
@@ -149,6 +168,7 @@ async function fetchData() {
         document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose)">Mất kết nối Server!</div>';
     }
 }
+
 function renderList(rows, stats) {
     const container = document.getElementById('list-container');
     if (stats.total > 0) {
@@ -161,7 +181,7 @@ function renderList(rows, stats) {
         document.getElementById('stat-rate').innerText = '0%';
     }
     if (!rows.length) {
-        container.innerHTML = '<div class="loading">Không có dữ liệu từ API.</div>';
+        container.innerHTML = '<div class="loading">Không có dữ liệu.</div>';
         return;
     }
     let html = '';
@@ -183,6 +203,7 @@ function renderList(rows, stats) {
         if (row.is_next) statusHtml = `<div class="status st-wait">Chờ <span class="spin-icon"></span></div>`;
         else if (row.is_correct === true) statusHtml = `<div class="status st-win">Đúng</div>`;
         else if (row.is_correct === false) statusHtml = `<div class="status st-lose">Sai</div>`;
+        
         html += `
             <div class="card${isActive}">
                 <div class="col-left">
@@ -200,6 +221,42 @@ function renderList(rows, stats) {
     });
     container.innerHTML = html;
 }
+
+// Hàm cập nhật Token mới
+async function updateToken() {
+    const { value: token } = await Swal.fire({
+        title: 'Cập nhật Token API',
+        text: 'Dán Token mới lấy từ tele68 vào đây (Phần sau chữ at=)',
+        input: 'text',
+        inputPlaceholder: 'Ví dụ: ab36aa88e2c98...',
+        background: '#0f172a', color: '#fff',
+        showCancelButton: true,
+        confirmButtonColor: '#0ea5e9', cancelButtonColor: '#334155',
+        confirmButtonText: 'Lưu Token', cancelButtonText: 'Hủy'
+    });
+
+    if (token) {
+        isResetting = true;
+        try {
+            const res = await fetch('/api/update-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token.trim() })
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                Swal.fire({ title: 'Thành công!', text: 'Đã lưu Token mới. Đang tải lại dữ liệu...', icon: 'success', background: '#0f172a', color: '#fff', timer: 1500, showConfirmButton: false });
+                setTimeout(() => { isResetting = false; fetchData(); }, 1500);
+            } else {
+                throw new Error(data.message);
+            }
+        } catch (e) {
+            Swal.fire({ title: 'Lỗi!', text: 'Không thể lưu Token', icon: 'error', background: '#0f172a', color: '#fff' });
+            isResetting = false;
+        }
+    }
+}
+
 async function confirmReset() {
     Swal.fire({
         title: 'Xác nhận Reset?', text: "Làm mới 100 phiên, bắt đầu tính lại từ đầu!",
@@ -231,20 +288,21 @@ fetchData(); setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# FETCH DỮ LIỆU - SỬA LỖI API BẰNG HEADERS
+# FETCH DỮ LIỆU
 # =====================================================================
 def fetch_sessions():
+    global CURRENT_TOKEN
     try:
-        # Thêm headers giả lập trình duyệt để tránh bị chặn IP (403/401)
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
             'Origin': 'https://tele68.com',
             'Referer': 'https://tele68.com/'
         }
-        # verify=False để tránh lỗi SSL trên Render
-        r = requests.get(API_URL, timeout=15, headers=headers, verify=False)
+        # Nối Token hiện tại vào URL
+        url = f"{API_BASE}{CURRENT_TOKEN}"
+        
+        r = requests.get(url, timeout=15, headers=headers, verify=False)
         
         if r.status_code == 200:
             data = r.json()
@@ -257,15 +315,13 @@ def fetch_sessions():
                     total = item.get('point', sum(dices))
                     rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
                 return rows
-        else:
-            print(f"[API ERROR] Mã lỗi HTTP: {r.status_code} - Có thể Token đã chết.")
         return []
     except Exception as e:
         print(f"[API ERROR] {e}")
         return []
 
 # =====================================================================
-# THUẬT TOÁN MẪU 36 - FULL PATTERN RECOGNITION
+# THUẬT TOÁN MẪU 36
 # =====================================================================
 def find_historical_follow(results, pattern_chrono):
     k = len(pattern_chrono)
@@ -469,13 +525,23 @@ def analyze_pattern(results, dice_sums=None):
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+@app.route('/api/update-token', methods=['POST'])
+def update_token_api():
+    global CURRENT_TOKEN
+    data = request.json
+    new_token = data.get('token')
+    if new_token:
+        CURRENT_TOKEN = new_token
+        return jsonify({'status': 'success', 'message': 'Token updated'})
+    return jsonify({'status': 'error', 'message': 'Token không hợp lệ'}), 400
+
 @app.route('/api/history')
 def history():
     global RESET_SESSION_ID
     try:
         valid = sorted(fetch_sessions(), key=lambda x: x['phien'])
         if not valid:
-            return jsonify({'error': 'Không lấy được dữ liệu từ API. Token có thể đã hết hạn!'}), 500
+            return jsonify({'error': 'Token đã hết hạn hoặc API bị chặn. Vui lòng bấm nút "🔑 Token" để cập nhật!'}), 500
 
         out, correct_count, total_past = [], 0, 0
         latest = valid[-1]
@@ -490,12 +556,11 @@ def history():
             'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None
         })
 
-        # LẤY TỐI ĐA 100 PHIÊN
         for i in range(len(valid) - 1, -1, -1):
             current = valid[i]
             if current['phien'] <= RESET_SESSION_ID:
                 break
-            if len(out) > 100:  # Đã đổi thành 100
+            if len(out) > 100:
                 break
             history_list = [v['result'] for v in valid[:i]][::-1]
             dice_list = [v.get('total', 0) for v in valid[:i]][::-1]
@@ -523,7 +588,7 @@ def predict_only():
     try:
         valid = sorted(fetch_sessions(), key=lambda x: x['phien'])
         if not valid:
-            return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu từ API'}), 500
+            return jsonify({'status': 'error', 'message': 'Token hết hạn'}), 500
 
         latest = valid[-1]
         next_phien = latest['phien'] + 1
