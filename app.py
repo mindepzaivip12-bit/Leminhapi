@@ -9,21 +9,21 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# ================= CẤU HÌNH API CHUẨN XÁC =================
-LOGIN_URL = "https://wlb.tele68.com/v1/lobby/auth/login?cp=R&cl=R&pf=web&at="
+# ================= CẤU HÌNH API =================
+# URL Login chính thức của Tele68/LC79B (có thể thay đổi tùy domain)
+LOGIN_URL = "https://wlb.tele68.com/v1/lobby/auth/login"
 SESSION_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at="
-DEFAULT_TOKEN = "d35795e07a393f91815436933a4852df" # Token xem cầu mặc định
 
 CURRENT_USER = {
-    "username": "Khách",
-    "token": DEFAULT_TOKEN,
+    "username": "",
+    "token": "",
     "balance": 0.0,
     "is_logged_in": False
 }
 RESET_SESSION_ID = 0
 
 # =====================================================================
-# GIAO DIỆN HTML
+# GIAO DIỆN HTML (V18.0 - TRUE LOGIN)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -31,7 +31,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>B52 Tài Xỉu MD5 - HYPERION</title>
+<title>B52 Tài Xỉu MD5 - HYPERION V18</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -65,9 +65,9 @@ HTML_TEMPLATE = """
     }
 
     /* --- CSS MODAL LOGIN --- */
-    .modal-overlay { display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(5, 8, 20, 0.85); backdrop-filter: blur(10px); justify-content: center; align-items: center; }
+    .modal-overlay { display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(5, 8, 20, 0.9); backdrop-filter: blur(15px); justify-content: center; align-items: center; }
     .modal-overlay.active { display: flex; }
-    .login-box { background: var(--bg-card); border: 1px solid var(--border-glass); padding: 25px; border-radius: 20px; width: 90%; max-width: 400px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.6); animation: borderGlow 3s infinite alternate; position: relative; }
+    .login-box { background: var(--bg-card); border: 1px solid var(--border-glass); padding: 30px 25px; border-radius: 20px; width: 90%; max-width: 400px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.6); animation: borderGlow 3s infinite alternate; position: relative; }
     .btn-close { position: absolute; top: 15px; right: 20px; font-size: 24px; color: var(--text-muted); cursor: pointer; }
     .input-group { margin-bottom: 15px; text-align: left; }
     .input-group label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 5px; font-weight: 700; }
@@ -76,6 +76,7 @@ HTML_TEMPLATE = """
     .btn-login { width: 100%; padding: 12px; border-radius: 10px; border: none; background: linear-gradient(135deg, #0284c7, #38bdf8); color: #fff; font-weight: 800; font-size: 16px; cursor: pointer; margin-top: 10px; box-shadow: 0 0 15px var(--tai-glow); transition: 0.3s; }
     .btn-login:hover { transform: translateY(-2px); box-shadow: 0 0 25px var(--tai-glow); }
     .btn-login:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .note { font-size: 11px; color: #fca5a5; margin-top: 15px; text-align: center; line-height: 1.5; }
 
     /* --- CSS MAIN APP --- */
     #main-app { opacity: 0; transition: opacity 0.5s ease; }
@@ -135,6 +136,7 @@ HTML_TEMPLATE = """
     <div class="login-box">
         <span class="btn-close" onclick="closeLoginModal()">&times;</span>
         <h2 style="color: var(--gold); margin-bottom: 20px; font-size: 22px;">ĐĂNG NHẬP TELE68</h2>
+        
         <div class="input-group">
             <label>Tài khoản</label>
             <input type="text" id="ip-user" placeholder="Nhập tên đăng nhập...">
@@ -143,7 +145,12 @@ HTML_TEMPLATE = """
             <label>Mật khẩu</label>
             <input type="password" id="ip-pass" placeholder="Nhập mật khẩu...">
         </div>
-        <button class="btn-login" id="btn-login" onclick="doLogin()">Xác Nhận Đăng Nhập</button>
+        <button class="btn-login" id="btn-login" onclick="doLogin()">Đăng Nhập</button>
+        
+        <div class="note">
+            * Yêu cầu đăng nhập thật để lấy Token và Số dư.<br>
+            * Nếu nhà cái chặn IP (Cloudflare), vui lòng dùng VPS/Máy nhà.
+        </div>
     </div>
 </div>
 
@@ -152,7 +159,7 @@ HTML_TEMPLATE = """
     <div class="header">
         <div class="header-title">⚡ B52 TÀI XỈU MD5</div>
         <div class="user-info" id="user-info" onclick="openLoginModal()">
-            <div class="user-name" id="ui-username">Khách (Xem cầu)</div>
+            <div class="user-name" id="ui-username">Khách (Chưa đăng nhập)</div>
             <div class="user-balance" id="ui-balance">---</div>
         </div>
     </div>
@@ -164,9 +171,9 @@ HTML_TEMPLATE = """
     </div>
 
     <div class="container">
-        <div class="error-banner" id="error-banner">Lỗi kết nối API.</div>
+        <div class="error-banner" id="error-banner">Vui lòng đăng nhập để lấy dữ liệu!</div>
         <div id="list-container">
-            <div class="loading">Đang tải dữ liệu...</div>
+            <div class="loading">Đang chờ đăng nhập...</div>
         </div>
     </div>
 </div>
@@ -174,13 +181,14 @@ HTML_TEMPLATE = """
 <script>
 document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('main-app').style.opacity = '1';
+    openLoginModal(); // Tự động mở form login
     fetchData(); 
 });
 
 function openLoginModal() { document.getElementById('login-modal').classList.add('active'); }
 function closeLoginModal() { document.getElementById('login-modal').classList.remove('active'); }
 
-// ================= LOGIN LOGIC =================
+// ================= ĐĂNG NHẬP THẬT (REAL LOGIN) =================
 async function doLogin() {
     const user = document.getElementById('ip-user').value;
     const pass = document.getElementById('ip-pass').value;
@@ -188,7 +196,7 @@ async function doLogin() {
     
     if(!user || !pass) { Swal.fire({title: 'Lỗi', text: 'Nhập đủ Tài khoản và Mật khẩu!', icon: 'warning', background: '#0f172a', color: '#fff'}); return; }
     
-    btn.innerText = "Đang xác thực..."; btn.disabled = true;
+    btn.innerText = "Đang kết nối nhà cái..."; btn.disabled = true;
     
     try {
         const res = await fetch('/api/login', {
@@ -206,12 +214,13 @@ async function doLogin() {
             Swal.fire({title: 'Đăng nhập thành công!', text: `Chào mừng ${data.username}`, icon: 'success', background: '#0f172a', color: '#fff', timer: 1500, showConfirmButton: false});
             fetchData(); 
         } else {
+            // Hiển thị đúng lỗi từ API (Sai pass, Captcha, 404...)
             Swal.fire({title: 'Đăng nhập thất bại', text: data.message, icon: 'error', background: '#0f172a', color: '#fff'});
-            btn.innerText = "Xác Nhận Đăng Nhập"; btn.disabled = false;
+            btn.innerText = "Đăng Nhập"; btn.disabled = false;
         }
     } catch(e) {
         Swal.fire({title: 'Lỗi Server', text: 'Không thể kết nối tới Backend', icon: 'error', background: '#0f172a', color: '#fff'});
-        btn.innerText = "Xác Nhận Đăng Nhập"; btn.disabled = false;
+        btn.innerText = "Đăng Nhập"; btn.disabled = false;
     }
 }
 
@@ -241,7 +250,11 @@ async function fetchData() {
         if (data.error) {
             document.getElementById('error-banner').style.display = 'block';
             document.getElementById('error-banner').innerText = "Lỗi: " + data.error;
-            document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose)">Không có dữ liệu.</div>';
+            document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose)">Chưa có dữ liệu!</div>';
+            
+            if(data.is_expired) {
+                openLoginModal();
+            }
             return;
         }
         
@@ -316,7 +329,7 @@ setInterval(() => { fetchData(); }, 4000);
 """
 
 # =====================================================================
-# HELPER FUNCTIONS & LOGIC TOÁN HỌC
+# HELPER FUNCTIONS & LOGIC TOÁN HỌC (GIỮ NGUYÊN)
 # =====================================================================
 def build_blocks(results):
     if not results: return []
@@ -461,11 +474,21 @@ def analyze_pattern(results, dice_sums=None):
     
     return winner, round(final_conf, 1), best_model['name']
 
-def fetch_sessions():
+def fetch_sessions(token):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
-        url = SESSION_URL + CURRENT_USER['token']
-        r = requests.get(url, timeout=8, headers=headers)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Origin': 'https://tele68.com',
+            'Referer': 'https://tele68.com/',
+            'Connection': 'keep-alive',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-site'
+        }
+        url = SESSION_URL + token
+        r = requests.get(url, timeout=10, headers=headers)
         if r.status_code == 200:
             data = r.json()
             if 'list' in data and data['list']:
@@ -495,27 +518,54 @@ def api_login():
     pwd = data.get('password')
     
     try:
+        # 1. Khởi tạo Session (Giả lập trình duyệt thật)
+        session = requests.Session()
+        
+        # Headers cực kỳ chi tiết giống Chrome thật
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Content-Type': 'application/json',
+            'Origin': 'https://tele68.com',
+            'Referer': 'https://tele68.com/',
+            'Connection': 'keep-alive',
+            'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-site'
+        }
+        
+        # Payload gửi đi
         payload = {
             "username": user, 
             "password": pwd,
-            "deviceId": "web_bot_tele68",
+            "deviceId": "web_bot_v18",
             "platform": "web"
         }
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/plain, */*'
-        }
         
-        r = requests.post(LOGIN_URL, json=payload, headers=headers, timeout=10)
+        # Gọi API Login (Bỏ các query param ?cp=R... ra khỏi URL nếu có thể)
+        # Một số nhà cái yêu cầu param này, một số không.
+        login_endpoint = LOGIN_URL + "?cp=R&cl=R&pf=web"
+        
+        r = session.post(login_endpoint, json=payload, headers=headers, timeout=15)
+        
+        # In log ra console để debug nếu cần
+        print(f"Login Status Code: {r.status_code}")
+        print(f"Login Response: {r.text[:200]}") # In 200 ký tự đầu
         
         if r.status_code == 200:
-            res_data = r.json()
-            
+            try:
+                res_data = r.json()
+            except:
+                return jsonify({"status": "error", "message": "API trả về dữ liệu không phải JSON (Có thể bị Cloudflare chặn)."}), 400
+                
             if res_data.get('code') == 0 or res_data.get('status') == 'success':
                 data_obj = res_data.get('data', {})
                 token = data_obj.get('accessToken') or data_obj.get('token') or data_obj.get('at')
-                balance = data_obj.get('balance') or data_obj.get('money') or 0.0
+                balance = data_obj.get('balance') or data_obj.get('money') or data_obj.get('coin') or 0.0
                 
                 if token:
                     CURRENT_USER['username'] = user
@@ -524,25 +574,32 @@ def api_login():
                     CURRENT_USER['is_logged_in'] = True
                     return jsonify({"status": "success", "username": user, "balance": CURRENT_USER['balance']})
                 else:
-                    return jsonify({"status": "error", "message": "Không lấy được Token từ API"}), 401
+                    return jsonify({"status": "error", "message": "Không tìm thấy Token trong phản hồi của nhà cái."}), 401
             else:
+                # Trả về đúng lỗi từ nhà cái (vd: Sai mật khẩu)
                 msg = res_data.get('message') or res_data.get('msg') or 'Sai tài khoản hoặc mật khẩu!'
                 return jsonify({"status": "error", "message": msg}), 401
         else:
-            return jsonify({"status": "error", "message": f"Lỗi API ({r.status_code}). Vui lòng thử lại sau!"}), 400
+            # Trả về mã lỗi HTTP (404, 500) để người dùng biết
+            return jsonify({"status": "error", "message": f"Lỗi HTTP {r.status_code}. API không tồn tại hoặc IP bị chặn."}), 400
             
     except Exception as e:
-        print(f"[LOGIN ERROR] {e}")
-        return jsonify({"status": "error", "message": f"Lỗi kết nối: {str(e)}"}), 500
+        print(f"[LOGIN EXCEPTION] {e}")
+        return jsonify({"status": "error", "message": f"Lỗi mạng Python: {str(e)}"}), 500
 
 @app.route('/api/history')
 def history():
     global RESET_SESSION_ID
+    
+    if not CURRENT_USER['token']:
+        return jsonify({'error': 'Vui lòng đăng nhập!', 'is_expired': True}), 401
+
     try:
-        valid = sorted(fetch_sessions(), key=lambda x: x['phien'])
+        valid = sorted(fetch_sessions(CURRENT_USER['token']), key=lambda x: x['phien'])
+        
         if not valid: 
-            # Nếu token mặc định bị chết, trả lỗi để user biết
-            return jsonify({'error': 'Không lấy được dữ liệu phiên. Token có thể đã hết hạn!'}), 401
+            CURRENT_USER['token'] = "" 
+            return jsonify({'error': 'Phiên đăng nhập hết hạn!', 'is_expired': True}), 401
 
         out = []
         correct_count = 0
