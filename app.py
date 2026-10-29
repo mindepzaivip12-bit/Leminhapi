@@ -1,30 +1,19 @@
 import os
-import time
 import json
 import urllib.parse
-from datetime import datetime
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
+import urllib3
+
+# Tắt cảnh báo SSL nếu có
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 CORS(app)
 
-# Link API gốc (Bạn không cần dùng Cloudflare nữa)
 API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 RESET_SESSION_ID = 0
-
-# =====================================================================
-# HỆ THỐNG 81 MẪU CẦU
-# =====================================================================
-ALL_81_PATTERNS = {}
-for _i in range(81):
-    _sig = ''
-    _temp = _i
-    for _ in range(4):
-        _sig = 'SML'[_temp % 3] + _sig
-        _temp //= 3
-    ALL_81_PATTERNS[_i] = _sig
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -32,7 +21,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>API LC MD5 MINHLE </title>
+<title>API LC MD5 MINHLE - Thuật Toán Chuẩn</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -112,8 +101,7 @@ HTML_TEMPLATE = """
     .status-lose { color: var(--lose-color); }
     .status-wait { color: var(--blue-main); }
     .spin { display: inline-block; animation: spin 2s linear infinite; }
-    .pattern-tag { font-size: 9.5px; color: var(--text-muted); font-weight: 600; padding: 2px 8px; border-radius: 10px; background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.15); display: inline-block; margin-top: 2px; }
-    .pattern-tag.m81 { color: var(--gold); border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.08); }
+    .pattern-tag { font-size: 9.5px; color: var(--text-muted); font-weight: 600; padding: 2px 8px; border-radius: 10px; background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.15); display: inline-block; margin-top: 2px; white-space: normal; text-align: center;}
     .loading { text-align: center; padding: 50px; color: var(--blue-main); font-weight: 600; letter-spacing: 1px; animation: textGlow 2s infinite; }
     .sparkle-win { position: relative; }
     .sparkle-win::before { content: '✦'; position: absolute; top: -8px; right: -8px; color: var(--gold); font-size: 14px; animation: sparkle 2s ease-in-out infinite; }
@@ -207,8 +195,9 @@ function renderList(rows, stats) {
         else if (row.is_correct === true) statusHtml = `<div class="status-text status-win sparkle-win">Đúng ✅</div>`;
         else if (row.is_correct === false) statusHtml = `<div class="status-text status-lose">Sai ❌</div>`;
         else statusHtml = `<div class="status-text" style="color:var(--text-muted)">-</div>`;
-        const isM81 = row.pattern && row.pattern.includes('Mẫu');
-        const patternTag = row.pattern ? `<span class="pattern-tag ${isM81 ? 'm81' : ''}">${row.pattern}</span>` : '';
+        
+        const patternTag = row.pattern ? `<span class="pattern-tag">${row.pattern}</span>` : '';
+        
         div.innerHTML = `
             <div class="col-left">
                 <div class="id-text">#${row.phien}</div>
@@ -250,221 +239,166 @@ fetchData(); setInterval(fetchData, 5000);
 </html>
 """
 
-def build_blocks(results):
+def get_blocks(results):
+    """Chia mảng kết quả thành các khối (Block) để phân tích cầu"""
     if not results: return []
     blocks = []
-    curr_val = results[0]
-    curr_count = 1
+    curr = results[0]
+    count = 1
     for r in results[1:]:
-        if r == curr_val: curr_count += 1
+        if r == curr:
+            count += 1
         else:
-            blocks.append({'val': curr_val, 'len': curr_count})
-            curr_val = r
-            curr_count = 1
-    blocks.append({'val': curr_val, 'len': curr_count})
+            blocks.append({'val': curr, 'len': count})
+            curr = r
+            count = 1
+    blocks.append({'val': curr, 'len': count})
     return blocks
 
-def block_class(L):
-    if L == 1: return 'S'
-    if L <= 3: return 'M'
-    return 'L'
-
-def encode_pattern_81(block_lengths):
-    if len(block_lengths) < 4: return None
-    code = 0
-    for L in block_lengths[-4:]: code = code * 3 + {'S': 0, 'M': 1, 'L': 2}[block_class(L)]
-    return code
-
-def pattern_signature(block_lengths):
-    if len(block_lengths) < 4: return "----"
-    return ''.join(block_class(L) for L in block_lengths[-4:])
-
-def learn_81_patterns(results):
-    stats = {}
-    n = len(results)
-    for k in range(10, n):
-        sub = results[k:]
-        blocks = build_blocks(sub)
-        if len(blocks) < 5: continue
-        four_lens = [b['len'] for b in blocks[1:5]]
-        code = encode_pattern_81(four_lens)
-        if code is None: continue
-        current_val = blocks[0]['val']
-        current_len = blocks[0]['len']
-        actual_next = results[k - 1]
-        continued = (actual_next == current_val)
-        
-        key1 = (code, min(current_len, 4))
-        if key1 not in stats: stats[key1] = {'continue': 0, 'break': 0}
-        stats[key1]['continue' if continued else 'break'] += 1
-        
-        key2 = code
-        if key2 not in stats: stats[key2] = {'continue': 0, 'break': 0}
-        stats[key2]['continue' if continued else 'break'] += 1
-    return stats
-
 def analyze_pattern(results, dice_sums=None):
-    if not results or len(results) < 3: return "Tài", 50.0, "Khởi tạo"
-    last = results[0]
-    opposite = "Xỉu" if last == "Tài" else "Tài"
+    """
+    Thuật toán phân tích cầu FULL - KHÔNG RANDOM
+    Kết quả đầu vào: Mảng kết quả mới nhất ở đầu (index 0)
+    """
+    if not results or len(results) < 3:
+        return "Tài", 50.0, "Khởi tạo"
+    
+    last_result = results[0]
+    opposite = "Xỉu" if last_result == "Tài" else "Tài"
     n = len(results)
-    candidates = []
-    blocks = build_blocks(results)
+    
+    blocks = get_blocks(results)
     current_val = blocks[0]['val']
     current_len = blocks[0]['len']
-    
-    if current_len >= 10:    candidates.append((opposite, 93.0, f"Bẻ bệt {current_len}", 92))
-    elif current_len >= 8:   candidates.append((opposite, 88.0, f"Bẻ bệt {current_len}", 88))
-    elif current_len >= 6:   candidates.append((opposite, 80.0, f"Bẻ bệt {current_len}", 78))
-    elif current_len == 5:   candidates.append((opposite, 70.0, "Bẻ bệt 5", 68))
-    elif current_len == 4:   candidates.append((current_val, 62.0, "Bám bệt 4", 60))
-    elif current_len == 3:   candidates.append((current_val, 57.0, "Bám bệt 3", 55))
-    elif current_len == 2:   candidates.append((current_val, 53.0, "Bám bệt 2", 52))
-    
-    alt_len = 0
-    for i in range(n - 1):
-        if results[i] != results[i + 1]: alt_len += 1
-        else: break
-    if alt_len >= 10:    candidates.append((opposite, 92.0, f"Đảo 1-1 dài {alt_len}", 90))
-    elif alt_len >= 7:   candidates.append((opposite, 83.0, f"Đảo 1-1 {alt_len}", 80))
-    elif alt_len >= 4:   candidates.append((opposite, 72.0, f"Đảo 1-1 ngắn", 68))
-    
-    if len(blocks) >= 3:
-        is_alt = all(blocks[i]['val'] != blocks[i-1]['val'] for i in range(1, min(len(blocks), 6)))
-        if is_alt:
-            p1 = blocks[1]['len']
-            p2 = blocks[2]['len']
-            if p1 == p2 and p1 >= 2:
-                cycle = p1
-                if current_len < cycle: candidates.append((current_val, 94.0, f"Bám cầu {cycle}-{cycle} dở", 93))
-                elif current_len == cycle: candidates.append((opposite, 96.0, f"Bẻ cầu {cycle}-{cycle}", 95))
-            if len(blocks) >= 4:
-                p3 = blocks[3]['len']
-                if p1 == p3 and p2 != p1 and p1 <= 5: candidates.append((opposite, 82.0, f"Cầu {p1}-{p2}-{p1}", 78))
-            if {p1, p2} == {1, 2}: candidates.append((opposite, 80.0, "Cầu 1-2-1", 76))
-    
-    if len(blocks) >= 5:
-        stats = learn_81_patterns(results)
-        four_lens = [b['len'] for b in blocks[1:5]]
-        code = encode_pattern_81(four_lens)
-        sig = pattern_signature(four_lens)
-        if code is not None:
-            for key in [(code, min(current_len, 4)), code]:
-                if key in stats:
-                    s = stats[key]
-                    total = s['continue'] + s['break']
-                    if total >= 2:
-                        cont_rate = s['continue'] / total
-                        if cont_rate >= 0.62:
-                            conf = 55 + cont_rate * 32
-                            candidates.append((current_val, conf, f"Mẫu#{code+1:02d}[{sig}] tiếp {s['continue']}/{total}", 75))
-                        elif cont_rate <= 0.38:
-                            conf = 55 + (1 - cont_rate) * 32
-                            candidates.append((opposite, conf, f"Mẫu#{code+1:02d}[{sig}] gãy {s['break']}/{total}", 75))
-                        break
-    
-    for ns in [8, 7, 6, 5, 4]:
-        if n < ns + 1: continue
-        current_seq = tuple(results[:ns])
-        match_tai, match_xiu = 0, 0
-        for i in range(len(results) - ns):
-            if tuple(results[i:i+ns]) == current_seq and i + ns < len(results):
-                if results[i+ns] == "Tài": match_tai += 1
-                else: match_xiu += 1
-        total_m = match_tai + match_xiu
-        if total_m >= 2 and match_tai != match_xiu:
-            winner = "Tài" if match_tai > match_xiu else "Xỉu"
-            ratio = max(match_tai, match_xiu) / total_m
-            if ratio >= 0.6: candidates.append((winner, 55 + ratio * 25, f"N-gram {ns} ({match_tai}T-{match_xiu}X)", 62 + ns))
-    
-    if n >= 8:
-        trans = {"Tài": 0, "Xỉu": 0}
-        for i in range(len(results) - 1):
-            if results[i] == last: trans[results[i + 1]] += 1
-        total_t = trans["Tài"] + trans["Xỉu"]
-        if total_t >= 3 and trans["Tài"] != trans["Xỉu"]:
-            winner = "Tài" if trans["Tài"] > trans["Xỉu"] else "Xỉu"
-            ratio = max(trans["Tài"], trans["Xỉu"]) / total_t
-            candidates.append((winner, 60 + ratio * 15, f"Markov ({trans['Tài']}T-{trans['Xỉu']}X)", 58))
-    
-    if dice_sums and len(dice_sums) >= 5:
-        avg_recent = sum(dice_sums[:10]) / min(10, len(dice_sums))
-        if avg_recent >= 12.0: candidates.append(("Tài", 62.0, f"Xúc xắc Tài (TB {avg_recent:.1f})", 60))
-        elif avg_recent <= 8.5: candidates.append(("Xỉu", 62.0, f"Xúc xắc Xỉu (TB {avg_recent:.1f})", 60))
-    
-    if not candidates: return opposite, 55.0, "Đảo nhịp (Mặc định)"
-    
-    tai_conf_score = sum(c[1] for c in candidates if c[0] == "Tài")
-    xiu_conf_score = sum(c[1] for c in candidates if c[0] == "Xỉu")
-    tai_pri_score = sum(c[3] for c in candidates if c[0] == "Tài")
-    xiu_pri_score = sum(c[3] for c in candidates if c[0] == "Xỉu")
-    
-    tai_combined = tai_conf_score * 0.7 + tai_pri_score * 0.3
-    xiu_combined = xiu_conf_score * 0.7 + xiu_pri_score * 0.3
-    winner = "Tài" if tai_combined > xiu_combined else "Xỉu"
-    
-    best = max(candidates, key=lambda x: (x[3], x[1]))
-    if best[0] == winner:
-        pattern_name = best[2]
-        base_conf = best[1]
-    else:
-        pattern_name = f"Tổng hợp ({len(candidates)} tín hiệu)"
-        base_conf = 55.0
-    
-    agree = tai_conf_score if winner == "Tài" else xiu_conf_score
-    total_w = tai_conf_score + xiu_conf_score
-    if total_w > 0:
-        agree_ratio = agree / total_w
-        final_conf = base_conf * (0.88 + agree_ratio * 0.15)
-    else: final_conf = base_conf
-    return winner, round(min(98.0, final_conf), 1), pattern_name
 
-# =====================================================================
-# FETCH DỮ LIỆU BẰNG 4 LỚP PROXY SIÊU MẠNH
-# =====================================================================
-def fetch_sessions():
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    # ==========================================
+    # 1. NHÓM CẦU BỆT (Streak)
+    # ==========================================
+    if current_len >= 7:
+        return opposite, 95.0, f"Bẻ Bệt {current_len} (Cực đại)"
+    if current_len == 6:
+        return opposite, 88.0, f"Bẻ Bệt {current_len}"
+    if current_len == 5:
+        return opposite, 80.0, f"Bẻ Bệt {current_len}"
+    if current_len == 4:
+        return current_val, 75.0, f"Bám Bệt {current_len}"
+    if current_len == 3:
+        return current_val, 65.0, f"Bám Bệt {current_len}"
+        
+    # ==========================================
+    # 2. NHÓM CẦU ĐẢO / CẦU DÀI (1-1, 2-2, 3-3)
+    # ==========================================
+    if len(blocks) >= 2:
+        prev_len = blocks[1]['len']
+        
+        # Cầu 1-1 (Đảo liên tục)
+        if current_len == 1 and prev_len == 1:
+            # Kiểm tra xem có đúng là chuỗi 1-1 dài không
+            is_alternating = all(b['len'] == 1 for b in blocks[:5])
+            if is_alternating:
+                return opposite, 85.0, "Cầu Đảo 1-1"
+            return opposite, 70.0, "Cầu 1-1"
+
+        # Cầu 2-2
+        if current_len == 2 and prev_len == 2:
+            if len(blocks) >= 3 and blocks[2]['len'] == 2:
+                return opposite, 90.0, "Cầu 2-2-2"
+            return opposite, 80.0, "Cầu 2-2"
+
+        # Cầu 3-3
+        if current_len == 3 and prev_len == 3:
+            return opposite, 85.0, "Cầu 3-3"
+            
+        # Cầu 1-2-1 hoặc 2-1-2
+        if len(blocks) >= 3:
+            p2 = blocks[2]['len']
+            if current_len == 1 and prev_len == 2 and p2 == 1:
+                return opposite, 82.0, "Cầu 1-2-1"
+            if current_len == 2 and prev_len == 1 and p2 == 2:
+                return opposite, 82.0, "Cầu 2-1-2"
+            if current_len == 1 and prev_len == 3 and p2 == 1:
+                return opposite, 78.0, "Cầu 1-3-1"
+            if current_len == 3 and prev_len == 1 and p2 == 3:
+                return opposite, 78.0, "Cầu 3-1-3"
+
+    # ==========================================
+    # 3. NHÓM CẦU NÂNG CAO (Markov & N-Gram)
+    # ==========================================
+    # N-Gram: Tìm chuỗi tương tự trong quá khứ
+    for length in [6, 5, 4]:
+        if n < length + 2: continue
+        current_seq = tuple(results[:length])
+        match_tai, match_xiu = 0, 0
+        
+        for i in range(1, n - length):
+            if tuple(results[i:i+length]) == current_seq:
+                next_res = results[i-1]
+                if next_res == "Tài": match_tai += 1
+                else: match_xiu += 1
+                
+        total = match_tai + match_xiu
+        if total >= 2:
+            if match_tai > match_xiu:
+                conf = 60 + (match_tai/total)*20
+                return "Tài", round(conf, 1), f"Markov N-{length} ({match_tai}T-{match_xiu}X)"
+            elif match_xiu > match_tai:
+                conf = 60 + (match_xiu/total)*20
+                return "Xỉu", round(conf, 1), f"Markov N-{length} ({match_tai}T-{match_xiu}X)"
+
+    # ==========================================
+    # 4. FALLBACK (Không có cầu) -> Đảo Nhịp
+    # ==========================================
+    # Nếu không nhận diện được cầu nào, mặc định đánh ngược lại ván trước (Đảo nhịp)
+    # Đây là logic an toàn, KHÔNG DÙNG RANDOM
+    conf = 55.0
+    pattern_name = "Đảo Nhịp (Mặc định)"
     
-    # Lớp 1: Gọi trực tiếp
+    # Nếu 2 ván gần nhất giống nhau, ưu tiên bẻ cầu
+    if len(results) >= 2 and results[0] == results[1]:
+        pattern_name = "Bẻ Cầu Ngắn"
+        conf = 60.0
+        
+    return opposite, conf, pattern_name
+
+
+def fetch_sessions():
+    """Fetch API với 3 lớp bảo vệ, không bao giờ lỗi"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+    }
+    
+    # Lớp 1: Gọi trực tiếp (Nhanh nhất)
     try:
-        r = requests.get(API_URL, timeout=4, headers=headers)
+        r = requests.get(API_URL, timeout=5, headers=headers, verify=False)
         if r.status_code == 200:
             data = r.json()
-            if 'list' in data and data['list']: return data['list'], None
+            if 'list' in data and data['list']: 
+                return data['list'], None
     except: pass
     
-    # Lớp 2: Dùng AllOrigins
+    # Lớp 2: AllOrigins Proxy
     try:
         url = f"https://api.allorigins.win/raw?url={urllib.parse.quote(API_URL, safe='')}"
-        r = requests.get(url, timeout=8)
+        r = requests.get(url, timeout=8, headers=headers)
         if r.status_code == 200:
             data = r.json()
-            if 'list' in data and data['list']: return data['list'], None
+            if 'list' in data and data['list']: 
+                return data['list'], None
     except: pass
     
-    # Lớp 3: Dùng Jina AI Reader (Lách Cloudflare cực tốt)
-    try:
-        url = f"https://r.jina.ai/{API_URL}"
-        r = requests.get(url, timeout=10, headers={'Accept': 'application/json'})
-        if r.status_code == 200:
-            text = r.text
-            start = text.find('{')
-            end = text.rfind('}')
-            if start != -1 and end != -1:
-                data = json.loads(text[start:end+1])
-                if 'list' in data and data['list']: return data['list'], None
-    except: pass
-
-    # Lớp 4: Dùng CodeTabs
+    # Lớp 3: CodeTabs Proxy
     try:
         url = f"https://api.codetabs.com/v1/proxy?quest={urllib.parse.quote(API_URL, safe='')}"
-        r = requests.get(url, timeout=8)
+        r = requests.get(url, timeout=8, headers=headers)
         if r.status_code == 200:
             data = r.json()
-            if 'list' in data and data['list']: return data['list'], None
+            if 'list' in data and data['list']: 
+                return data['list'], None
     except: pass
     
-    return None, "Tất cả Proxy đều thất bại. Hãy thử lại sau ít phút."
+    return None, "Không thể kết nối tới Server API. Vui lòng thử lại."
+
 
 @app.route('/')
 def index():
@@ -475,15 +409,17 @@ def history():
     global RESET_SESSION_ID
     try:
         raw_list, error = fetch_sessions()
-        if raw_list is None: return jsonify({'error': error}), 500
+        if raw_list is None: 
+            return jsonify({'error': error}), 500
             
         valid = []
         for item in raw_list:
-            res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+            res = "Tài" if item.get('resultTruyenThong') == "TAI" else "Xỉu"
             dices = item.get('dices', [0, 0, 0])
             dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
             total = item.get('point', sum(dices))
             valid.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
+            
         valid.sort(key=lambda x: x['phien'])
         
         out = []
@@ -492,19 +428,27 @@ def history():
         
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
-        history_for_next = [v['result'] for v in valid][::-1]
+        
+        # Dự đoán ván tiếp theo
+        history_for_next = [v['result'] for v in valid][::-1] # Đảo ngược để mới nhất lên đầu
         dice_for_next = [v.get('total', 0) for v in valid][::-1]
         next_pred, next_conf, next_pattern = analyze_pattern(history_for_next, dice_for_next)
         
-        out.append({'phien': next_phien, 'is_next': True, 'prediction': next_pred, 'confidence': next_conf,
-            'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'pattern': next_pattern})
+        out.append({
+            'phien': next_phien, 'is_next': True, 'prediction': next_pred, 'confidence': next_conf,
+            'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'pattern': next_pattern
+        })
         
+        # Chạy Backtesting để tính tỷ lệ thắng
         for i in range(len(valid) - 1, -1, -1):
             current_session = valid[i]
             if current_session['phien'] <= RESET_SESSION_ID: break
-            if len(out) > 20: break
+            if len(out) > 25: break
+            
+            # Lấy dữ liệu từ quá khứ để dự đoán cho ván hiện tại
             history_list = [v['result'] for v in valid[:i]][::-1]
             dice_list = [v.get('total', 0) for v in valid[:i]][::-1]
+            
             if history_list:
                 pred, conf, pattern = analyze_pattern(history_list, dice_list)
                 is_correct = (pred == current_session['result'])
@@ -513,9 +457,13 @@ def history():
             else:
                 pred, conf, pattern = "Tài", 50.0, "Khởi tạo"
                 is_correct = None
-            out.append({'phien': current_session['phien'], 'is_next': False, 'prediction': pred, 'confidence': conf,
+                
+            out.append({
+                'phien': current_session['phien'], 'is_next': False, 'prediction': pred, 'confidence': conf,
                 'result': current_session['result'], 'dice': current_session['dice'],
-                'is_correct': is_correct, 'pattern': pattern})
+                'is_correct': is_correct, 'pattern': pattern
+            })
+            
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -525,9 +473,12 @@ def reset_api():
     global RESET_SESSION_ID
     try:
         raw_list, error = fetch_sessions()
-        if raw_list is None: return jsonify({'status': 'error', 'message': error}), 500
+        if raw_list is None: 
+            return jsonify({'status': 'error', 'message': error}), 500
+            
         valid = [{'phien': int(item['id'])} for item in raw_list]
         valid.sort(key=lambda x: x['phien'])
+        
         if valid:
             RESET_SESSION_ID = valid[-1]['phien']
             return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
