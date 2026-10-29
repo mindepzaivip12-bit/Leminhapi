@@ -1,15 +1,24 @@
 import os
 import time
 import random
-import urllib.parse
 from datetime import datetime
-import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
+
+# Sử dụng curl_cffi thay cho requests để vượt Cloudflare
+try:
+    from curl_cffi import requests as curl_requests
+    HAS_CURL = True
+except ImportError:
+    import requests
+    HAS_CURL = False
 
 app = Flask(__name__)
 CORS(app)
 
+# =====================================================================
+# API URL
+# =====================================================================
 API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 RESET_SESSION_ID = 0
 
@@ -158,7 +167,7 @@ async function fetchData() {
         const r = await fetch('/api/history', { cache: 'no-store' });
         const data = await r.json();
         if (data.error) {
-            document.getElementById('list-container').innerHTML = `<div class="loading" style="color:var(--lose-color); font-size:14px">⚠️ LỖI API:<br><br>${data.error}<br><br><span style="font-size:11px;color:#94a3b8">(Vui lòng thử lại sau hoặc cập nhật Token)</span></div>`;
+            document.getElementById('list-container').innerHTML = `<div class="loading" style="color:var(--lose-color); font-size:14px">⚠️ LỖI API:<br><br>${data.error}</div>`;
             return;
         }
         renderList(data.rows || [], data.stats || {});
@@ -434,36 +443,40 @@ def analyze_pattern(results, dice_sums=None):
     return winner, round(min(98.0, final_conf), 1), pattern_name
 
 # =====================================================================
-# 🚀 FIX LỖI CLOUDFLARE 403: TỰ ĐỘNG DÙNG PROXY TRUNG GIAN
+# FETCH DỮ LIỆU BẰNG CURL_CFFI (VƯỢT CLOUDFLARE)
 # =====================================================================
 def fetch_sessions():
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Referer': 'https://lc79.live/',
+        'Origin': 'https://lc79.live'
+    }
     
-    # 1. Thử gọi trực tiếp trước (nếu IP Render chưa bị chặn)
     try:
-        r = requests.get(API_URL, timeout=5, headers=headers)
-        if r.status_code == 200:
-            data = r.json()
-            if 'list' in data and data['list']: 
-                return data['list'], None
-    except:
-        pass # Bị timeout hoặc 403 -> Tiếp tục xuống phần Proxy
-        
-    # 2. Nếu thất bại, tự động gọi qua Proxy của AllOrigins (vượt Cloudflare)
-    try:
-        encoded_url = urllib.parse.quote(API_URL, safe='')
-        proxy_url = f"https://api.allorigins.win/raw?url={encoded_url}"
-        
-        r = requests.get(proxy_url, timeout=12)
+        if HAS_CURL:
+            # curl_cffi giả lập TLS fingerprint của Chrome -> Lừa được Cloudflare
+            r = curl_requests.get(API_URL, headers=headers, impersonate="chrome110", timeout=10)
+        else:
+            import requests as std_requests
+            r = std_requests.get(API_URL, headers=headers, timeout=10)
+            
         if r.status_code == 200:
             data = r.json()
             if 'list' in data and data['list']:
-                return data['list'], None
-            else:
-                return None, "API trả về rỗng (Sai Token hoặc sai phòng)"
-        return None, f"Proxy báo lỗi HTTP {r.status_code}"
+                rows = []
+                for item in data['list']:
+                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                    dices = item.get('dices', [0, 0, 0])
+                    dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
+                    total = item.get('point', sum(dices))
+                    rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
+                return rows, None
+            return None, "API trả về rỗng (Sai Token)"
+            
+        return None, f"Bị Cloudflare chặn (HTTP {r.status_code})"
     except Exception as e:
-        return None, f"Không thể kết nối API (Lỗi: {str(e)[:50]})"
+        return None, f"Lỗi mạng: {str(e)[:50]}"
 
 # =====================================================================
 # FLASK ROUTES
@@ -476,19 +489,11 @@ def index():
 def history():
     global RESET_SESSION_ID
     try:
-        raw_list, error = fetch_sessions()
-        if raw_list is None:
+        raw_rows, error = fetch_sessions()
+        if raw_rows is None:
             return jsonify({'error': error}), 500
             
-        valid = []
-        for item in raw_list:
-            res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
-            dices = item.get('dices', [0, 0, 0])
-            dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
-            total = item.get('point', sum(dices))
-            valid.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
-        valid.sort(key=lambda x: x['phien'])
-        
+        valid = sorted(raw_rows, key=lambda x: x['phien'])
         out = []
         correct_count = 0
         total_past = 0
@@ -535,12 +540,11 @@ def history():
 def reset_api():
     global RESET_SESSION_ID
     try:
-        raw_list, error = fetch_sessions()
-        if raw_list is None:
+        raw_rows, error = fetch_sessions()
+        if raw_rows is None:
             return jsonify({'status': 'error', 'message': error}), 500
             
-        valid = [{'phien': int(item['id'])} for item in raw_list]
-        valid.sort(key=lambda x: x['phien'])
+        valid = sorted(raw_rows, key=lambda x: x['phien'])
         if valid:
             RESET_SESSION_ID = valid[-1]['phien']
             return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
