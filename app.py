@@ -10,13 +10,13 @@ app = Flask(__name__)
 CORS(app)
 
 # =====================================================================
-# FIX LỖI 1: Thêm dấu ngoặc kép " ở đầu URL (Lỗi Syntax dòng 12)
+# API URL (Đã fix lỗi thiếu dấu " ở đầu)
 # =====================================================================
 API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 RESET_SESSION_ID = 0
 
 # =====================================================================
-# HỆ THỐNG 81 MẪU CẦU (3^4 = 81 TỔ HỢP)
+# HỆ THỐNG 81 MẪU CẦU
 # =====================================================================
 ALL_81_PATTERNS = {}
 for _i in range(81):
@@ -28,7 +28,7 @@ for _i in range(81):
     ALL_81_PATTERNS[_i] = _sig
 
 # =====================================================================
-# GIAO DIỆN HTML (GIỮ NGUYÊN BẢN ĐEN NEON CỦA BẠN)
+# GIAO DIỆN HTML (GIỮ NGUYÊN)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -159,9 +159,9 @@ async function fetchData() {
     try {
         const r = await fetch('/api/history', { cache: 'no-store' });
         const data = await r.json();
-        // FIX LỖI: Kiểm tra nếu API trả về lỗi thì hiển thị cảnh báo thay vì bảng trắng
         if (data.error) {
-            document.getElementById('list-container').innerHTML = `<div class="loading" style="color:var(--lose-color)">⚠️ ${data.error}</div>`;
+            // Báo lỗi chi tiết ra màn hình để dễ fix
+            document.getElementById('list-container').innerHTML = `<div class="loading" style="color:var(--lose-color); font-size:14px">⚠️ LỖI API:<br><br>${data.error}<br><br><span style="font-size:11px;color:#94a3b8">(Hãy chắc chắn đã thêm 'cloudscraper' vào requirements.txt)</span></div>`;
             return;
         }
         renderList(data.rows || [], data.stats || {});
@@ -465,32 +465,58 @@ def analyze_pattern(results, dice_sums=None):
     return winner, round(min(98.0, final_conf), 1), pattern_name
 
 # =====================================================================
-# FIX LỖI 2: XÓA BỎ FALLBACK ẢO, LẤY API CHUẨN CÓ HEADER
+# 🚀 FIX LỖI API BỊ CHẶN: DÙNG CLOUDSCRAPER + FULL HEADERS
 # =====================================================================
 def fetch_sessions():
+    # Header giả lập Chrome 122 (giống y hệt trình duyệt thật)
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
         'Referer': 'https://lc79.live/',
-        'Origin': 'https://lc79.live'
+        'Origin': 'https://lc79.live',
+        'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'cross-site',
+        'Connection': 'keep-alive',
     }
+    
     try:
-        r = requests.get(API_URL, timeout=10, headers=headers)
-        if r.status_code == 200:
-            data = r.json()
-            if 'list' in data and data['list']:
-                rows = []
-                for item in data['list']:
-                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
-                    dices = item.get('dices', [0, 0, 0])
-                    dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
-                    total = item.get('point', sum(dices))
-                    rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
-                return rows, 'live'
-        raise Exception(f"HTTP {r.status_code} - API bị lỗi hoặc Token hết hạn")
+        # Thử dùng cloudscraper (vượt Cloudflare) trước
+        try:
+            import cloudscraper
+            scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
+            r = scraper.get(API_URL, timeout=15, headers=headers)
+        except ImportError:
+            # Nếu chưa cài cloudscraper thì dùng requests thường
+            r = requests.get(API_URL, timeout=15, headers=headers)
+            
+        if r.status_code != 200:
+            return None, f"Mã lỗi HTTP {r.status_code} (Bị Cloudflare chặn - Hãy thêm 'cloudscraper' vào requirements.txt)"
+            
+        data = r.json()
+        if 'list' not in data or not data['list']:
+            return None, "API trả về danh sách rỗng (Sai Token hoặc sai phòng)"
+            
+        rows = []
+        for item in data['list']:
+            res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+            dices = item.get('dices', [0, 0, 0])
+            dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
+            total = item.get('point', sum(dices))
+            rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
+            
+        rows.sort(key=lambda x: x['phien'])
+        return rows, None
+        
+    except requests.exceptions.Timeout:
+        return None, "Timeout: Máy chủ API không phản hồi sau 15s"
     except Exception as e:
-        print(f"[API ERROR] {e}")
-        return None, str(e) # Trả lỗi về UI thay vì sinh ID ảo (gây sai phiên)
+        return None, f"Lỗi kết nối: {str(e)}"
 
 # =====================================================================
 # FLASK ROUTES
