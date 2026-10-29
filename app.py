@@ -1,6 +1,7 @@
 import os
 import time
-import random
+import json
+import urllib.parse
 from datetime import datetime
 import requests
 from flask import Flask, render_template_string, jsonify
@@ -9,10 +10,8 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# =====================================================================
-# BẠN HÃY THAY LINK CLOUDFLARE WORKER CỦA BẠN VÀO ĐÂY
-# =====================================================================
-API_URL = "https://lcmd5apimd5.pages.dev/"  # <-- SỬA DÒNG NÀY
+# Link API gốc (Bạn không cần dùng Cloudflare nữa)
+API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 RESET_SESSION_ID = 0
 
 # =====================================================================
@@ -27,9 +26,6 @@ for _i in range(81):
         _temp //= 3
     ALL_81_PATTERNS[_i] = _sig
 
-# =====================================================================
-# GIAO DIỆN HTML (BẢN ĐEN NEON)
-# =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -254,17 +250,13 @@ fetchData(); setInterval(fetchData, 5000);
 </html>
 """
 
-# =====================================================================
-# HELPERS
-# =====================================================================
 def build_blocks(results):
     if not results: return []
     blocks = []
     curr_val = results[0]
     curr_count = 1
     for r in results[1:]:
-        if r == curr_val:
-            curr_count += 1
+        if r == curr_val: curr_count += 1
         else:
             blocks.append({'val': curr_val, 'len': curr_count})
             curr_val = r
@@ -280,8 +272,7 @@ def block_class(L):
 def encode_pattern_81(block_lengths):
     if len(block_lengths) < 4: return None
     code = 0
-    for L in block_lengths[-4:]:
-        code = code * 3 + {'S': 0, 'M': 1, 'L': 2}[block_class(L)]
+    for L in block_lengths[-4:]: code = code * 3 + {'S': 0, 'M': 1, 'L': 2}[block_class(L)]
     return code
 
 def pattern_signature(block_lengths):
@@ -312,17 +303,12 @@ def learn_81_patterns(results):
         stats[key2]['continue' if continued else 'break'] += 1
     return stats
 
-# =====================================================================
-# THUẬT TOÁN V5.0
-# =====================================================================
 def analyze_pattern(results, dice_sums=None):
     if not results or len(results) < 3: return "Tài", 50.0, "Khởi tạo"
-    
     last = results[0]
     opposite = "Xỉu" if last == "Tài" else "Tài"
     n = len(results)
     candidates = []
-    
     blocks = build_blocks(results)
     current_val = blocks[0]['val']
     current_len = blocks[0]['len']
@@ -362,7 +348,6 @@ def analyze_pattern(results, dice_sums=None):
         four_lens = [b['len'] for b in blocks[1:5]]
         code = encode_pattern_81(four_lens)
         sig = pattern_signature(four_lens)
-        
         if code is not None:
             for key in [(code, min(current_len, 4)), code]:
                 if key in stats:
@@ -432,33 +417,55 @@ def analyze_pattern(results, dice_sums=None):
         agree_ratio = agree / total_w
         final_conf = base_conf * (0.88 + agree_ratio * 0.15)
     else: final_conf = base_conf
-    
     return winner, round(min(98.0, final_conf), 1), pattern_name
 
 # =====================================================================
-# FETCH DỮ LIỆU TỪ CLOUDFLARE WORKER
+# FETCH DỮ LIỆU BẰNG 4 LỚP PROXY SIÊU MẠNH
 # =====================================================================
 def fetch_sessions():
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    
+    # Lớp 1: Gọi trực tiếp
     try:
-        r = requests.get(API_URL, timeout=10)
+        r = requests.get(API_URL, timeout=4, headers=headers)
         if r.status_code == 200:
             data = r.json()
-            if 'list' in data and data['list']:
-                rows = []
-                for item in data['list']:
-                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
-                    dices = item.get('dices', [0, 0, 0])
-                    dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
-                    total = item.get('point', sum(dices))
-                    rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
-                return rows, None
-        return None, f"Lỗi HTTP {r.status_code} (Proxy Worker lỗi)"
-    except Exception as e:
-        return None, f"Không thể kết nối Proxy: {str(e)[:50]}"
+            if 'list' in data and data['list']: return data['list'], None
+    except: pass
+    
+    # Lớp 2: Dùng AllOrigins
+    try:
+        url = f"https://api.allorigins.win/raw?url={urllib.parse.quote(API_URL, safe='')}"
+        r = requests.get(url, timeout=8)
+        if r.status_code == 200:
+            data = r.json()
+            if 'list' in data and data['list']: return data['list'], None
+    except: pass
+    
+    # Lớp 3: Dùng Jina AI Reader (Lách Cloudflare cực tốt)
+    try:
+        url = f"https://r.jina.ai/{API_URL}"
+        r = requests.get(url, timeout=10, headers={'Accept': 'application/json'})
+        if r.status_code == 200:
+            text = r.text
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end != -1:
+                data = json.loads(text[start:end+1])
+                if 'list' in data and data['list']: return data['list'], None
+    except: pass
 
-# =====================================================================
-# FLASK ROUTES
-# =====================================================================
+    # Lớp 4: Dùng CodeTabs
+    try:
+        url = f"https://api.codetabs.com/v1/proxy?quest={urllib.parse.quote(API_URL, safe='')}"
+        r = requests.get(url, timeout=8)
+        if r.status_code == 200:
+            data = r.json()
+            if 'list' in data and data['list']: return data['list'], None
+    except: pass
+    
+    return None, "Tất cả Proxy đều thất bại. Hãy thử lại sau ít phút."
+
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -467,11 +474,18 @@ def index():
 def history():
     global RESET_SESSION_ID
     try:
-        raw_rows, error = fetch_sessions()
-        if raw_rows is None:
-            return jsonify({'error': error}), 500
+        raw_list, error = fetch_sessions()
+        if raw_list is None: return jsonify({'error': error}), 500
             
-        valid = sorted(raw_rows, key=lambda x: x['phien'])
+        valid = []
+        for item in raw_list:
+            res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+            dices = item.get('dices', [0, 0, 0])
+            dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
+            total = item.get('point', sum(dices))
+            valid.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
+        valid.sort(key=lambda x: x['phien'])
+        
         out = []
         correct_count = 0
         total_past = 0
@@ -482,19 +496,15 @@ def history():
         dice_for_next = [v.get('total', 0) for v in valid][::-1]
         next_pred, next_conf, next_pattern = analyze_pattern(history_for_next, dice_for_next)
         
-        out.append({
-            'phien': next_phien, 'is_next': True, 'prediction': next_pred, 'confidence': next_conf,
-            'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'pattern': next_pattern
-        })
+        out.append({'phien': next_phien, 'is_next': True, 'prediction': next_pred, 'confidence': next_conf,
+            'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'pattern': next_pattern})
         
         for i in range(len(valid) - 1, -1, -1):
             current_session = valid[i]
             if current_session['phien'] <= RESET_SESSION_ID: break
             if len(out) > 20: break
-            
             history_list = [v['result'] for v in valid[:i]][::-1]
             dice_list = [v.get('total', 0) for v in valid[:i]][::-1]
-            
             if history_list:
                 pred, conf, pattern = analyze_pattern(history_list, dice_list)
                 is_correct = (pred == current_session['result'])
@@ -503,13 +513,9 @@ def history():
             else:
                 pred, conf, pattern = "Tài", 50.0, "Khởi tạo"
                 is_correct = None
-            
-            out.append({
-                'phien': current_session['phien'], 'is_next': False, 'prediction': pred, 'confidence': conf,
+            out.append({'phien': current_session['phien'], 'is_next': False, 'prediction': pred, 'confidence': conf,
                 'result': current_session['result'], 'dice': current_session['dice'],
-                'is_correct': is_correct, 'pattern': pattern
-            })
-        
+                'is_correct': is_correct, 'pattern': pattern})
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -518,11 +524,10 @@ def history():
 def reset_api():
     global RESET_SESSION_ID
     try:
-        raw_rows, error = fetch_sessions()
-        if raw_rows is None:
-            return jsonify({'status': 'error', 'message': error}), 500
-            
-        valid = sorted(raw_rows, key=lambda x: x['phien'])
+        raw_list, error = fetch_sessions()
+        if raw_list is None: return jsonify({'status': 'error', 'message': error}), 500
+        valid = [{'phien': int(item['id'])} for item in raw_list]
+        valid.sort(key=lambda x: x['phien'])
         if valid:
             RESET_SESSION_ID = valid[-1]['phien']
             return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
