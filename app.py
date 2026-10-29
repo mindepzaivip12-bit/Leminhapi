@@ -9,21 +9,21 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# ================= CẤU HÌNH API =================
-LOGIN_URL = "https://lc79b.bet/v1/lobby/auth/login?cp=R&cl=R&pf=web&at="
-BASE_SESSION_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at="
+# ================= CẤU HÌNH API CHUẨN XÁC =================
+LOGIN_URL = "https://wlb.tele68.com/v1/lobby/auth/login?cp=R&cl=R&pf=web&at="
+SESSION_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at="
+DEFAULT_TOKEN = "d35795e07a393f91815436933a4852df" # Token xem cầu mặc định
 
-# Lưu trữ Token toàn cục. Ban đầu để trống, sẽ được nạp khi đăng nhập.
 CURRENT_USER = {
-    "username": "",
-    "token": "", 
+    "username": "Khách",
+    "token": DEFAULT_TOKEN,
     "balance": 0.0,
     "is_logged_in": False
 }
 RESET_SESSION_ID = 0
 
 # =====================================================================
-# GIAO DIỆN HTML (V13.0 - AUTO AUTH)
+# GIAO DIỆN HTML
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -31,7 +31,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>LC MD5 - AUTOMATED HYPERION VIP</title>
+<title>B52 Tài Xỉu MD5 - HYPERION</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -53,7 +53,6 @@ HTML_TEMPLATE = """
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
     
     @keyframes bgMove { 0% { background-position: 0% 0%; } 50% { background-position: 100% 100%; } 100% { background-position: 0% 0%; } }
-    @keyframes floatStars { 0% { transform: translateY(0px); opacity: 0.3; } 50% { transform: translateY(-20px); opacity: 0.8; } 100% { transform: translateY(0px); opacity: 0.3; } }
     @keyframes borderGlow { 0%, 100% { box-shadow: 0 0 10px rgba(251, 191, 36, 0.2), inset 0 0 10px rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.4); } 50% { box-shadow: 0 0 25px rgba(251, 191, 36, 0.6), inset 0 0 20px rgba(251, 191, 36, 0.3); border-color: rgba(251, 191, 36, 0.8); } }
     @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
     @keyframes pulseNum { 0%, 100% { text-shadow: 0 0 10px rgba(14, 165, 233, 0.3); transform: scale(1); } 50% { text-shadow: 0 0 25px rgba(14, 165, 233, 0.8); transform: scale(1.05); } }
@@ -65,42 +64,18 @@ HTML_TEMPLATE = """
         background-size: 200% 200%; animation: bgMove 15s ease infinite; overflow-x: hidden; position: relative; 
     }
 
-    body::before {
-        content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-        background-image: radial-gradient(1px 1px at 10% 20%, #fff, transparent), radial-gradient(1.5px 1.5px at 80% 40%, #fff, transparent), radial-gradient(1px 1px at 40% 80%, #fff, transparent), radial-gradient(2px 2px at 70% 10%, #fff, transparent);
-        background-size: 200px 200px; animation: floatStars 4s ease-in-out infinite; opacity: 0.4;
-    }
-
     /* --- CSS MODAL LOGIN --- */
-    .modal-overlay {
-        display: none; position: fixed; inset: 0; z-index: 9999;
-        background: rgba(5, 8, 20, 0.85); backdrop-filter: blur(10px);
-        justify-content: center; align-items: center;
-    }
+    .modal-overlay { display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(5, 8, 20, 0.85); backdrop-filter: blur(10px); justify-content: center; align-items: center; }
     .modal-overlay.active { display: flex; }
-    .login-box {
-        background: var(--bg-card); border: 1px solid var(--border-glass);
-        padding: 30px; border-radius: 20px; width: 90%; max-width: 400px;
-        text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
-        animation: borderGlow 3s infinite alternate;
-    }
-    .login-box h2 { color: var(--gold); margin-bottom: 20px; font-size: 22px; text-shadow: 0 0 10px rgba(251,191,36,0.3); }
+    .login-box { background: var(--bg-card); border: 1px solid var(--border-glass); padding: 25px; border-radius: 20px; width: 90%; max-width: 400px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.6); animation: borderGlow 3s infinite alternate; position: relative; }
+    .btn-close { position: absolute; top: 15px; right: 20px; font-size: 24px; color: var(--text-muted); cursor: pointer; }
     .input-group { margin-bottom: 15px; text-align: left; }
     .input-group label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 5px; font-weight: 700; }
-    .input-group input { 
-        width: 100%; padding: 12px 15px; border-radius: 10px; border: 1px solid var(--border-glass);
-        background: rgba(0,0,0,0.3); color: #fff; font-size: 14px; outline: none; transition: 0.3s;
-    }
+    .input-group input { width: 100%; padding: 12px 15px; border-radius: 10px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.3); color: #fff; font-size: 14px; outline: none; transition: 0.3s; }
     .input-group input:focus { border-color: var(--tai-color); box-shadow: 0 0 10px var(--tai-glow); }
-    .btn-login {
-        width: 100%; padding: 12px; border-radius: 10px; border: none;
-        background: linear-gradient(135deg, #0284c7, #38bdf8); color: #fff;
-        font-weight: 800; font-size: 16px; cursor: pointer; margin-top: 10px;
-        box-shadow: 0 0 15px var(--tai-glow); transition: 0.3s;
-    }
+    .btn-login { width: 100%; padding: 12px; border-radius: 10px; border: none; background: linear-gradient(135deg, #0284c7, #38bdf8); color: #fff; font-weight: 800; font-size: 16px; cursor: pointer; margin-top: 10px; box-shadow: 0 0 15px var(--tai-glow); transition: 0.3s; }
     .btn-login:hover { transform: translateY(-2px); box-shadow: 0 0 25px var(--tai-glow); }
     .btn-login:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-    .btn-close { position: absolute; top: 15px; right: 20px; font-size: 24px; color: var(--text-muted); cursor: pointer; }
 
     /* --- CSS MAIN APP --- */
     #main-app { opacity: 0; transition: opacity 0.5s ease; }
@@ -150,8 +125,6 @@ HTML_TEMPLATE = """
     .st-wait { color: var(--gold); }
     .spin-icon { display: inline-block; animation: spinWait 2s linear infinite; }
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; animation: pulseNum 2s infinite; }
-    
-    /* Banner thông báo lỗi */
     .error-banner { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--lose); color: #fca5a5; padding: 15px; border-radius: 10px; text-align: center; font-weight: 600; margin-bottom: 10px; display: none; }
 </style>
 </head>
@@ -159,9 +132,9 @@ HTML_TEMPLATE = """
 
 <!-- MODAL LOGIN -->
 <div class="modal-overlay" id="login-modal">
-    <div class="login-box" style="position: relative;">
+    <div class="login-box">
         <span class="btn-close" onclick="closeLoginModal()">&times;</span>
-        <h2>ĐĂNG NHẬP LC79B</h2>
+        <h2 style="color: var(--gold); margin-bottom: 20px; font-size: 22px;">ĐĂNG NHẬP TELE68</h2>
         <div class="input-group">
             <label>Tài khoản</label>
             <input type="text" id="ip-user" placeholder="Nhập tên đăng nhập...">
@@ -177,9 +150,9 @@ HTML_TEMPLATE = """
 <!-- MAIN APP -->
 <div id="main-app">
     <div class="header">
-        <div class="header-title">⚡ HYPERION OMNI VIP</div>
+        <div class="header-title">⚡ B52 TÀI XỈU MD5</div>
         <div class="user-info" id="user-info" onclick="openLoginModal()">
-            <div class="user-name" id="ui-username">Khách (Chưa đăng nhập)</div>
+            <div class="user-name" id="ui-username">Khách (Xem cầu)</div>
             <div class="user-balance" id="ui-balance">---</div>
         </div>
     </div>
@@ -191,7 +164,7 @@ HTML_TEMPLATE = """
     </div>
 
     <div class="container">
-        <div class="error-banner" id="error-banner">Lỗi: Không lấy được dữ liệu. Vui lòng đăng nhập!</div>
+        <div class="error-banner" id="error-banner">Lỗi kết nối API.</div>
         <div id="list-container">
             <div class="loading">Đang tải dữ liệu...</div>
         </div>
@@ -199,11 +172,9 @@ HTML_TEMPLATE = """
 </div>
 
 <script>
-let isResetting = false;
-
 document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('main-app').style.opacity = '1';
-    fetchData(); // Load data ngay khi vào
+    fetchData(); 
 });
 
 function openLoginModal() { document.getElementById('login-modal').classList.add('active'); }
@@ -231,7 +202,6 @@ async function doLogin() {
             document.getElementById('ui-username').innerText = data.username;
             document.getElementById('ui-balance').innerText = formatMoney(data.balance);
             closeLoginModal();
-            document.getElementById('error-banner').style.display = 'none';
             
             Swal.fire({title: 'Đăng nhập thành công!', text: `Chào mừng ${data.username}`, icon: 'success', background: '#0f172a', color: '#fff', timer: 1500, showConfirmButton: false});
             fetchData(); 
@@ -264,20 +234,14 @@ function animateNumber(el, target, suffix = '') {
 }
 
 async function fetchData() {
-    if (isResetting) return;
     try {
         const r = await fetch('/api/history', { cache: 'no-store' });
         const data = await r.json();
         
         if (data.error) {
-            // Tự động bật form đăng nhập nếu lỗi (do chưa có token hoặc token hết hạn)
             document.getElementById('error-banner').style.display = 'block';
             document.getElementById('error-banner').innerText = "Lỗi: " + data.error;
-            document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose)">Vui lòng đăng nhập để lấy dữ liệu!</div>';
-            
-            if(!data.is_logged_in) {
-                openLoginModal();
-            }
+            document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose)">Không có dữ liệu.</div>';
             return;
         }
         
@@ -352,7 +316,7 @@ setInterval(() => { fetchData(); }, 4000);
 """
 
 # =====================================================================
-# HELPER FUNCTIONS & LOGIC TOÁN HỌC (GIỮ NGUYÊN BẢN V10.1)
+# HELPER FUNCTIONS & LOGIC TOÁN HỌC
 # =====================================================================
 def build_blocks(results):
     if not results: return []
@@ -497,18 +461,10 @@ def analyze_pattern(results, dice_sums=None):
     
     return winner, round(final_conf, 1), best_model['name']
 
-def fetch_sessions(token):
-    """
-    Thêm Headers Origin và Referer để vượt qua bộ lọc của nhà cái
-    """
+def fetch_sessions():
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 
-            'Accept': 'application/json, text/plain, */*',
-            'Origin': 'https://lc79b.bet',
-            'Referer': 'https://lc79b.bet/'
-        }
-        url = BASE_SESSION_URL + token
+        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+        url = SESSION_URL + CURRENT_USER['token']
         r = requests.get(url, timeout=8, headers=headers)
         if r.status_code == 200:
             data = r.json()
@@ -542,15 +498,13 @@ def api_login():
         payload = {
             "username": user, 
             "password": pwd,
-            "deviceId": "web_bot_lc79",
+            "deviceId": "web_bot_tele68",
             "platform": "web"
         }
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 
             'Content-Type': 'application/json',
-            'Accept': 'application/json, text/plain, */*',
-            'Origin': 'https://lc79b.bet',
-            'Referer': 'https://lc79b.bet/'
+            'Accept': 'application/json, text/plain, */*'
         }
         
         r = requests.post(LOGIN_URL, json=payload, headers=headers, timeout=10)
@@ -572,30 +526,23 @@ def api_login():
                 else:
                     return jsonify({"status": "error", "message": "Không lấy được Token từ API"}), 401
             else:
-                msg = res_data.get('message') or res_data.get('msg') or 'Tài khoản hoặc mật khẩu không chính xác!'
+                msg = res_data.get('message') or res_data.get('msg') or 'Sai tài khoản hoặc mật khẩu!'
                 return jsonify({"status": "error", "message": msg}), 401
         else:
-            return jsonify({"status": "error", "message": f"Lỗi HTTP {r.status_code} từ nhà cái"}), 400
+            return jsonify({"status": "error", "message": f"Lỗi API ({r.status_code}). Vui lòng thử lại sau!"}), 400
             
     except Exception as e:
         print(f"[LOGIN ERROR] {e}")
-        return jsonify({"status": "error", "message": "Không thể kết nối đến server của nhà cái"}), 500
+        return jsonify({"status": "error", "message": f"Lỗi kết nối: {str(e)}"}), 500
 
 @app.route('/api/history')
 def history():
     global RESET_SESSION_ID
-    
-    # Nếu chưa đăng nhập hoặc mất token, trả về lỗi để Frontend bật form Login
-    if not CURRENT_USER['token']:
-        return jsonify({'error': 'Vui lòng đăng nhập để lấy dữ liệu!', 'is_logged_in': False}), 401
-
     try:
-        valid = sorted(fetch_sessions(CURRENT_USER['token']), key=lambda x: x['phien'])
-        
-        # Nếu token hết hạn, API trả về list rỗng
+        valid = sorted(fetch_sessions(), key=lambda x: x['phien'])
         if not valid: 
-            CURRENT_USER['token'] = "" # Xóa token cũ để bắt đăng nhập lại
-            return jsonify({'error': 'Phiên đăng nhập đã hết hạn hoặc API bị lỗi. Vui lòng đăng nhập lại!', 'is_logged_in': False}), 401
+            # Nếu token mặc định bị chết, trả lỗi để user biết
+            return jsonify({'error': 'Không lấy được dữ liệu phiên. Token có thể đã hết hạn!'}), 401
 
         out = []
         correct_count = 0
