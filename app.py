@@ -10,23 +10,20 @@ app = Flask(__name__)
 CORS(app)
 
 # ================= CẤU HÌNH API =================
-# API Login của LC79B (Có thể thay đổi nếu nhà cái update)
 LOGIN_URL = "https://lc79b.bet/v1/lobby/auth/login?cp=R&cl=R&pf=web&at="
-# API lấy dữ liệu cầu (Sử dụng token mặc định để xem trước)
 BASE_SESSION_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at="
-DEFAULT_TOKEN = "d35795e07a393f91815436933a4852df"
 
-# Biến toàn cục
+# Lưu trữ Token toàn cục. Ban đầu để trống, sẽ được nạp khi đăng nhập.
 CURRENT_USER = {
     "username": "",
-    "token": DEFAULT_TOKEN, # Mặc định dùng token guest để lấy data
+    "token": "", 
     "balance": 0.0,
     "is_logged_in": False
 }
 RESET_SESSION_ID = 0
 
 # =====================================================================
-# GIAO DIỆN HTML (V12.0 - SEAMLESS AUTH)
+# GIAO DIỆN HTML (V13.0 - AUTO AUTH)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -74,10 +71,10 @@ HTML_TEMPLATE = """
         background-size: 200px 200px; animation: floatStars 4s ease-in-out infinite; opacity: 0.4;
     }
 
-    /* --- CSS MODAL LOGIN (ẨN/HIỆN) --- */
+    /* --- CSS MODAL LOGIN --- */
     .modal-overlay {
         display: none; position: fixed; inset: 0; z-index: 9999;
-        background: rgba(5, 8, 20, 0.8); backdrop-filter: blur(10px);
+        background: rgba(5, 8, 20, 0.85); backdrop-filter: blur(10px);
         justify-content: center; align-items: center;
     }
     .modal-overlay.active { display: flex; }
@@ -107,18 +104,12 @@ HTML_TEMPLATE = """
 
     /* --- CSS MAIN APP --- */
     #main-app { opacity: 0; transition: opacity 0.5s ease; }
-    
-    .header { 
-        display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; 
-        background: rgba(5, 8, 20, 0.8); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border-glass);
-        position: sticky; top: 0; z-index: 100; 
-    }
+    .header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background: rgba(5, 8, 20, 0.8); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border-glass); position: sticky; top: 0; z-index: 100; }
     .header-title { font-size: 18px; font-weight: 800; background: linear-gradient(90deg, #fff, #bae6fd, #f472b6, #fff); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: shimmer 3s linear infinite; }
     
     .user-info { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; cursor: pointer; }
     .user-name { font-size: 11px; color: var(--text-muted); font-weight: 600; }
     .user-balance { font-size: 16px; font-weight: 800; color: var(--gold); text-shadow: 0 0 10px rgba(251,191,36,0.5); animation: pulseNum 2s infinite; }
-    .btn-login-header { background: rgba(14, 165, 233, 0.2); border: 1px solid var(--tai-color); color: #fff; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; }
 
     .stats-bar { max-width: 600px; margin: 16px auto 0; padding: 0 16px; display: flex; gap: 12px; position: relative; z-index: 1; }
     .stat-box { flex: 1; background: var(--bg-card); border: 1px solid var(--border-glass); border-radius: 16px; padding: 12px; text-align: center; backdrop-filter: blur(10px); position: relative; overflow: hidden; }
@@ -159,11 +150,14 @@ HTML_TEMPLATE = """
     .st-wait { color: var(--gold); }
     .spin-icon { display: inline-block; animation: spinWait 2s linear infinite; }
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; animation: pulseNum 2s infinite; }
+    
+    /* Banner thông báo lỗi */
+    .error-banner { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--lose); color: #fca5a5; padding: 15px; border-radius: 10px; text-align: center; font-weight: 600; margin-bottom: 10px; display: none; }
 </style>
 </head>
 <body>
 
-<!-- MODAL LOGIN (ẨN MẶC ĐỊNH) -->
+<!-- MODAL LOGIN -->
 <div class="modal-overlay" id="login-modal">
     <div class="login-box" style="position: relative;">
         <span class="btn-close" onclick="closeLoginModal()">&times;</span>
@@ -196,29 +190,24 @@ HTML_TEMPLATE = """
         <div class="stat-box"><div class="stat-lbl">Tỷ Lệ</div><div class="stat-val highlight" id="stat-rate">0%</div></div>
     </div>
 
-    <div class="container" id="list-container">
-        <div class="loading">Đang tải dữ liệu...</div>
+    <div class="container">
+        <div class="error-banner" id="error-banner">Lỗi: Không lấy được dữ liệu. Vui lòng đăng nhập!</div>
+        <div id="list-container">
+            <div class="loading">Đang tải dữ liệu...</div>
+        </div>
     </div>
 </div>
 
 <script>
 let isResetting = false;
-let isAutoBetting = false;
-let autoBetInterval = null;
-let lastBetSession = 0;
 
-// ================= UI LOGIC =================
 document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('main-app').style.opacity = '1';
     fetchData(); // Load data ngay khi vào
 });
 
-function openLoginModal() {
-    document.getElementById('login-modal').classList.add('active');
-}
-function closeLoginModal() {
-    document.getElementById('login-modal').classList.remove('active');
-}
+function openLoginModal() { document.getElementById('login-modal').classList.add('active'); }
+function closeLoginModal() { document.getElementById('login-modal').classList.remove('active'); }
 
 // ================= LOGIN LOGIC =================
 async function doLogin() {
@@ -242,10 +231,9 @@ async function doLogin() {
             document.getElementById('ui-username').innerText = data.username;
             document.getElementById('ui-balance').innerText = formatMoney(data.balance);
             closeLoginModal();
+            document.getElementById('error-banner').style.display = 'none';
             
             Swal.fire({title: 'Đăng nhập thành công!', text: `Chào mừng ${data.username}`, icon: 'success', background: '#0f172a', color: '#fff', timer: 1500, showConfirmButton: false});
-            
-            // Cập nhật lại data với token mới
             fetchData(); 
         } else {
             Swal.fire({title: 'Đăng nhập thất bại', text: data.message, icon: 'error', background: '#0f172a', color: '#fff'});
@@ -261,7 +249,7 @@ function formatMoney(amount) {
     return new Intl.NumberFormat('vi-VN').format(amount) + ' đ';
 }
 
-// ================= FETCH DATA (GIAO DIỆN) =================
+// ================= FETCH DATA =================
 function animateNumber(el, target, suffix = '') {
     const start = parseInt(el.innerText.replace(/[^0-9]/g, '')) || 0;
     if (start === target) { el.innerText = target + suffix; return; }
@@ -282,9 +270,18 @@ async function fetchData() {
         const data = await r.json();
         
         if (data.error) {
-            document.getElementById('list-container').innerHTML = `<div class="loading" style="color:var(--lose)">Lỗi API: ${data.error}</div>`;
+            // Tự động bật form đăng nhập nếu lỗi (do chưa có token hoặc token hết hạn)
+            document.getElementById('error-banner').style.display = 'block';
+            document.getElementById('error-banner').innerText = "Lỗi: " + data.error;
+            document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose)">Vui lòng đăng nhập để lấy dữ liệu!</div>';
+            
+            if(!data.is_logged_in) {
+                openLoginModal();
+            }
             return;
         }
+        
+        document.getElementById('error-banner').style.display = 'none';
         renderList(data.rows || [], data.stats || {});
     } catch (e) {
         document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose)">Mất kết nối Server!</div>';
@@ -384,7 +381,6 @@ def encode_pattern_81(block_lengths):
     return code
 
 def evaluate_30_models(results, dice_sums=None):
-    # (Giữ nguyên logic 30 models từ bản trước)
     models = []
     n = len(results)
     if n < 10: return models
@@ -394,7 +390,6 @@ def evaluate_30_models(results, dice_sums=None):
     opp_val = "Xỉu" if curr_val == "Tài" else "Tài"
     last = results[0]
 
-    # Bệt
     for target_len in range(1, 11):
         if curr_len == target_len or (target_len == 10 and curr_len >= 10):
             cont, brk = 0, 0
@@ -409,7 +404,6 @@ def evaluate_30_models(results, dice_sums=None):
                 if p_cont > 0.55: models.append({'id': f'S{target_len}', 'name': f'Bám bệt {target_len}', 'prediction': curr_val, 'win_rate': p_cont, 'weight': 5.0 + target_len*0.5})
                 elif p_cont < 0.45: models.append({'id': f'S{target_len}', 'name': f'Bẻ bệt {target_len}', 'prediction': opp_val, 'win_rate': 1-p_cont, 'weight': 5.0 + target_len*0.5})
     
-    # Đảo
     alt_len = 0
     for i in range(n - 1):
         if results[i] != results[i + 1]: alt_len += 1
@@ -431,7 +425,6 @@ def evaluate_30_models(results, dice_sums=None):
                 if p_cont > 0.55: models.append({'id': f'A{target_alt}', 'name': f'Đảo {target_alt} tiếp', 'prediction': opp_val if target_alt % 2 != 0 else curr_val, 'win_rate': p_cont, 'weight': 4.0 + target_alt*0.8})
                 elif p_cont < 0.45: models.append({'id': f'A{target_alt}', 'name': f'Đảo {target_alt} gãy', 'prediction': curr_val if target_alt % 2 != 0 else opp_val, 'win_rate': 1-p_cont, 'weight': 4.0 + target_alt*0.8})
     
-    # N-Gram
     for ns in [4, 5, 6, 7, 8]:
         if n < ns + 1: continue
         curr_seq = tuple(results[:ns])
@@ -446,7 +439,6 @@ def evaluate_30_models(results, dice_sums=None):
             if p_win_tai > 0.55: models.append({'id': f'NG{ns}', 'name': f'N-gram {ns} (Tài)', 'prediction': 'Tài', 'win_rate': p_win_tai, 'weight': 3.0 + ns*0.2})
             elif p_win_tai < 0.45: models.append({'id': f'NG{ns}', 'name': f'N-gram {ns} (Xỉu)', 'prediction': 'Xỉu', 'win_rate': 1-p_win_tai, 'weight': 3.0 + ns*0.2})
     
-    # Mẫu 81
     if len(blocks) >= 5:
         four_lens = [b['len'] for b in blocks[1:5]]
         code = encode_pattern_81(four_lens)
@@ -469,7 +461,6 @@ def evaluate_30_models(results, dice_sums=None):
                     p_c = (s['c'] + 1) / (tot + 2)
                     models.append({'id': 'M81_EX', 'name': 'Mẫu 81 Exact', 'prediction': curr_val if p_c>0.5 else opp_val, 'win_rate': max(p_c, 1-p_c), 'weight': 7.0})
     
-    # Markov
     if n >= 10:
         trans = {"Tài": 0, "Xỉu": 0}
         for i in range(n - 1):
@@ -507,8 +498,16 @@ def analyze_pattern(results, dice_sums=None):
     return winner, round(final_conf, 1), best_model['name']
 
 def fetch_sessions(token):
+    """
+    Thêm Headers Origin và Referer để vượt qua bộ lọc của nhà cái
+    """
     try:
-        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 
+            'Accept': 'application/json, text/plain, */*',
+            'Origin': 'https://lc79b.bet',
+            'Referer': 'https://lc79b.bet/'
+        }
         url = BASE_SESSION_URL + token
         r = requests.get(url, timeout=8, headers=headers)
         if r.status_code == 200:
@@ -535,17 +534,11 @@ def index():
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    """
-    Gọi API Đăng nhập của LC79B / Tele68.
-    Xử lý lỗi thực tế từ API.
-    """
     data = request.json
     user = data.get('username')
     pwd = data.get('password')
     
     try:
-        # Cấu trúc Payload có thể thay đổi tùy theo API thực tế của LC79B.
-        # Dưới đây là cấu trúc phổ biến của hệ thống Tele68/LC79.
         payload = {
             "username": user, 
             "password": pwd,
@@ -553,21 +546,19 @@ def api_login():
             "platform": "web"
         }
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Accept': 'application/json, text/plain, */*',
+            'Origin': 'https://lc79b.bet',
+            'Referer': 'https://lc79b.bet/'
         }
         
-        # Gửi request đến API Login của LC79B
         r = requests.post(LOGIN_URL, json=payload, headers=headers, timeout=10)
         
-        # Phân tích phản hồi
         if r.status_code == 200:
             res_data = r.json()
             
-            # Kiểm tra mã thành công (Tùy API, thường là code 0, 200, hoặc status success)
             if res_data.get('code') == 0 or res_data.get('status') == 'success':
-                # Lấy Token và Số dư từ response
                 data_obj = res_data.get('data', {})
                 token = data_obj.get('accessToken') or data_obj.get('token') or data_obj.get('at')
                 balance = data_obj.get('balance') or data_obj.get('money') or 0.0
@@ -577,32 +568,34 @@ def api_login():
                     CURRENT_USER['token'] = token
                     CURRENT_USER['balance'] = float(balance)
                     CURRENT_USER['is_logged_in'] = True
-                    
                     return jsonify({"status": "success", "username": user, "balance": CURRENT_USER['balance']})
                 else:
                     return jsonify({"status": "error", "message": "Không lấy được Token từ API"}), 401
             else:
-                # Trả về lỗi thực tế từ nhà cái (Ví dụ: Sai tài khoản hoặc mật khẩu)
                 msg = res_data.get('message') or res_data.get('msg') or 'Tài khoản hoặc mật khẩu không chính xác!'
                 return jsonify({"status": "error", "message": msg}), 401
         else:
-            # Lỗi HTTP (404, 500, ...)
-            return jsonify({"status": "error", "message": f"Lỗi kết nối API nhà cái (HTTP {r.status_code})"}), 400
+            return jsonify({"status": "error", "message": f"Lỗi HTTP {r.status_code} từ nhà cái"}), 400
             
     except Exception as e:
         print(f"[LOGIN ERROR] {e}")
-        # Fallback: Nếu API bị chặn hoặc lỗi mạng, cho phép đăng nhập giả lập để test UI (Bạn có thể xóa phần này nếu muốn bảo mật tuyệt đối)
-        CURRENT_USER['username'] = user
-        CURRENT_USER['balance'] = 9999999.0 
-        CURRENT_USER['is_logged_in'] = True
-        return jsonify({"status": "success", "username": user, "balance": CURRENT_USER['balance'], "mock": True})
+        return jsonify({"status": "error", "message": "Không thể kết nối đến server của nhà cái"}), 500
 
 @app.route('/api/history')
 def history():
     global RESET_SESSION_ID
+    
+    # Nếu chưa đăng nhập hoặc mất token, trả về lỗi để Frontend bật form Login
+    if not CURRENT_USER['token']:
+        return jsonify({'error': 'Vui lòng đăng nhập để lấy dữ liệu!', 'is_logged_in': False}), 401
+
     try:
         valid = sorted(fetch_sessions(CURRENT_USER['token']), key=lambda x: x['phien'])
-        if not valid: return jsonify({'error': 'Không lấy được dữ liệu phiên'}), 500
+        
+        # Nếu token hết hạn, API trả về list rỗng
+        if not valid: 
+            CURRENT_USER['token'] = "" # Xóa token cũ để bắt đăng nhập lại
+            return jsonify({'error': 'Phiên đăng nhập đã hết hạn hoặc API bị lỗi. Vui lòng đăng nhập lại!', 'is_logged_in': False}), 401
 
         out = []
         correct_count = 0
