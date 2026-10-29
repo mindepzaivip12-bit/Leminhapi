@@ -5,10 +5,15 @@ from datetime import datetime
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
+import urllib3
+
+# Tắt cảnh báo SSL (do có thể dùng verify=False)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 CORS(app)
 
+# ⚠️ LƯU Ý: NẾU TOKEN NÀY CHẾT, BẠN PHẢI LẤY TOKEN MỚI TỪ WEB TELE68
 API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=ab36aa88e2c9868ae0e8bc61adbd18dc"
 RESET_SESSION_ID = 0
 
@@ -21,7 +26,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>BON LCMD5 </title>
+<title>BON LCMD5 36</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -101,7 +106,7 @@ HTML_TEMPLATE = """
 <div class="header">
     <div class="header-left">
         <div class="live-dot"></div>
-        <div class="header-title">khánh ly xinhgai </div>
+        <div class="header-title">LC79 MD5</div>
     </div>
     <button class="btn-reset" onclick="confirmReset()">↻ Reset</button>
 </div>
@@ -113,7 +118,7 @@ HTML_TEMPLATE = """
 </div>
 
 <div class="container" id="list-container">
-    <div class="loading">Khởi động 36 Patterns Engine...</div>
+    <div class="loading">Đang tải tối đa 100 phiên dữ liệu...</div>
 </div>
 
 <script>
@@ -136,7 +141,7 @@ async function fetchData() {
         const r = await fetch('/api/history', { cache: 'no-store' });
         const data = await r.json();
         if (data.error) {
-            document.getElementById('list-container').innerHTML = `<div class="loading" style="color:var(--lose)">Lỗi API: ${data.error}. Đang thử lại...</div>`;
+            document.getElementById('list-container').innerHTML = `<div class="loading" style="color:var(--lose)">Lỗi API: ${data.error}.<br><span style="font-size:12px;color:#fff;">(Hãy kiểm tra lại Token API)</span></div>`;
             return;
         }
         renderList(data.rows || [], data.stats || {});
@@ -197,7 +202,7 @@ function renderList(rows, stats) {
 }
 async function confirmReset() {
     Swal.fire({
-        title: 'Xác nhận Reset?', text: "Ẩn lịch sử hiện tại, tiếp tục tính toán ngầm!",
+        title: 'Xác nhận Reset?', text: "Làm mới 100 phiên, bắt đầu tính lại từ đầu!",
         icon: 'warning', background: '#0f172a', color: '#fff',
         showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#334155',
         confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
@@ -219,30 +224,41 @@ async function confirmReset() {
         }
     });
 }
-fetchData(); setInterval(fetchData, 4000);
+fetchData(); setInterval(fetchData, 5000);
 </script>
 </body>
 </html>
 """
 
 # =====================================================================
-# FETCH DỮ LIỆU
+# FETCH DỮ LIỆU - SỬA LỖI API BẰNG HEADERS
 # =====================================================================
 def fetch_sessions():
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Accept': 'application/json'}
-        r = requests.get(API_URL, timeout=8, headers=headers)
+        # Thêm headers giả lập trình duyệt để tránh bị chặn IP (403/401)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Origin': 'https://tele68.com',
+            'Referer': 'https://tele68.com/'
+        }
+        # verify=False để tránh lỗi SSL trên Render
+        r = requests.get(API_URL, timeout=15, headers=headers, verify=False)
+        
         if r.status_code == 200:
             data = r.json()
             if 'list' in data and data['list']:
                 rows = []
                 for item in data['list']:
-                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                    res = "Tài" if item.get('resultTruyenThong') == "TAI" else "Xỉu"
                     dices = item.get('dices', [0, 0, 0])
                     dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
                     total = item.get('point', sum(dices))
                     rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
                 return rows
+        else:
+            print(f"[API ERROR] Mã lỗi HTTP: {r.status_code} - Có thể Token đã chết.")
         return []
     except Exception as e:
         print(f"[API ERROR] {e}")
@@ -252,32 +268,23 @@ def fetch_sessions():
 # THUẬT TOÁN MẪU 36 - FULL PATTERN RECOGNITION
 # =====================================================================
 def find_historical_follow(results, pattern_chrono):
-    """
-    Tìm tất cả lần xuất hiện pattern_chrono (theo thứ tự thời gian cũ → mới)
-    và đếm kết quả TIẾP THEO (Tài / Xỉu).
-    """
     k = len(pattern_chrono)
     n = len(results)
-    if n <= k + 1:
-        return 0, 0
-    chrono = list(reversed(results))  # cũ → mới
+    if n <= k + 1: return 0, 0
+    chrono = list(reversed(results))
     tai, xiu = 0, 0
-    for i in range(n - k - 1):  # bỏ lần xuất hiện cuối cùng (chính là hiện tại)
+    for i in range(n - k - 1):
         match = True
         for j in range(k):
             if chrono[i + j] != pattern_chrono[j]:
                 match = False
                 break
         if match:
-            if chrono[i + k] == "Tài":
-                tai += 1
-            else:
-                xiu += 1
+            if chrono[i + k] == "Tài": tai += 1
+            else: xiu += 1
     return tai, xiu
 
-
 def find_streak_follow(results, target_val, target_len):
-    """Đếm kết quả sau các chuỗi bệt cùng giá trị, cùng độ dài."""
     chrono = list(reversed(results))
     n = len(chrono)
     tai, xiu = 0, 0
@@ -289,26 +296,17 @@ def find_streak_follow(results, target_val, target_len):
                 j += 1
             streak = j - i
             matches = (streak == target_len) if target_len < 4 else (streak >= 4)
-            if matches and j < n:  # bỏ streak đang diễn ra (cuối mảng)
-                if chrono[j] == "Tài":
-                    tai += 1
-                else:
-                    xiu += 1
+            if matches and j < n:
+                if chrono[j] == "Tài": tai += 1
+                else: xiu += 1
             i = j
         else:
             i += 1
     return tai, xiu
 
-
 def detect_36_patterns(results):
-    """
-    THUẬT TOÁN MẪU 36 - Phân tích 36 loại cầu khác nhau.
-    Trả về list các pattern đang kích hoạt với dự đoán + win_rate + weight.
-    """
     n = len(results)
-    if n < 8:
-        return []
-
+    if n < 8: return []
     detections = []
     chrono = list(reversed(results))
     curr_val = results[0]
@@ -317,71 +315,45 @@ def detect_36_patterns(results):
     def try_ngram(pid, pname, chrono_pattern, weight, min_wr=0.55):
         tai, xiu = find_historical_follow(results, chrono_pattern)
         total = tai + xiu
-        if total < 2:
-            return
-        if tai >= xiu:
-            pred, wr = "Tài", tai / total
-        else:
-            pred, wr = "Xỉu", xiu / total
+        if total < 2: return
+        if tai >= xiu: pred, wr = "Tài", tai / total
+        else: pred, wr = "Xỉu", xiu / total
         if wr >= min_wr:
-            detections.append({
-                'id': pid, 'name': pname, 'prediction': pred,
-                'win_rate': wr, 'weight': weight, 'samples': total
-            })
+            detections.append({'id': pid, 'name': pname, 'prediction': pred, 'win_rate': wr, 'weight': weight, 'samples': total})
 
-    # ========= GROUP A: 8 N-GRAM PATTERNS (NG2 → NG9) =========
     for k in range(2, 10):
         if len(chrono) >= k:
-            pattern = chrono[-k:]
-            try_ngram(f'NG{k}', f'N-gram bậc {k}', pattern, weight=3.0 + k * 0.4, min_wr=0.55)
+            try_ngram(f'NG{k}', f'N-gram bậc {k}', chrono[-k:], weight=3.0 + k * 0.4)
 
-    # ========= GROUP B: 8 STREAK PATTERNS =========
     curr_streak = 1
     for i in range(1, n):
-        if results[i] == curr_val:
-            curr_streak += 1
-        else:
-            break
+        if results[i] == curr_val: curr_streak += 1
+        else: break
     for target in [1, 2, 3, 4]:
         if curr_streak == target or (target == 4 and curr_streak >= 4):
             tai_f, xiu_f = find_streak_follow(results, curr_val, target)
             total = tai_f + xiu_f
-            if total < 2:
-                continue
-            if curr_val == "Tài":
-                cont, brk = tai_f, xiu_f
-            else:
-                cont, brk = xiu_f, tai_f
-            if cont >= brk:
-                pred, wr = curr_val, (cont + 0.5) / (total + 1)
-            else:
-                pred, wr = opp_val, (brk + 0.5) / (total + 1)
+            if total < 2: continue
+            if curr_val == "Tài": cont, brk = tai_f, xiu_f
+            else: cont, brk = xiu_f, tai_f
+            if cont >= brk: pred, wr = curr_val, (cont + 0.5) / (total + 1)
+            else: pred, wr = opp_val, (brk + 0.5) / (total + 1)
             if wr >= 0.52:
-                detections.append({
-                    'id': f'ST{curr_val[0]}{target}',
-                    'name': f'Bệt {curr_val} {target}',
-                    'prediction': pred, 'win_rate': wr,
-                    'weight': 5.5 + target * 1.0, 'samples': total
-                })
+                detections.append({'id': f'ST{curr_val[0]}{target}', 'name': f'Bệt {curr_val} {target}', 'prediction': pred, 'win_rate': wr, 'weight': 5.5 + target * 1.0, 'samples': total})
 
-    # ========= GROUP C: 4 ALTERNATING PATTERNS (ALT3 → ALT6) =========
     alt_len = 1
     for i in range(1, n):
-        if results[i] != results[i - 1]:
-            alt_len += 1
-        else:
-            break
+        if results[i] != results[i - 1]: alt_len += 1
+        else: break
     for target in [3, 4, 5, 6]:
         if alt_len == target or (target == 6 and alt_len >= 6):
             tpl = [curr_val if i % 2 == 0 else opp_val for i in range(target)]
             tpl = list(reversed(tpl))
-            try_ngram(f'ALT{target}', f'Đảo 1-1 bậc {target}', tpl, weight=4.5 + target * 0.5, min_wr=0.55)
+            try_ngram(f'ALT{target}', f'Đảo 1-1 bậc {target}', tpl, weight=4.5 + target * 0.5)
 
-    # ========= HELPER: BLOCK PATTERN DETECTION =========
     def try_block_pattern(block_pattern, name, pid_prefix, weight):
         total_len = sum(block_pattern)
-        if n < total_len + 2:
-            return
+        if n < total_len + 2: return
         for start_val in ["Tài", "Xỉu"]:
             template = []
             val = start_val
@@ -389,144 +361,91 @@ def detect_36_patterns(results):
                 template.extend([val] * bl)
                 val = "Xỉu" if val == "Tài" else "Tài"
             for plen in range(total_len, max(2, total_len - 2) - 1, -1):
-                if len(template) < plen:
-                    continue
+                if len(template) < plen: continue
                 tail_tpl = template[-plen:]
                 if len(chrono) >= plen and chrono[-plen:] == tail_tpl:
                     tai, xiu = find_historical_follow(results, tail_tpl)
                     total = tai + xiu
                     if total >= 2:
-                        if tai >= xiu:
-                            pred, wr = "Tài", tai / total
-                        else:
-                            pred, wr = "Xỉu", xiu / total
+                        if tai >= xiu: pred, wr = "Tài", tai / total
+                        else: pred, wr = "Xỉu", xiu / total
                         if wr >= 0.52:
-                            detections.append({
-                                'id': f'{pid_prefix}_{start_val[0]}_{plen}',
-                                'name': name, 'prediction': pred,
-                                'win_rate': wr, 'weight': weight, 'samples': total
-                            })
+                            detections.append({'id': f'{pid_prefix}_{start_val[0]}_{plen}', 'name': name, 'prediction': pred, 'win_rate': wr, 'weight': weight, 'samples': total})
                     return
 
-    # ========= GROUP D: 4 MIXED PATTERNS =========
     try_block_pattern([1, 2], 'Pattern 1-2', 'M12', 6.0)
     try_block_pattern([2, 1], 'Pattern 2-1', 'M21', 6.0)
     try_block_pattern([1, 2, 1], 'Pattern 1-2-1', 'M121', 5.5)
     try_block_pattern([2, 1, 2], 'Pattern 2-1-2', 'M212', 5.5)
-
-    # ========= GROUP E: 4 SYMMETRIC PATTERNS =========
     try_block_pattern([2, 2], 'Pattern 2-2', 'S22', 5.5)
     try_block_pattern([3, 3], 'Pattern 3-3', 'S33', 5.5)
     try_block_pattern([2, 2, 2], 'Pattern 2-2-2', 'S222', 5.0)
     try_block_pattern([3, 3, 3], 'Pattern 3-3-3', 'S333', 5.0)
-
-    # ========= GROUP F: 4 EXTREME PATTERNS =========
     try_block_pattern([1, 3], 'Pattern 1-3', 'E13', 5.0)
     try_block_pattern([3, 1], 'Pattern 3-1', 'E31', 5.0)
     try_block_pattern([1, 3, 1], 'Pattern 1-3-1', 'E131', 4.5)
     try_block_pattern([3, 1, 3], 'Pattern 3-1-3', 'E313', 4.5)
 
-    # ========= GROUP G: 4 MARKOV & BIAS PATTERNS =========
-    # Markov 1
     m1_tai, m1_xiu = 0, 0
     for i in range(n - 1):
         if results[i] == curr_val:
-            if results[i + 1] == "Tài":
-                m1_tai += 1
-            else:
-                m1_xiu += 1
+            if results[i + 1] == "Tài": m1_tai += 1
+            else: m1_xiu += 1
     total = m1_tai + m1_xiu
     if total >= 3:
-        if m1_tai >= m1_xiu:
-            pred, wr = "Tài", (m1_tai + 0.5) / (total + 1)
-        else:
-            pred, wr = "Xỉu", (m1_xiu + 0.5) / (total + 1)
+        if m1_tai >= m1_xiu: pred, wr = "Tài", (m1_tai + 0.5) / (total + 1)
+        else: pred, wr = "Xỉu", (m1_xiu + 0.5) / (total + 1)
         if wr >= 0.55:
-            detections.append({
-                'id': 'MK1', 'name': 'Markov Bậc 1',
-                'prediction': pred, 'win_rate': wr,
-                'weight': 4.0, 'samples': total
-            })
+            detections.append({'id': 'MK1', 'name': 'Markov Bậc 1', 'prediction': pred, 'win_rate': wr, 'weight': 4.0, 'samples': total})
 
-    # Markov 2
     if n >= 3:
         last2 = (results[0], results[1])
         m2_tai, m2_xiu = 0, 0
         for i in range(n - 2):
             if (results[i], results[i + 1]) == last2:
-                if results[i + 2] == "Tài":
-                    m2_tai += 1
-                else:
-                    m2_xiu += 1
+                if results[i + 2] == "Tài": m2_tai += 1
+                else: m2_xiu += 1
         total = m2_tai + m2_xiu
         if total >= 2:
-            if m2_tai >= m2_xiu:
-                pred, wr = "Tài", (m2_tai + 0.5) / (total + 1)
-            else:
-                pred, wr = "Xỉu", (m2_xiu + 0.5) / (total + 1)
+            if m2_tai >= m2_xiu: pred, wr = "Tài", (m2_tai + 0.5) / (total + 1)
+            else: pred, wr = "Xỉu", (m2_xiu + 0.5) / (total + 1)
             if wr >= 0.55:
-                detections.append({
-                    'id': 'MK2', 'name': 'Markov Bậc 2',
-                    'prediction': pred, 'win_rate': wr,
-                    'weight': 5.0, 'samples': total
-                })
+                detections.append({'id': 'MK2', 'name': 'Markov Bậc 2', 'prediction': pred, 'win_rate': wr, 'weight': 5.0, 'samples': total})
 
-    # Bias Tài / Xỉu
     if n >= 15:
         recent = results[:15]
         tc = sum(1 for r in recent if r == "Tài")
         ratio = tc / 15.0
         if ratio >= 0.6:
-            detections.append({
-                'id': 'BIAS_T', 'name': 'Nghiêng Tài 60%+',
-                'prediction': 'Tài', 'win_rate': ratio,
-                'weight': 3.5, 'samples': 15
-            })
+            detections.append({'id': 'BIAS_T', 'name': 'Nghiêng Tài 60%+', 'prediction': 'Tài', 'win_rate': ratio, 'weight': 3.5, 'samples': 15})
         elif ratio <= 0.4:
-            detections.append({
-                'id': 'BIAS_X', 'name': 'Nghiêng Xỉu 60%+',
-                'prediction': 'Xỉu', 'win_rate': 1 - ratio,
-                'weight': 3.5, 'samples': 15
-            })
+            detections.append({'id': 'BIAS_X', 'name': 'Nghiêng Xỉu 60%+', 'prediction': 'Xỉu', 'win_rate': 1 - ratio, 'weight': 3.5, 'samples': 15})
 
     return detections
 
-
 def analyze_pattern(results, dice_sums=None):
-    """
-    Tổng hợp 36 patterns → dự đoán cuối cùng + confidence 50-99%.
-    """
     if not results or len(results) < 5:
         return "Tài", 50.0, "Khởi tạo"
-
     detections = detect_36_patterns(results)
-
     if not detections:
         recent = results[:5]
         tc = sum(1 for r in recent if r == "Tài")
-        if tc > 2:
-            return "Tài", 55.0, "Đa số 5 phiên gần nhất"
+        if tc > 2: return "Tài", 55.0, "Đa số 5 phiên gần nhất"
         return "Xỉu", 55.0, "Đa số 5 phiên gần nhất"
 
     tai_score, xiu_score = 0.0, 0.0
     for d in detections:
         sample_factor = min(d['samples'] / 10.0, 2.0)
         score = d['win_rate'] * d['weight'] * sample_factor
-        if d['prediction'] == "Tài":
-            tai_score += score
-        else:
-            xiu_score += score
+        if d['prediction'] == "Tài": tai_score += score
+        else: xiu_score += score
 
     total = tai_score + xiu_score
-    if total == 0:
-        return results[0], 50.0, "Nhiễu"
+    if total == 0: return results[0], 50.0, "Nhiễu"
 
-    if tai_score > xiu_score:
-        winner, win_ratio = "Tài", tai_score / total
-    else:
-        winner, win_ratio = "Xỉu", xiu_score / total
+    if tai_score > xiu_score: winner, win_ratio = "Tài", tai_score / total
+    else: winner, win_ratio = "Xỉu", xiu_score / total
 
-    # Confidence 50 → 99% (đường cong mũ)
     shift = win_ratio - 0.5
     conf = 50.0 + (shift * 2) ** 1.5 * 49.0
     max_samples = max(d['samples'] for d in detections)
@@ -543,7 +462,6 @@ def analyze_pattern(results, dice_sums=None):
 
     return winner, round(conf, 1), pattern_name
 
-
 # =====================================================================
 # FLASK ROUTES
 # =====================================================================
@@ -551,14 +469,13 @@ def analyze_pattern(results, dice_sums=None):
 def index():
     return render_template_string(HTML_TEMPLATE)
 
-
 @app.route('/api/history')
 def history():
     global RESET_SESSION_ID
     try:
         valid = sorted(fetch_sessions(), key=lambda x: x['phien'])
         if not valid:
-            return jsonify({'error': 'Không lấy được dữ liệu từ API'}), 500
+            return jsonify({'error': 'Không lấy được dữ liệu từ API. Token có thể đã hết hạn!'}), 500
 
         out, correct_count, total_past = [], 0, 0
         latest = valid[-1]
@@ -573,11 +490,12 @@ def history():
             'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None
         })
 
+        # LẤY TỐI ĐA 100 PHIÊN
         for i in range(len(valid) - 1, -1, -1):
             current = valid[i]
             if current['phien'] <= RESET_SESSION_ID:
                 break
-            if len(out) > 20:
+            if len(out) > 100:  # Đã đổi thành 100
                 break
             history_list = [v['result'] for v in valid[:i]][::-1]
             dice_list = [v.get('total', 0) for v in valid[:i]][::-1]
@@ -585,8 +503,7 @@ def history():
                 pred, conf, _ = analyze_pattern(history_list, dice_list)
                 is_correct = (pred == current['result'])
                 total_past += 1
-                if is_correct:
-                    correct_count += 1
+                if is_correct: correct_count += 1
             else:
                 pred, conf = "Tài", 50.0
                 is_correct = None
@@ -600,7 +517,6 @@ def history():
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/api/predict')
 def predict_only():
@@ -620,29 +536,21 @@ def predict_only():
         model_details = []
         for d in detections:
             model_details.append({
-                'model_id': d['id'],
-                'model_name': d['name'],
-                'predicts': d['prediction'],
-                'historical_winrate': f"{round(d['win_rate'] * 100, 1)}%",
-                'weight_priority': round(d['weight'], 2),
-                'samples': d['samples']
+                'model_id': d['id'], 'model_name': d['name'],
+                'predicts': d['prediction'], 'historical_winrate': f"{round(d['win_rate'] * 100, 1)}%",
+                'weight_priority': round(d['weight'], 2), 'samples': d['samples']
             })
         model_details.sort(key=lambda x: x['weight_priority'], reverse=True)
 
         return jsonify({
-            'status': 'success',
-            'next_session': next_phien,
-            'final_prediction': pred,
-            'final_confidence': conf,
-            'strongest_pattern': pattern,
-            'total_models_active': len(model_details),
-            'max_patterns': 36,
-            'api_models_breakdown': model_details,
+            'status': 'success', 'next_session': next_phien,
+            'final_prediction': pred, 'final_confidence': conf,
+            'strongest_pattern': pattern, 'total_models_active': len(model_details),
+            'max_patterns': 36, 'api_models_breakdown': model_details,
             'updated_at': datetime.now().strftime('%H:%M:%S')
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
-
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
@@ -655,7 +563,6 @@ def reset_api():
         return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
-
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
