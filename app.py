@@ -5,10 +5,17 @@ import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
 
+# Bypass Cloudflare bằng curl_cffi (giả lập TLS Chrome)
+try:
+    from curl_cffi import requests as cffi_requests
+    HAS_CURL_CFFI = True
+except ImportError:
+    HAS_CURL_CFFI = False
+
 app = Flask(__name__)
 CORS(app)
 
-# ✅ API TX MỚI (thay cho MD5 cũ)
+# API TX (link mới)
 API_URL = "https://wtx.tele68.com/v1/tx/lite-sessions?cp=R&cl=R&pf=web&at=6471f10890f9f8702ad1ac579f8566c7"
 RESET_SESSION_ID = 0
 
@@ -29,21 +36,19 @@ HTML_TEMPLATE = """
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>API LC TX MINHLE</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
     :root {
-        --bg-dark: #060913; --bg-card: #0d1424; --bg-card-hover: #131c30;
+        --bg-dark: #060913; --bg-card: #0d1424;
         --text-main: #f1f5f9; --text-muted: #64748b; --border-color: #1e293b;
         --tai-bg: #0284c7; --tai-bet-bg: rgba(2, 132, 199, 0.15);
         --xiu-bg: #db2777; --xiu-bet-bg: rgba(219, 39, 119, 0.15);
-        --blue-main: #38bdf8; --blue-glow: rgba(56, 189, 248, 0.5);
+        --blue-main: #38bdf8;
         --lose-color: #ef4444; --win-color: #38bdf8;
         --gold: #fbbf24;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
     @keyframes slideIn { from { opacity: 0; transform: translateY(20px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
     @keyframes rainbow-border { 0% { border-color: #38bdf8; } 50% { border-color: #f472b6; } 100% { border-color: #38bdf8; } }
-    @keyframes dotPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     
     body { background-color: var(--bg-dark); color: var(--text-main); padding-bottom: 30px; min-height: 100vh; background-image: radial-gradient(circle at 50% 0%, #0c1a32 0%, transparent 60%); }
     .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; border-bottom: 1px solid var(--border-color); background: rgba(6, 9, 19, 0.85); position: sticky; top: 0; z-index: 100; }
@@ -80,7 +85,8 @@ HTML_TEMPLATE = """
     .pattern-tag { font-size: 10px; color: var(--text-muted); padding: 2px 8px; border-radius: 10px; background: rgba(56,189,248,0.08); display: inline-block; margin-top: 2px; }
     .pattern-tag.m81 { color: var(--gold); background: rgba(251,191,36,0.08); }
     .loading { text-align: center; padding: 50px; color: var(--blue-main); font-weight: 600; }
-    .error-box { text-align: center; padding: 20px; color: #ef4444; background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; border-radius: 10px; margin: 20px auto; max-width: 500px; font-weight: 600; }
+    .error-box { text-align: center; padding: 20px; color: #ef4444; background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; border-radius: 10px; margin: 20px auto; max-width: 500px; font-weight: 600; line-height: 1.6; }
+    .error-box small { font-size: 11px; color: #94a3b8; display: block; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -105,7 +111,8 @@ async function fetchData() {
         const data = await r.json();
         
         if (data.error) {
-            document.getElementById('list-container').innerHTML = `<div class="error-box">⚠️ LỖI API:<br><br>${data.error}</div>`;
+            document.getElementById('list-container').innerHTML = 
+                `<div class="error-box">⚠️ LỖI API<br><br>${data.error}<small>Nếu lỗi "bị chặn": kiểm tra requirements.txt đã có curl_cffi chưa</small></div>`;
             return;
         }
         
@@ -124,7 +131,7 @@ async function fetchData() {
         const container = document.getElementById('list-container');
         container.innerHTML = '';
         
-        rows.forEach((row, idx) => {
+        rows.forEach((row) => {
             const div = document.createElement('div');
             div.className = 'card-item' + (row.is_next ? ' active' : '');
             
@@ -169,6 +176,10 @@ fetchData(); setInterval(fetchData, 5000);
 </html>
 """
 
+
+# =====================================================================
+# CÁC HÀM PHÂN TÍCH CẦU (giữ nguyên logic gốc)
+# =====================================================================
 def build_blocks(results):
     if not results: return []
     blocks = []
@@ -249,7 +260,7 @@ def analyze_pattern(results, dice_sums=None):
         else: break
     if alt_len >= 10:    candidates.append((opposite, 92.0, f"Đảo 1-1 dài {alt_len}", 90))
     elif alt_len >= 7:   candidates.append((opposite, 83.0, f"Đảo 1-1 {alt_len}", 80))
-    elif alt_len >= 4:   candidates.append((opposite, 72.0, f"Đảo 1-1 ngắn", 68))
+    elif alt_len >= 4:   candidates.append((opposite, 72.0, "Đảo 1-1 ngắn", 68))
     
     if len(blocks) >= 3:
         is_alt = all(blocks[i]['val'] != blocks[i-1]['val'] for i in range(1, min(len(blocks), 6)))
@@ -342,63 +353,97 @@ def analyze_pattern(results, dice_sums=None):
     
     return winner, round(min(98.0, final_conf), 1), pattern_name
 
+
 # =====================================================================
-# FETCH DỮ LIỆU TX - LINH HOẠT FIELD, KHÔNG BỊA PHIÊN ẢO
+# FETCH - BYPASS CLOUDFLARE BẰNG curl_cffi
 # =====================================================================
-def fetch_sessions():
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    # Thêm timestamp để phá cache
-    url = f"{API_URL}&_t={int(time.time())}"
+_BROWSER_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Origin': 'https://wtx.tele68.com',
+    'Referer': 'https://wtx.tele68.com/',
+    'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'Sec-Fetch-Dest': 'empty',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'same-origin',
+    'Connection': 'keep-alive',
+}
+
+
+def _parse_sessions(data):
+    if 'list' not in data or not data['list']:
+        return None, "API trả về danh sách rỗng. Vui lòng lấy lại link API mới!"
     
-    try:
-        r = requests.get(url, timeout=8, headers=headers)
-        if r.status_code != 200:
-            return None, f"Lỗi HTTP {r.status_code} (API bị chặn hoặc token hết hạn)"
+    rows = []
+    for item in data['list']:
+        session_id = item.get('id') or item.get('session') or item.get('phien')
+        if session_id is None: continue
+        try: session_id = int(session_id)
+        except (ValueError, TypeError): continue
         
-        data = r.json()
-        if 'list' not in data or not data['list']:
-            return None, "API trả về danh sách rỗng. Vui lòng lấy lại link API mới!"
+        raw_result = (item.get('resultTruyenThong') or item.get('result') or '').upper()
+        if 'TAI' in raw_result or 'TÀI' in raw_result: res = "Tài"
+        elif 'XIU' in raw_result or 'XỈU' in raw_result: res = "Xỉu"
+        else: continue
         
-        rows = []
-        for item in data['list']:
-            # Lấy session id - fallback nhiều tên field
-            session_id = item.get('id') or item.get('session') or item.get('phien')
-            if session_id is None:
-                continue
+        dices = item.get('dices') or item.get('dice') or [0, 0, 0]
+        if not isinstance(dices, list) or len(dices) < 3: continue
+        
+        point = item.get('point') or item.get('total') or sum(dices[:3])
+        rows.append({
+            'phien': session_id, 'result': res,
+            'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
+            'total': point
+        })
+    
+    if not rows:
+        return None, "Không có phiên hợp lệ trong dữ liệu API"
+    return rows, None
+
+
+def fetch_sessions():
+    """Fetch với 3 lớp bảo vệ: curl_cffi → requests thường → báo lỗi rõ ràng."""
+    url = f"{API_URL}&_t={int(time.time() * 1000)}"
+    last_err = "Không rõ nguyên nhân"
+
+    # LỚP 1: curl_cffi giả lập Chrome thật (bypass Cloudflare ~95%)
+    if HAS_CURL_CFFI:
+        for attempt in range(3):
             try:
-                session_id = int(session_id)
-            except (ValueError, TypeError):
-                continue
-            
-            # Lấy kết quả - fallback nhiều field, so khớp không phân biệt dấu
-            raw_result = (item.get('resultTruyenThong') or item.get('result') or '').upper()
-            if 'TAI' in raw_result or 'TÀI' in raw_result:
-                res = "Tài"
-            elif 'XIU' in raw_result or 'XỈU' in raw_result:
-                res = "Xỉu"
-            else:
-                continue
-            
-            # Lấy xúc xắc
-            dices = item.get('dices') or item.get('dice') or [0, 0, 0]
-            if not isinstance(dices, list) or len(dices) < 3:
-                continue
-            
-            # Lấy tổng điểm
-            point = item.get('point') or item.get('total') or sum(dices[:3])
-            
-            rows.append({
-                'phien': session_id,
-                'result': res,
-                'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
-                'total': point
-            })
-        
-        if not rows:
-            return None, "Không có phiên hợp lệ trong dữ liệu API trả về"
-        return rows, None
+                r = cffi_requests.get(
+                    url,
+                    headers=_BROWSER_HEADERS,
+                    impersonate="chrome120",
+                    timeout=15,
+                    allow_redirects=True,
+                )
+                if r.status_code == 200:
+                    try:
+                        return _parse_sessions(r.json())
+                    except Exception:
+                        last_err = "Response không phải JSON (Cloudflare challenge)"
+                else:
+                    last_err = f"curl_cffi HTTP {r.status_code}"
+            except Exception as e:
+                last_err = f"curl_cffi: {str(e)[:70]}"
+            time.sleep(0.8 * (attempt + 1))
+
+    # LỚP 2: requests thường (fallback)
+    try:
+        r = requests.get(url, headers=_BROWSER_HEADERS, timeout=15)
+        if r.status_code == 200:
+            return _parse_sessions(r.json())
+        last_err = f"requests HTTP {r.status_code}"
     except Exception as e:
-        return None, f"Lỗi mạng: {str(e)[:80]}"
+        last_err = f"requests: {str(e)[:70]}"
+
+    hint = "" if HAS_CURL_CFFI else " | Gợi ý: thêm 'curl_cffi' vào requirements.txt"
+    return None, f"Bị chặn: {last_err}{hint}"
+
 
 # =====================================================================
 # FLASK ROUTES
@@ -406,6 +451,7 @@ def fetch_sessions():
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
+
 
 @app.route('/api/history')
 def history():
@@ -428,8 +474,9 @@ def history():
         next_pred, next_conf, next_pattern = analyze_pattern(history_for_next, dice_for_next)
         
         out.append({
-            'phien': next_phien, 'is_next': True, 'prediction': next_pred, 'confidence': next_conf,
-            'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'pattern': next_pattern
+            'phien': next_phien, 'is_next': True, 'prediction': next_pred,
+            'confidence': next_conf, 'result': 'Chờ...', 'dice': "? + ? + ?",
+            'is_correct': None, 'pattern': next_pattern
         })
         
         for i in range(len(valid) - 1, -1, -1):
@@ -450,14 +497,15 @@ def history():
                 is_correct = None
             
             out.append({
-                'phien': current_session['phien'], 'is_next': False, 'prediction': pred, 'confidence': conf,
-                'result': current_session['result'], 'dice': current_session['dice'],
-                'is_correct': is_correct, 'pattern': pattern
+                'phien': current_session['phien'], 'is_next': False, 'prediction': pred,
+                'confidence': conf, 'result': current_session['result'],
+                'dice': current_session['dice'], 'is_correct': is_correct, 'pattern': pattern
             })
         
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
@@ -474,6 +522,29 @@ def reset_api():
         return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/debug')
+def debug():
+    """Endpoint test bypass - dùng để kiểm tra xem Render có bị block không."""
+    url = f"{API_URL}&_t={int(time.time() * 1000)}"
+    info = {
+        'has_curl_cffi': HAS_CURL_CFFI,
+        'api_url': API_URL[:80] + '...',
+    }
+    try:
+        if HAS_CURL_CFFI:
+            r = cffi_requests.get(url, headers=_BROWSER_HEADERS,
+                                  impersonate="chrome120", timeout=15)
+            info['curl_cffi_status'] = r.status_code
+            info['curl_cffi_preview'] = r.text[:300]
+        r2 = requests.get(url, headers=_BROWSER_HEADERS, timeout=15)
+        info['requests_status'] = r2.status_code
+        info['requests_preview'] = r2.text[:300]
+    except Exception as e:
+        info['exception'] = str(e)[:200]
+    return jsonify(info)
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
