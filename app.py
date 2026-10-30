@@ -5,7 +5,6 @@ import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
 
-# Bypass Cloudflare bằng curl_cffi (giả lập TLS Chrome)
 try:
     from curl_cffi import requests as cffi_requests
     HAS_CURL_CFFI = True
@@ -15,7 +14,6 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
-# API TX (link mới)
 API_URL = "https://wtx.tele68.com/v1/tx/lite-sessions?cp=R&cl=R&pf=web&at=6471f10890f9f8702ad1ac579f8566c7"
 RESET_SESSION_ID = 0
 
@@ -112,7 +110,7 @@ async function fetchData() {
         
         if (data.error) {
             document.getElementById('list-container').innerHTML = 
-                `<div class="error-box">⚠️ LỖI API<br><br>${data.error}<small>Nếu lỗi "bị chặn": kiểm tra requirements.txt đã có curl_cffi chưa</small></div>`;
+                `<div class="error-box">⚠️ LỖI API<br><br>${data.error}<small>Mở /api/debug để chẩn đoán chi tiết</small></div>`;
             return;
         }
         
@@ -177,9 +175,6 @@ fetchData(); setInterval(fetchData, 5000);
 """
 
 
-# =====================================================================
-# CÁC HÀM PHÂN TÍCH CẦU (giữ nguyên logic gốc)
-# =====================================================================
 def build_blocks(results):
     if not results: return []
     blocks = []
@@ -354,9 +349,6 @@ def analyze_pattern(results, dice_sums=None):
     return winner, round(min(98.0, final_conf), 1), pattern_name
 
 
-# =====================================================================
-# FETCH - BYPASS CLOUDFLARE BẰNG curl_cffi
-# =====================================================================
 _BROWSER_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
                   '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -406,20 +398,15 @@ def _parse_sessions(data):
 
 
 def fetch_sessions():
-    """Fetch với 3 lớp bảo vệ: curl_cffi → requests thường → báo lỗi rõ ràng."""
     url = f"{API_URL}&_t={int(time.time() * 1000)}"
     last_err = "Không rõ nguyên nhân"
 
-    # LỚP 1: curl_cffi giả lập Chrome thật (bypass Cloudflare ~95%)
     if HAS_CURL_CFFI:
         for attempt in range(3):
             try:
                 r = cffi_requests.get(
-                    url,
-                    headers=_BROWSER_HEADERS,
-                    impersonate="chrome120",
-                    timeout=15,
-                    allow_redirects=True,
+                    url, headers=_BROWSER_HEADERS,
+                    impersonate="chrome120", timeout=15, allow_redirects=True,
                 )
                 if r.status_code == 200:
                     try:
@@ -432,7 +419,6 @@ def fetch_sessions():
                 last_err = f"curl_cffi: {str(e)[:70]}"
             time.sleep(0.8 * (attempt + 1))
 
-    # LỚP 2: requests thường (fallback)
     try:
         r = requests.get(url, headers=_BROWSER_HEADERS, timeout=15)
         if r.status_code == 200:
@@ -445,9 +431,6 @@ def fetch_sessions():
     return None, f"Bị chặn: {last_err}{hint}"
 
 
-# =====================================================================
-# FLASK ROUTES
-# =====================================================================
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -458,7 +441,6 @@ def history():
     global RESET_SESSION_ID
     try:
         raw_rows, error = fetch_sessions()
-        
         if raw_rows is None:
             return jsonify({'error': error}), 500
             
@@ -514,7 +496,6 @@ def reset_api():
         raw_rows, error = fetch_sessions()
         if raw_rows is None:
             return jsonify({'status': 'error', 'message': error}), 500
-            
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         if valid:
             RESET_SESSION_ID = valid[-1]['phien']
@@ -526,16 +507,11 @@ def reset_api():
 
 @app.route('/api/debug')
 def debug():
-    """Endpoint test bypass - dùng để kiểm tra xem Render có bị block không."""
     url = f"{API_URL}&_t={int(time.time() * 1000)}"
-    info = {
-        'has_curl_cffi': HAS_CURL_CFFI,
-        'api_url': API_URL[:80] + '...',
-    }
+    info = {'has_curl_cffi': HAS_CURL_CFFI, 'api_url': API_URL[:80] + '...'}
     try:
         if HAS_CURL_CFFI:
-            r = cffi_requests.get(url, headers=_BROWSER_HEADERS,
-                                  impersonate="chrome120", timeout=15)
+            r = cffi_requests.get(url, headers=_BROWSER_HEADERS, impersonate="chrome120", timeout=15)
             info['curl_cffi_status'] = r.status_code
             info['curl_cffi_preview'] = r.text[:300]
         r2 = requests.get(url, headers=_BROWSER_HEADERS, timeout=15)
