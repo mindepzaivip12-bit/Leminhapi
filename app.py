@@ -1,6 +1,7 @@
 import os
 import time
 import random
+import threading
 from datetime import datetime
 import requests
 from flask import Flask, render_template_string, jsonify
@@ -10,19 +11,11 @@ app = Flask(__name__)
 CORS(app)
 
 API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
-RESET_SESSION_ID = 0
 
-# =====================================================================
-# HỆ THỐNG 81 MẪU CẦU (3^4 = 81 TỔ HỢP)
-# =====================================================================
-ALL_81_PATTERNS = {}
-for _i in range(81):
-    _sig = ''
-    _temp = _i
-    for _ in range(4):
-        _sig = 'SML'[_temp % 3] + _sig
-        _temp //= 3
-    ALL_81_PATTERNS[_i] = _sig
+# === GLOBAL STATE (bộ nhớ tích lũy vô hạn) ===
+RESET_SESSION_ID = 0
+PREDICTION_LOG = {}   # {phien: {prediction, result, confidence, is_correct}}
+LOG_LOCK = threading.Lock()
 
 # =====================================================================
 # GIAO DIỆN HTML - TOOL LCMD5 LEMINH
@@ -44,7 +37,7 @@ HTML_TEMPLATE = """
         --xiu-bg: #db2777; --xiu-bet-bg: rgba(219, 39, 119, 0.15);
         --blue-main: #38bdf8; --blue-glow: rgba(56, 189, 248, 0.5);
         --lose-color: #ef4444; --win-color: #38bdf8;
-        --purple: #a78bfa; --pink: #f472b6; --gold: #fbbf24; --green: #22c55e;
+        --purple: #a78bfa; --gold: #fbbf24;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
     @keyframes bgFloat { 0%, 100% { transform: translateY(0) translateX(0); opacity: 0.6; } 50% { transform: translateY(-30px) translateX(20px); opacity: 1; } }
@@ -76,8 +69,13 @@ HTML_TEMPLATE = """
     .stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 4px; font-weight: 600; }
     .stat-value { font-size: 20px; font-weight: 900; color: var(--text-main); animation: textGlow 2.5s infinite; }
     .stat-value.win { color: var(--blue-main); }
+    .stat-value.lose { color: var(--lose-color); }
 
-    .container { padding: 15px; display: flex; flex-direction: column; gap: 12px; max-width: 600px; margin: 0 auto; position: relative; z-index: 1; }
+    .container { padding: 15px; display: flex; flex-direction: column; gap: 12px; max-width: 600px; margin: 0 auto; position: relative; z-index: 1; max-height: 65vh; overflow-y: auto; }
+    .container::-webkit-scrollbar { width: 6px; }
+    .container::-webkit-scrollbar-thumb { background: rgba(56,189,248,0.3); border-radius: 3px; }
+    .container::-webkit-scrollbar-track { background: transparent; }
+    
     .card-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; transition: all 0.3s ease; position: relative; animation: slideIn 0.5s ease-out backwards; overflow: hidden; }
     .card-item::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: linear-gradient(180deg, transparent, var(--blue-main), transparent); opacity: 0; transition: opacity 0.3s; }
     .card-item:hover { background: var(--bg-card-hover); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
@@ -111,7 +109,7 @@ HTML_TEMPLATE = """
     .spin { display: inline-block; animation: spin 2s linear infinite; }
     
     .loading { text-align: center; padding: 50px; color: var(--blue-main); font-weight: 600; letter-spacing: 1px; animation: textGlow 2s infinite; }
-    @media (max-width: 400px) { .header-title { font-size: 16px; } .stat-value { font-size: 16px; } .dice-text { font-size: 11px; } }
+    @media (max-width: 400px) { .header-title { font-size: 15px; } .stat-value { font-size: 16px; } .dice-text { font-size: 11px; } .id-text { font-size: 14px; } }
 </style>
 </head>
 <body>
@@ -125,6 +123,7 @@ HTML_TEMPLATE = """
 <div class="stats-bar">
     <div class="stat-item"><div class="stat-label">Tổng phiên</div><div class="stat-value" id="stat-total">0</div></div>
     <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
+    <div class="stat-item"><div class="stat-label">Thua</div><div class="stat-value lose" id="stat-lose">0</div></div>
     <div class="stat-item"><div class="stat-label">Tỷ lệ</div><div class="stat-value win" id="stat-rate">0%</div></div>
 </div>
 <div class="container" id="list-container">
@@ -159,21 +158,24 @@ function renderList(rows, stats) {
     if (stats.total > 0) {
         animateNumber(document.getElementById('stat-total'), stats.total);
         animateNumber(document.getElementById('stat-win'), stats.correct);
+        animateNumber(document.getElementById('stat-lose'), stats.lose);
         animateNumber(document.getElementById('stat-rate'), Math.round((stats.correct / stats.total) * 100), '%');
     } else {
         document.getElementById('stat-total').innerText = '0';
         document.getElementById('stat-win').innerText = '0';
+        document.getElementById('stat-lose').innerText = '0';
         document.getElementById('stat-rate').innerText = '0%';
     }
     if (!rows.length) {
         container.innerHTML = '<div class="loading">Không có dữ liệu. Hãy đợi phiên mới.</div>';
         return;
     }
+    // Chỉ render lại khi cần
     container.innerHTML = '';
     rows.forEach((row, idx) => {
         const div = document.createElement('div');
         div.className = 'card-item' + (row.is_next ? ' active' : '');
-        div.style.animationDelay = (idx * 40) + 'ms';
+        div.style.animationDelay = (idx * 30) + 'ms';
         
         let predBadge = `<span class="pred-badge pred-empty">-</span>`;
         let betBadge = `<span class="bet-badge" style="background:#1e293b;color:#94a3b8;">cược -</span>`;
@@ -218,8 +220,11 @@ function renderList(rows, stats) {
 }
 async function confirmReset() {
     Swal.fire({
-        title: 'Xác nhận Reset?', text: "Lịch sử hiển thị trên màn hình sẽ bị ẩn đi. Hệ thống vẫn tính toán ngầm!", icon: 'warning',
-        showCancelButton: true, confirmButtonColor: '#38bdf8', cancelButtonColor: '#1e293b', confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
+        title: 'Xác nhận Reset?', 
+        html: "Toàn bộ <b>lịch sử + thống kê</b> sẽ bị xóa.<br>Hệ thống đếm lại <b>từ 0</b>!",
+        icon: 'warning',
+        showCancelButton: true, confirmButtonColor: '#38bdf8', cancelButtonColor: '#1e293b', 
+        confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
     }).then(async (result) => {
         if (result.isConfirmed) {
             isResetting = true;
@@ -228,7 +233,7 @@ async function confirmReset() {
                 const res = await fetch('/api/reset', { method: 'POST' });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    Swal.fire({ title: 'Thành công!', text: 'Đã chốt mốc ẩn lịch sử từ phiên #' + data.reset_to, icon: 'success', confirmButtonColor: '#38bdf8' });
+                    Swal.fire({ title: 'Reset thành công!', text: 'Đã xóa log, bắt đầu lại từ phiên #' + data.reset_to, icon: 'success', confirmButtonColor: '#38bdf8' });
                     isResetting = false; fetchData();
                 } else throw new Error(data.message);
             } catch (error) {
@@ -244,7 +249,7 @@ fetchData(); setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# HELPER FUNCTIONS - HỆ THỐNG 81 MẪU
+# HELPER - 81 MẪU
 # =====================================================================
 def build_blocks(results):
     if not results: return []
@@ -298,13 +303,9 @@ def learn_81_patterns(results):
     return stats
 
 # =====================================================================
-# THUẬT TOÁN V7.0 - NÂNG CẤP ĐA TẦNG (BỎ HIỂN THỊ TÊN CẦU)
+# THUẬT TOÁN V8.0 - 12 TẦNG
 # =====================================================================
-def analyze_pattern(results, dice_sums=None):
-    """
-    Trả về: (prediction, confidence)
-    Nội bộ vẫn chạy đủ 9 tầng phân tích cầu, chỉ không hiển thị tên cầu ra UI.
-    """
+def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
     if not results or len(results) < 3:
         return "Tài", 50.0
     
@@ -318,36 +319,23 @@ def analyze_pattern(results, dice_sums=None):
     current_len = blocks[0]['len']
     
     # === 1. CẦU BỆT (progressive) ===
-    if current_len >= 10:
-        candidates.append((opposite, 96.0, 60, 2.0))
-    elif current_len >= 8:
-        candidates.append((opposite, 92.0, 55, 1.8))
-    elif current_len >= 6:
-        candidates.append((opposite, 85.0, 45, 1.5))
-    elif current_len == 5:
-        candidates.append((opposite, 74.0, 35, 1.2))
-    elif current_len == 4:
-        candidates.append((current_val, 62.0, 30, 0.9))
-    elif current_len == 3:
-        candidates.append((current_val, 56.0, 25, 0.6))
+    if current_len >= 10:    candidates.append((opposite, 96.0, 60, 2.0))
+    elif current_len >= 8:   candidates.append((opposite, 92.0, 55, 1.8))
+    elif current_len >= 6:   candidates.append((opposite, 85.0, 45, 1.5))
+    elif current_len == 5:   candidates.append((opposite, 74.0, 35, 1.2))
+    elif current_len == 4:   candidates.append((current_val, 62.0, 30, 0.9))
+    elif current_len == 3:   candidates.append((current_val, 56.0, 25, 0.6))
     
     # === 2. ĐẢO 1-1 ===
     alt_len = 0
     for i in range(n - 1):
-        if results[i] != results[i + 1]:
-            alt_len += 1
-        else:
-            break
-    if alt_len >= 12:
-        candidates.append((opposite, 95.0, 50, 1.9))
-    elif alt_len >= 10:
-        candidates.append((opposite, 92.0, 45, 1.7))
-    elif alt_len >= 7:
-        candidates.append((opposite, 84.0, 35, 1.4))
-    elif alt_len >= 5:
-        candidates.append((opposite, 76.0, 28, 1.1))
-    elif alt_len >= 3:
-        candidates.append((opposite, 65.0, 20, 0.7))
+        if results[i] != results[i + 1]: alt_len += 1
+        else: break
+    if alt_len >= 12:    candidates.append((opposite, 95.0, 50, 1.9))
+    elif alt_len >= 10:  candidates.append((opposite, 92.0, 45, 1.7))
+    elif alt_len >= 7:   candidates.append((opposite, 84.0, 35, 1.4))
+    elif alt_len >= 5:   candidates.append((opposite, 76.0, 28, 1.1))
+    elif alt_len >= 3:   candidates.append((opposite, 65.0, 20, 0.7))
     
     # === 3. ĐẢO KHỐI (2-2, 3-3, 1-2-1, 2-1-2) ===
     if len(blocks) >= 3:
@@ -356,12 +344,9 @@ def analyze_pattern(results, dice_sums=None):
             p1, p2 = blocks[1]['len'], blocks[2]['len']
             if p1 == p2 and p1 >= 2:
                 cycle = p1
-                if current_len < cycle:
-                    candidates.append((current_val, 92.0, 40, 1.8))
-                elif current_len == cycle:
-                    candidates.append((opposite, 95.0, 45, 2.0))
-                else:
-                    candidates.append((opposite, 75.0, 30, 1.2))
+                if current_len < cycle: candidates.append((current_val, 92.0, 40, 1.8))
+                elif current_len == cycle: candidates.append((opposite, 95.0, 45, 2.0))
+                else: candidates.append((opposite, 75.0, 30, 1.2))
             if len(blocks) >= 4:
                 p3 = blocks[3]['len']
                 if p1 == p3 and p2 != p1 and p1 <= 5:
@@ -369,7 +354,7 @@ def analyze_pattern(results, dice_sums=None):
                 if p2 == p3 and p1 != p2 and p2 <= 5:
                     candidates.append((opposite, 78.0, 30, 1.2))
     
-    # === 4. HỆ THỐNG 81 MẪU ===
+    # === 4. HỆ THỐNG 81 MẪU (Laplace Smoothing) ===
     if len(blocks) >= 5:
         stats = learn_81_patterns(results)
         four_lens = [b['len'] for b in blocks[1:5]]
@@ -379,12 +364,13 @@ def analyze_pattern(results, dice_sums=None):
                 if key in stats:
                     s = stats[key]
                     total = s['continue'] + s['break']
-                    if total >= 3:
-                        cont_rate = s['continue'] / total
+                    if total >= 2:
+                        # Laplace smoothing
+                        cont_rate = (s['continue'] + 1) / (total + 2)
                         conf_val = 50 + abs(cont_rate - 0.5) * 100
-                        if cont_rate >= 0.65:
+                        if cont_rate >= 0.63:
                             candidates.append((current_val, min(conf_val, 90), total, 1.4))
-                        elif cont_rate <= 0.35:
+                        elif cont_rate <= 0.37:
                             candidates.append((opposite, min(conf_val, 90), total, 1.4))
                         break
     
@@ -395,10 +381,8 @@ def analyze_pattern(results, dice_sums=None):
         match_tai, match_xiu = 0, 0
         for i in range(len(results) - ns):
             if tuple(results[i:i+ns]) == current_seq and i + ns < len(results):
-                if results[i+ns] == "Tài":
-                    match_tai += 1
-                else:
-                    match_xiu += 1
+                if results[i+ns] == "Tài": match_tai += 1
+                else: match_xiu += 1
         total_m = match_tai + match_xiu
         if total_m >= 2 and match_tai != match_xiu:
             winner = "Tài" if match_tai > match_xiu else "Xỉu"
@@ -412,8 +396,7 @@ def analyze_pattern(results, dice_sums=None):
     if n >= 10:
         trans = {"Tài": 0, "Xỉu": 0}
         for i in range(len(results) - 1):
-            if results[i] == last:
-                trans[results[i + 1]] += 1
+            if results[i] == last: trans[results[i + 1]] += 1
         total_t = trans["Tài"] + trans["Xỉu"]
         if total_t >= 3 and trans["Tài"] != trans["Xỉu"]:
             winner = "Tài" if trans["Tài"] > trans["Xỉu"] else "Xỉu"
@@ -423,26 +406,41 @@ def analyze_pattern(results, dice_sums=None):
     # === 7. DICE BIAS ===
     if dice_sums and len(dice_sums) >= 5:
         avg_recent = sum(dice_sums[:10]) / min(10, len(dice_sums))
-        if avg_recent >= 12.0:
-            candidates.append(("Tài", 62.0, 10, 0.8))
-        elif avg_recent <= 8.5:
-            candidates.append(("Xỉu", 62.0, 10, 0.8))
+        if avg_recent >= 12.0: candidates.append(("Tài", 62.0, 10, 0.8))
+        elif avg_recent <= 8.5: candidates.append(("Xỉu", 62.0, 10, 0.8))
     
     # === 8. MOMENTUM ===
     if n >= 10:
         r5_tai = results[:5].count("Tài")
         r10_tai = results[:10].count("Tài")
-        if r5_tai >= 4 and r10_tai <= 5:
-            candidates.append(("Xỉu", 62.0, 10, 0.9))
-        elif r5_tai <= 1 and r10_tai >= 5:
-            candidates.append(("Tài", 62.0, 10, 0.9))
+        if r5_tai >= 4 and r10_tai <= 5: candidates.append(("Xỉu", 62.0, 10, 0.9))
+        elif r5_tai <= 1 and r10_tai >= 5: candidates.append(("Tài", 62.0, 10, 0.9))
     
-    # === 9. ZIGZAG NGẮN (T-X-T-X) ===
+    # === 9. ZIGZAG NGẮN ===
     if n >= 4:
         if results[0] != results[1] and results[1] != results[2] and results[2] != results[3]:
             candidates.append((opposite, 70.0, 8, 0.8))
     
-    # === VOTING SYSTEM ===
+    # === 10. SKEW DETECTION (cầu nghiêng 20 phiên) ===
+    if n >= 20:
+        tai_ratio = results[:20].count("Tài") / 20
+        if tai_ratio >= 0.65:
+            candidates.append(("Xỉu", 63.0, 20, 1.0))
+        elif tai_ratio <= 0.35:
+            candidates.append(("Tài", 63.0, 20, 1.0))
+    
+    # === 11. STREAK-AWARE (đang có streak dài) ===
+    if current_len >= 3:
+        # Nếu 3 phiên vừa rồi cùng kết quả → tăng nhẹ weight cho bẻ
+        candidates.append((opposite, 58.0, 5, 0.5))
+    
+    # === 12. DRAGON-TIGER (T-X alternation sâu) ===
+    if n >= 6:
+        seg = results[:6]
+        if all(seg[i] != seg[i+1] for i in range(5)):
+            candidates.append((opposite, 72.0, 6, 1.0))
+    
+    # === VOTING ===
     if not candidates:
         return opposite, 53.0
     
@@ -450,7 +448,7 @@ def analyze_pattern(results, dice_sums=None):
     xiu_score = sum(c[1] * c[3] for c in candidates if c[0] == "Xỉu")
     
     if tai_score == xiu_score:
-        return opposite, 53.0
+        return opposite, round(min(97.5, 53.0 * adaptive_boost), 1)
     
     winner = "Tài" if tai_score > xiu_score else "Xỉu"
     winner_score = max(tai_score, xiu_score)
@@ -459,8 +457,27 @@ def analyze_pattern(results, dice_sums=None):
     
     best_conf = max((c[1] for c in candidates if c[0] == winner), default=55.0)
     final_conf = best_conf * (0.72 + agree_ratio * 0.28)
+    final_conf *= adaptive_boost
     
     return winner, round(min(97.5, final_conf), 1)
+
+# =====================================================================
+# ADAPTIVE BOOST - Dựa trên accuracy 15 phiên gần
+# =====================================================================
+def get_adaptive_boost():
+    with LOG_LOCK:
+        recent = [(p, rec) for p, rec in PREDICTION_LOG.items() 
+                  if p > RESET_SESSION_ID and rec.get('is_correct') is not None]
+    if len(recent) < 10:
+        return 1.0
+    recent.sort(key=lambda x: x[0])
+    recent = recent[-15:]
+    acc = sum(1 for _, r in recent if r['is_correct']) / len(recent)
+    if acc >= 0.70: return 1.05
+    if acc >= 0.60: return 1.02
+    if acc <= 0.40: return 0.92
+    if acc <= 0.50: return 0.97
+    return 1.0
 
 # =====================================================================
 # FETCH DỮ LIỆU
@@ -486,7 +503,8 @@ def fetch_sessions():
             if 'list' in data and data['list']:
                 rows = []
                 for item in data['list']:
-                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                    res_raw = str(item.get('resultTruyenThong', '')).upper().strip()
+                    res = "Tài" if res_raw == "TAI" else "Xỉu"
                     dices = item.get('dices', [0, 0, 0])
                     dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
                     total = item.get('point', sum(dices))
@@ -495,6 +513,43 @@ def fetch_sessions():
     except Exception as e:
         print(f"[API ERROR] {e}")
     return generate_fallback(), 'fallback'
+
+# =====================================================================
+# LOG UPDATE - TÍCH LŨY VÔ HẠN
+# =====================================================================
+def update_prediction_log(valid):
+    """
+    Cập nhật log cho từng phiên chưa có.
+    Prediction được tính 1 lần duy nhất từ history trước phiên đó.
+    -> Đảm bảo đúng/sai CHUẨN XÁC (không leak future).
+    """
+    with LOG_LOCK:
+        for i, sess in enumerate(valid):
+            phien = sess['phien']
+            if phien in PREDICTION_LOG:
+                continue
+            history = [v['result'] for v in valid[:i]][::-1]
+            dice = [v.get('total', 0) for v in valid[:i]][::-1]
+            if len(history) < 3:
+                continue
+            pred, conf = analyze_pattern(history, dice)
+            PREDICTION_LOG[phien] = {
+                'prediction': pred,
+                'result': sess['result'],
+                'confidence': conf,
+                'is_correct': (pred == sess['result'])
+            }
+
+def compute_stats():
+    with LOG_LOCK:
+        total = 0
+        correct = 0
+        for phien, rec in PREDICTION_LOG.items():
+            if phien > RESET_SESSION_ID and rec.get('is_correct') is not None:
+                total += 1
+                if rec['is_correct']:
+                    correct += 1
+    return total, correct
 
 # =====================================================================
 # FLASK ROUTES
@@ -509,45 +564,50 @@ def history():
     try:
         raw_rows, source = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
-        out = []
-        correct_count = 0
-        total_past = 0
         
+        # Cập nhật log tích lũy
+        update_prediction_log(valid)
+        
+        # Stats vô hạn từ log
+        total_past, correct_count = compute_stats()
+        
+        # Prediction cho phiên TIẾP THEO (dùng adaptive boost)
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
         dice_for_next = [v.get('total', 0) for v in valid][::-1]
-        next_pred, next_conf = analyze_pattern(history_for_next, dice_for_next)
+        boost = get_adaptive_boost()
+        next_pred, next_conf = analyze_pattern(history_for_next, dice_for_next, boost)
         
-        out.append({
+        out = [{
             'phien': next_phien, 'is_next': True, 'prediction': next_pred, 'confidence': next_conf,
             'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None
+        }]
+        
+        # Hiển thị 50 phiên gần nhất (không giới hạn stats)
+        MAX_DISPLAY = 50
+        displayed = 0
+        with LOG_LOCK:
+            for i in range(len(valid) - 1, -1, -1):
+                if displayed >= MAX_DISPLAY: break
+                current_session = valid[i]
+                if current_session['phien'] <= RESET_SESSION_ID: break
+                
+                phien = current_session['phien']
+                rec = PREDICTION_LOG.get(phien)
+                if rec:
+                    out.append({
+                        'phien': phien, 'is_next': False,
+                        'prediction': rec['prediction'], 'confidence': rec['confidence'],
+                        'result': rec['result'], 'dice': current_session['dice'],
+                        'is_correct': rec['is_correct']
+                    })
+                    displayed += 1
+        
+        return jsonify({
+            'rows': out,
+            'stats': {'total': total_past, 'correct': correct_count, 'lose': total_past - correct_count}
         })
-        
-        for i in range(len(valid) - 1, -1, -1):
-            current_session = valid[i]
-            if current_session['phien'] <= RESET_SESSION_ID: break
-            if len(out) > 20: break
-            
-            history_list = [v['result'] for v in valid[:i]][::-1]
-            dice_list = [v.get('total', 0) for v in valid[:i]][::-1]
-            
-            if history_list:
-                pred, conf = analyze_pattern(history_list, dice_list)
-                is_correct = (pred == current_session['result'])
-                total_past += 1
-                if is_correct: correct_count += 1
-            else:
-                pred, conf = "Tài", 50.0
-                is_correct = None
-            
-            out.append({
-                'phien': current_session['phien'], 'is_next': False, 'prediction': pred, 'confidence': conf,
-                'result': current_session['result'], 'dice': current_session['dice'],
-                'is_correct': is_correct
-            })
-        
-        return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -563,11 +623,12 @@ def predict_only():
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
         dice_for_next = [v.get('total', 0) for v in valid][::-1]
-        next_pred, next_conf = analyze_pattern(history_for_next, dice_for_next)
+        boost = get_adaptive_boost()
+        next_pred, next_conf = analyze_pattern(history_for_next, dice_for_next, boost)
         
         return jsonify({
             'status': 'success', 'next_session': next_phien, 'prediction': next_pred,
-            'confidence': next_conf,
+            'confidence': next_conf, 'adaptive_boost': round(boost, 3),
             'updated_at': datetime.now().strftime('%H:%M:%S')
         })
     except Exception as e:
@@ -575,12 +636,14 @@ def predict_only():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    global RESET_SESSION_ID
+    global RESET_SESSION_ID, PREDICTION_LOG
     try:
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         if valid:
             RESET_SESSION_ID = valid[-1]['phien']
+            with LOG_LOCK:
+                PREDICTION_LOG = {}  # XÓA LOG → đếm lại từ 0
             return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
         return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
     except Exception as e:
@@ -588,4 +651,4 @@ def reset_api():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, threaded=True)
