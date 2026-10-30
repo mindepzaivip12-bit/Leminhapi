@@ -8,8 +8,8 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# LINK API CHUẨN (Đã cập nhật token)
-API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
+# ✅ API TX MỚI (thay cho MD5 cũ)
+API_URL = "https://wtx.tele68.com/v1/tx/lite-sessions?cp=R&cl=R&pf=web&at=6471f10890f9f8702ad1ac579f8566c7"
 RESET_SESSION_ID = 0
 
 ALL_81_PATTERNS = {}
@@ -27,7 +27,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>API LC MD5 MINHLE</title>
+<title>API LC TX MINHLE</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -85,7 +85,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
 <div class="header">
-    <div class="header-title">⚡ LC MD5 MINHLE</div>
+    <div class="header-title">⚡ LC TX MINHLE</div>
     <button class="btn-reset" onclick="confirmReset()">↻ Reset</button>
 </div>
 <div class="stats-bar">
@@ -104,7 +104,6 @@ async function fetchData() {
         const r = await fetch('/api/history', { cache: 'no-store' });
         const data = await r.json();
         
-        // NẾU LỖI API -> HIỂN THỊ BÁO LỖI (Không bịa phiên ảo)
         if (data.error) {
             document.getElementById('list-container').innerHTML = `<div class="error-box">⚠️ LỖI API:<br><br>${data.error}</div>`;
             return;
@@ -344,7 +343,7 @@ def analyze_pattern(results, dice_sums=None):
     return winner, round(min(98.0, final_conf), 1), pattern_name
 
 # =====================================================================
-# FETCH DỮ LIỆU - KHÔNG BỊA PHIÊN ẢO, CHỈ LẤY DỮ LIỆU THẬT
+# FETCH DỮ LIỆU TX - LINH HOẠT FIELD, KHÔNG BỊA PHIÊN ẢO
 # =====================================================================
 def fetch_sessions():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -353,26 +352,53 @@ def fetch_sessions():
     
     try:
         r = requests.get(url, timeout=8, headers=headers)
-        if r.status_code == 200:
-            data = r.json()
-            if 'list' in data and data['list']:
-                # KIỂM TRA ĐÚNG PHÒNG (Nếu ID < 7 triệu là bị lỗi)
-                if int(data['list'][0]['id']) < 7000000:
-                    return None, "Token hết hạn (Bị trả về phòng khác). Vui lòng lấy lại link API mới!"
-                
-                rows = []
-                for item in data['list']:
-                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
-                    dices = item.get('dices', [0, 0, 0])
-                    rows.append({
-                        'phien': int(item['id']), 'result': res,
-                        'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
-                        'total': item.get('point', sum(dices))
-                    })
-                return rows, None
-        return None, f"Lỗi HTTP {r.status_code} (API bị chặn)"
+        if r.status_code != 200:
+            return None, f"Lỗi HTTP {r.status_code} (API bị chặn hoặc token hết hạn)"
+        
+        data = r.json()
+        if 'list' not in data or not data['list']:
+            return None, "API trả về danh sách rỗng. Vui lòng lấy lại link API mới!"
+        
+        rows = []
+        for item in data['list']:
+            # Lấy session id - fallback nhiều tên field
+            session_id = item.get('id') or item.get('session') or item.get('phien')
+            if session_id is None:
+                continue
+            try:
+                session_id = int(session_id)
+            except (ValueError, TypeError):
+                continue
+            
+            # Lấy kết quả - fallback nhiều field, so khớp không phân biệt dấu
+            raw_result = (item.get('resultTruyenThong') or item.get('result') or '').upper()
+            if 'TAI' in raw_result or 'TÀI' in raw_result:
+                res = "Tài"
+            elif 'XIU' in raw_result or 'XỈU' in raw_result:
+                res = "Xỉu"
+            else:
+                continue
+            
+            # Lấy xúc xắc
+            dices = item.get('dices') or item.get('dice') or [0, 0, 0]
+            if not isinstance(dices, list) or len(dices) < 3:
+                continue
+            
+            # Lấy tổng điểm
+            point = item.get('point') or item.get('total') or sum(dices[:3])
+            
+            rows.append({
+                'phien': session_id,
+                'result': res,
+                'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
+                'total': point
+            })
+        
+        if not rows:
+            return None, "Không có phiên hợp lệ trong dữ liệu API trả về"
+        return rows, None
     except Exception as e:
-        return None, f"Lỗi mạng: {str(e)[:50]}"
+        return None, f"Lỗi mạng: {str(e)[:80]}"
 
 # =====================================================================
 # FLASK ROUTES
@@ -387,7 +413,6 @@ def history():
     try:
         raw_rows, error = fetch_sessions()
         
-        # Nếu lỗi, báo thẳng lên web (không bịa data)
         if raw_rows is None:
             return jsonify({'error': error}), 500
             
