@@ -1,6 +1,5 @@
 import os
 import time
-import random
 from datetime import datetime
 import requests
 from flask import Flask, render_template_string, jsonify, request
@@ -56,7 +55,6 @@ HTML_TEMPLATE = """
         padding-bottom: 40px;
     }
 
-    /* HEADER */
     .header {
         background: var(--bg-card);
         padding: 15px 20px;
@@ -75,7 +73,6 @@ HTML_TEMPLATE = """
         display: flex;
         align-items: center;
         gap: 8px;
-        text-shadow: 0 0 10px rgba(14, 165, 233, 0.2);
     }
     .header-title span {
         font-size: 12px;
@@ -115,7 +112,6 @@ HTML_TEMPLATE = """
     }
     .btn-reset:hover { background: var(--lose-color); color: #fff; }
 
-    /* TABS */
     .tabs-container {
         max-width: 800px;
         margin: 20px auto 0;
@@ -142,7 +138,6 @@ HTML_TEMPLATE = """
         box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
     }
 
-    /* STATS */
     .stats-bar {
         max-width: 800px;
         margin: 15px auto;
@@ -162,7 +157,6 @@ HTML_TEMPLATE = """
     .stat-value { font-size: 22px; font-weight: 800; color: var(--text-main); }
     .stat-value.win { color: var(--tai-color); }
 
-    /* TABLE */
     .table-wrapper {
         max-width: 800px;
         margin: 0 auto;
@@ -240,7 +234,7 @@ HTML_TEMPLATE = """
 
 <div class="header">
     <div class="header-title">
-        LE Minh <span>Kly</span>
+        LE MINH <span>🐼</span>
     </div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
@@ -373,7 +367,7 @@ function renderTable(rows, stats) {
 
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = `<span class="status st-wait"></span>`;
+            statusHtml = `<span class="status st-wait"> Chờ </span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -442,26 +436,6 @@ setInterval(fetchData, 5000);
 </html>
 """
 
-def generate_deterministic_fallback(base=7116040):
-    # Hàm tạo dữ liệu giả lập nhưng KHÔNG RANDOM, dựa vào thời gian thực
-    elapsed = int(time.time() / 60)
-    current = base + elapsed
-    
-    rows = []
-    # Tạo chuỗi cầu 1-1 cố định nếu API lỗi để test thuật toán
-    for i in range(15):
-        sid = current - i
-        # Xen kẽ Tài - Xỉu dựa trên số chẵn lẻ của sid
-        r = "Tài" if (sid % 2 == 0) else "Xỉu"
-        d = [3, 3, 4] if r == "Tài" else [1, 2, 3]
-        rows.append({
-            "phien": sid,
-            "result": r,
-            "dice": f"{d[0]} + {d[1]} + {d[2]}",
-            "total": sum(d)
-        })
-    return rows
-
 def fetch_sessions(api_type='md5'):
     url = API_URL_MD5 if api_type == 'md5' else API_URL_TX
     try:
@@ -482,39 +456,39 @@ def fetch_sessions(api_type='md5'):
                         'dice': dice_str,
                         'total': total
                     })
-                return rows, 'live'
+                return rows, True
     except Exception as e:
         print(f"[API ERROR] {api_type}: {e}")
-    return generate_deterministic_fallback(), 'fallback'
+    return [], False # Trả về mảng rỗng nếu API lỗi, không tự bịa dữ liệu
 
 
 # =====================================================================
-# THUẬT TOÁN MA TRẬN CẦU - KHÔNG RANDOM (LE MINH ❄️ V8.0)
+# THUẬT TOÁN THỰC (DETERMINISTIC SCORING MODEL)
+# 100% Không Random, Không đoán mò. Tính điểm dựa trên Xác suất & Cầu.
 # =====================================================================
 def analyze_pattern(results):
     """
-    Phân tích dữ liệu thành các nhóm (Group) để bắt cầu.
-    TUYỆT ĐỐI KHÔNG DÙNG RANDOM. Cùng 1 dữ liệu -> Cùng 1 kết quả.
+    results: Mảng kết quả (Tài/Xỉu) đã được sắp xếp TỪ MỚI NHẤT ĐẾN CŨ NHẤT.
     """
-    # Trường hợp 1: Mảng rỗng (Chưa có dữ liệu) -> Mặc định Tài 50%
     if not results:
-        return "Tài", 50.0
+        return "Tài", 50.0 # Mặc định nếu chưa có dữ liệu (chỉ xảy ra 1 lần đầu)
     
     last = results[0]
     opposite = "Xỉu" if last == "Tài" else "Tài"
+    
+    if len(results) < 3:
+        # Nếu quá ít dữ liệu, bám theo kết quả vừa ra (hoặc bẻ nếu là 1-1)
+        if len(results) == 2 and results[0] != results[1]:
+            return opposite, 60.0
+        return last, 60.0
 
-    # Trường hợp 2: Chỉ có 1 phiên -> Bẻ ngược lại
-    if len(results) == 1:
-        return opposite, 55.0
-        
-    # Trường hợp 3: Có 2 phiên
-    if len(results) == 2:
-        if results[0] == results[1]:
-            return last, 60.0 # Bám bệt 2
-        else:
-            return opposite, 60.0 # Bẻ 1-1
+    # Khởi tạo điểm số (Score)
+    score_tai = 0.0
+    score_xiu = 0.0
 
-    # Phân tích nhóm (Group)
+    # ---------------------------------------------------------
+    # YẾU TỐ 1: PATTERN MATCHING (Nhận diện cầu) - Trọng số cao
+    # ---------------------------------------------------------
     groups = []
     current_val = results[0]
     count = 1
@@ -527,60 +501,88 @@ def analyze_pattern(results):
             count = 1
     groups.append(count)
     
-    # === BẮT ĐẦU MA TRẬN CẦU ===
+    lengths = groups
 
-    # 1. Cầu Bệt (Streak) từ 4 phiên trở lên -> Bẻ
-    if groups[0] >= 4:
-        return opposite, 85.0
+    # Cầu bệt (Streak >= 4)
+    if lengths[0] >= 4:
+        if last == "Tài": score_xiu += 5.0
+        else: score_tai += 5.0
+
+    # Cầu 1-1 (Đảo liên tục 4 nhịp)
+    if len(lengths) >= 4 and lengths[:4] == [1, 1, 1, 1]:
+        if last == "Tài": score_xiu += 4.5
+        else: score_tai += 4.5
+
+    # Cầu 2-2 (Đảo nhóm 2)
+    if len(lengths) >= 3 and lengths[:3] == [2, 2, 2]:
+        if last == "Tài": score_xiu += 4.0
+        else: score_tai += 4.0
+
+    # Cầu 1-2-3 / 3-2-1
+    if len(lengths) >= 3:
+        if lengths[:3] == [1, 2, 3] or lengths[:3] == [3, 2, 1]:
+            if last == "Tài": score_xiu += 4.5
+            else: score_tai += 4.5
+            
+    # Cầu 2-3-1 / 1-3-2
+    if len(lengths) >= 3:
+        if lengths[:3] == [2, 3, 1] or lengths[:3] == [1, 3, 2]:
+            if last == "Tài": score_xiu += 4.0
+            else: score_tai += 4.0
+
+    # ---------------------------------------------------------
+    # YẾU TỐ 2: MARKOV CHAIN (Xác suất chuyển đổi trạng thái)
+    # ---------------------------------------------------------
+    # Đếm xem khi ra Tài thì bao nhiêu lần tiếp theo là Tài/Xỉu
+    transitions = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
+    for i in range(len(results) - 1):
+        current_state = results[i+1]
+        next_state = results[i]
+        transitions[current_state][next_state] += 1
         
-    # 2. Cầu 1-1 (Đảo liên tục 4 nhịp)
-    if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]:
-        return opposite, 90.0
+    total_from_last = sum(transitions[last].values())
+    if total_from_last > 0:
+        prob_tai = transitions[last]["Tài"] / total_from_last
+        prob_xiu = transitions[last]["Xỉu"] / total_from_last
         
-    # 3. Cầu 2-2 (Đảo nhóm 2)
-    if len(groups) >= 3 and groups[:3] == [2, 2, 2]:
-        return opposite, 88.0
-        
-    # 4. Cầu 3-3 (Đảo nhóm 3)
-    if len(groups) >= 2 and groups[:2] == [3, 3]:
-        return opposite, 85.0
-        
-    # 5. Cầu 1-2-3 / 3-2-1 (Tăng/giảm dần)
-    if len(groups) >= 3:
-        if groups[:3] == [1, 2, 3] or groups[:3] == [3, 2, 1]:
-            return opposite, 90.0
+        # Nếu xác suất lệch rõ rệt (vd: > 60%)
+        if prob_tai > 0.6: score_tai += 3.0
+        elif prob_xiu > 0.6: score_xiu += 3.0
 
-    # 6. Cầu 2-3-1 / 1-3-2 (Biến đổi phức tạp)
-    if len(groups) >= 3:
-        if groups[:3] == [2, 3, 1] or groups[:3] == [1, 3, 2]:
-            return opposite, 88.0
+    # ---------------------------------------------------------
+    # YẾU TỐ 3: MOMENTUM (Động lượng / Xu hướng nghiêng)
+    # ---------------------------------------------------------
+    # Lấy 20 phiên gần nhất để xem đang nghiêng bên nào
+    recent = results[:20]
+    count_tai = recent.count("Tài")
+    count_xiu = recent.count("Xỉu")
+    
+    # Nếu nghiêng quá mức (vd 15/20 là Tài), khả năng cao sẽ đảo chiều (bẻ)
+    if count_tai >= 14: score_xiu += 3.5
+    elif count_xiu >= 14: score_tai += 3.5
 
-    # 7. Cầu 4-5-6 / 6-5-4 (Bệt dài có quy luật tăng/giảm)
-    if len(groups) >= 3:
-        if groups[:3] == [4, 5, 6] or groups[:3] == [6, 5, 4]:
-            return opposite, 92.0
+    # ---------------------------------------------------------
+    # YẾU TỐ 4: NHỊP ĐỘ GẦN NHẤT (Recent Rhythm)
+    # ---------------------------------------------------------
+    # Nếu 3 phiên gần nhất là 2 Tài 1 Xỉu, xu hướng thường là theo chân phiên cuối
+    if len(results) >= 3:
+        if results[0] == results[1] and results[1] != results[2]:
+            # Đang bám bệt 2, khả năng cao ra tiếp
+            if last == "Tài": score_tai += 1.5
+            else: score_xiu += 1.5
 
-    # 8. Cầu 1-2-1 (Kép)
-    if len(groups) >= 3 and groups[:3] == [1, 2, 1]:
-        return opposite, 82.0
-
-    # 9. Cầu Xu hướng (Nghiêng) - 10 phiên gần nhất lệch hẳn
-    if len(results) >= 10:
-        tai_count = results[:10].count("Tài")
-        if tai_count >= 7: return "Xỉu", 75.0
-        if tai_count <= 3: return "Tài", 75.0
-
-    # 10. Cầu 2-1-2
-    if len(groups) >= 3 and groups[:3] == [2, 1, 2]:
-        return opposite, 80.0
-
-    # === FALLBACK: BẺ NHỊP CƠ BẢN ===
-    # Nếu không khớp các cầu trên, ta dựa vào độ dài nhóm hiện tại để bẻ
-    if groups[0] in [1, 2, 3]:
-        return opposite, 70.0
-        
-    # Cuối cùng, nếu không có gì, bẻ ngược lại kết quả vừa ra
-    return opposite, 50.0
+    # ---------------------------------------------------------
+    # TỔNG HỢP VÀ QUYẾT ĐỊNH
+    # ---------------------------------------------------------
+    if score_tai > score_xiu:
+        confidence = min(50.0 + (score_tai * 5), 99.0) # Quy đổi điểm ra %
+        return "Tài", confidence
+    elif score_xiu > score_tai:
+        confidence = min(50.0 + (score_xiu * 5), 99.0)
+        return "Xỉu", confidence
+    else:
+        # Nếu điểm hòa nhau (hiếm gặp), sử dụng quy tắc bẻ nhịp (Không dùng random)
+        return opposite, 50.0
 
 # =====================================================================
 # API ROUTES
@@ -595,8 +597,11 @@ def history():
     reset_id = RESET_IDS.get(api_type, 0)
     
     try:
-        raw_rows, source = fetch_sessions(api_type)
+        raw_rows, success = fetch_sessions(api_type)
         
+        if not success and not HISTORY_CACHE[api_type]:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+            
         # Ghi dữ liệu vào bộ nhớ đệm
         for row in raw_rows:
             HISTORY_CACHE[api_type][row['phien']] = row
@@ -630,7 +635,7 @@ def history():
             'is_correct': None
         })
 
-        # Quét toàn bộ lịch sử để tính đúng/sai (giới hạn 500 phiên để chống lag)
+        # Quét lịch sử (giới hạn 500 phiên để web mượt)
         scan_limit = min(len(valid), 500)
         
         for i in range(len(valid) - 1, len(valid) - scan_limit - 1, -1):
@@ -670,14 +675,15 @@ def reset_api():
     api_type = data.get('type', 'md5')
     
     try:
-        raw_rows, _ = fetch_sessions(api_type)
-        valid = sorted(raw_rows, key=lambda x: x['phien'])
-        if valid:
-            max_id = valid[-1]['phien']
-            RESET_IDS[api_type] = max_id
-            HISTORY_CACHE[api_type] = {}
-            return jsonify({'status': 'success', 'reset_to': max_id})
-        return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
+        raw_rows, success = fetch_sessions(api_type)
+        if success:
+            valid = sorted(raw_rows, key=lambda x: x['phien'])
+            if valid:
+                max_id = valid[-1]['phien']
+                RESET_IDS[api_type] = max_id
+                HISTORY_CACHE[api_type] = {}
+                return jsonify({'status': 'success', 'reset_to': max_id})
+        return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
