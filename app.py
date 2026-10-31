@@ -1,7 +1,7 @@
 import os
 import json
 import time
-import random
+import hashlib                       # ⭐ NEW: thay random
 import threading
 from datetime import datetime
 import requests
@@ -12,13 +12,14 @@ app = Flask(__name__)
 CORS(app)
 
 API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
+ALGO_VERSION = "V10.0-no-random"
 
 # === GLOBAL STATE ===
 RESET_SESSION_ID = 0
 PREDICTION_LOG = {}
 LOG_LOCK = threading.RLock()
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prediction_state.json")
-NEXT_PRED_CACHE = {'phien': None, 'prediction': None, 'confidence': None}
+NEXT_PRED_CACHE = {'phien': None, 'prediction': None, 'confidence': None, 'version': None}
 
 
 # =====================================================================
@@ -54,7 +55,7 @@ load_state()
 
 
 # =====================================================================
-# HTML TEMPLATE
+# HTML TEMPLATE  (giữ nguyên 100% từ V9.0)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -67,54 +68,53 @@ HTML_TEMPLATE = """
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
     :root {
-        --bg-dark: #090b10; --bg-card: #141721; --bg-card-hover: #1a1e2b;
-        --text-main: #ffffff; --text-muted: #8892b0; --border-color: #232838;
-        --tai-color: #0288d1; --xiu-color: #d81b60;
-        --win-color: #4caf50; --lose-color: #f44336;
+        --bg-dark:#090b10;--bg-card:#141721;--bg-card-hover:#1a1e2b;
+        --text-main:#fff;--text-muted:#8892b0;--border-color:#232838;
+        --tai-color:#0288d1;--xiu-color:#d81b60;--win-color:#4caf50;--lose-color:#f44336;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-    body { background-color: var(--bg-dark); color: var(--text-main); padding-bottom: 30px; min-height: 100vh; }
-    .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; border-bottom: 1px solid var(--border-color); background: rgba(9, 11, 16, 0.9); backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 100; }
-    .header-title { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px;}
-    .live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--win-color); box-shadow: 0 0 8px var(--win-color); animation: pulse 1.5s infinite; }
-    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-    .btn-reset { background: rgba(244, 67, 54, 0.1); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 6px 14px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; transition: 0.3s; }
-    .btn-reset:hover { background: var(--lose-color); color: #fff; }
-    .stats-bar { max-width: 600px; margin: 15px auto 0; padding: 0 15px; display: flex; justify-content: space-between; gap: 10px; }
-    .stat-item { flex: 1; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; text-align: center; }
-    .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; font-weight: 600; }
-    .stat-value { font-size: 18px; font-weight: 800; color: #fff; }
-    .stat-value.win { color: var(--win-color); }
-    .stat-value.lose { color: var(--lose-color); }
-    .container { padding: 15px; display: flex; flex-direction: column; gap: 10px; max-width: 600px; margin: 0 auto; max-height: 75vh; overflow-y: auto; }
-    .container::-webkit-scrollbar { width: 4px; }
-    .container::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-    .card-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 15px; display: flex; justify-content: space-between; align-items: center; transition: 0.2s; }
-    .card-item:hover { background: var(--bg-card-hover); }
-    .card-item.active { border-color: var(--tai-color); box-shadow: 0 0 10px rgba(2, 136, 209, 0.2); }
-    .col-left { display: flex; flex-direction: column; gap: 4px; flex: 1.5; }
-    .id-text { font-size: 15px; font-weight: 800; color: #fff; }
-    .bot-line { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-    .bot-label { color: var(--text-muted); font-weight: 600; }
-    .bet-badge { padding: 2px 8px; border-radius: 12px; font-weight: 700; font-size: 11px; color: #fff; }
-    .bet-tai { background: var(--tai-color); }
-    .bet-xiu { background: var(--xiu-color); }
-    .conf-text { color: var(--text-muted); font-size: 11px; }
-    .col-mid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; flex: 1; }
-    .pred-badge { padding: 4px 12px; border-radius: 12px; font-weight: 700; font-size: 12px; text-transform: lowercase; color: #fff; }
-    .pred-tai { background: var(--tai-color); }
-    .pred-xiu { background: var(--xiu-color); }
-    .pred-empty { background: transparent; border: 1px dashed var(--border-color); color: var(--text-muted); }
-    .dice-text { font-size: 13px; font-weight: 600; color: #e2e8f0; white-space: nowrap; }
-    .col-right { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; flex: 0.8; }
-    .status-text { font-size: 14px; font-weight: 800; display: flex; align-items: center; gap: 4px; }
-    .status-win { color: var(--win-color); }
-    .status-lose { color: var(--lose-color); }
-    .status-wait { color: var(--text-muted); }
-    .loading { text-align: center; padding: 40px; color: var(--text-muted); font-weight: 600; }
-    @media (max-width: 400px) {
-        .header-title { font-size: 15px; } .stat-value { font-size: 15px; }
-        .dice-text { font-size: 11px; } .id-text { font-size: 13px; } .bot-line { font-size: 11px; }
+    *{box-sizing:border-box;margin:0;padding:0;font-family:'Inter',sans-serif;}
+    body{background:var(--bg-dark);color:var(--text-main);padding-bottom:30px;min-height:100vh;}
+    .header{display:flex;justify-content:space-between;align-items:center;padding:15px 20px;border-bottom:1px solid var(--border-color);background:rgba(9,11,16,.9);backdrop-filter:blur(10px);position:sticky;top:0;z-index:100;}
+    .header-title{font-size:18px;font-weight:800;color:#fff;letter-spacing:.5px;display:flex;align-items:center;gap:8px;}
+    .live-dot{width:10px;height:10px;border-radius:50%;background:var(--win-color);box-shadow:0 0 8px var(--win-color);animation:pulse 1.5s infinite;}
+    @keyframes pulse{0%{opacity:1}50%{opacity:.5}100%{opacity:1}}
+    .btn-reset{background:rgba(244,67,54,.1);color:var(--lose-color);border:1px solid var(--lose-color);padding:6px 14px;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;transition:.3s;}
+    .btn-reset:hover{background:var(--lose-color);color:#fff;}
+    .stats-bar{max-width:600px;margin:15px auto 0;padding:0 15px;display:flex;justify-content:space-between;gap:10px;}
+    .stat-item{flex:1;background:var(--bg-card);border:1px solid var(--border-color);border-radius:8px;padding:10px;text-align:center;}
+    .stat-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;font-weight:600;}
+    .stat-value{font-size:18px;font-weight:800;color:#fff;}
+    .stat-value.win{color:var(--win-color);}
+    .stat-value.lose{color:var(--lose-color);}
+    .container{padding:15px;display:flex;flex-direction:column;gap:10px;max-width:600px;margin:0 auto;max-height:75vh;overflow-y:auto;}
+    .container::-webkit-scrollbar{width:4px;}
+    .container::-webkit-scrollbar-thumb{background:#333;border-radius:4px;}
+    .card-item{background:var(--bg-card);border:1px solid var(--border-color);border-radius:10px;padding:12px 15px;display:flex;justify-content:space-between;align-items:center;transition:.2s;}
+    .card-item:hover{background:var(--bg-card-hover);}
+    .card-item.active{border-color:var(--tai-color);box-shadow:0 0 10px rgba(2,136,209,.2);}
+    .col-left{display:flex;flex-direction:column;gap:4px;flex:1.5;}
+    .id-text{font-size:15px;font-weight:800;color:#fff;}
+    .bot-line{display:flex;align-items:center;gap:6px;font-size:12px;}
+    .bot-label{color:var(--text-muted);font-weight:600;}
+    .bet-badge{padding:2px 8px;border-radius:12px;font-weight:700;font-size:11px;color:#fff;}
+    .bet-tai{background:var(--tai-color);}
+    .bet-xiu{background:var(--xiu-color);}
+    .conf-text{color:var(--text-muted);font-size:11px;}
+    .col-mid{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;flex:1;}
+    .pred-badge{padding:4px 12px;border-radius:12px;font-weight:700;font-size:12px;text-transform:lowercase;color:#fff;}
+    .pred-tai{background:var(--tai-color);}
+    .pred-xiu{background:var(--xiu-color);}
+    .pred-empty{background:transparent;border:1px dashed var(--border-color);color:var(--text-muted);}
+    .dice-text{font-size:13px;font-weight:600;color:#e2e8f0;white-space:nowrap;}
+    .col-right{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;flex:.8;}
+    .status-text{font-size:14px;font-weight:800;display:flex;align-items:center;gap:4px;}
+    .status-win{color:var(--win-color);}
+    .status-lose{color:var(--lose-color);}
+    .status-wait{color:var(--text-muted);}
+    .loading{text-align:center;padding:40px;color:var(--text-muted);font-weight:600;}
+    @media(max-width:400px){
+        .header-title{font-size:15px;}.stat-value{font-size:15px;}
+        .dice-text{font-size:11px;}.id-text{font-size:13px;}.bot-line{font-size:11px;}
     }
 </style>
 </head>
@@ -250,10 +250,8 @@ def build_blocks(results):
 
 
 def block_class(L):
-    if L == 1:
-        return 'S'
-    if L <= 3:
-        return 'M'
+    if L == 1: return 'S'
+    if L <= 3: return 'M'
     return 'L'
 
 
@@ -283,18 +281,50 @@ def learn_81_patterns(results):
         actual_next = results[k - 1]
         continued = (actual_next == current_val)
         key1 = (code, min(current_len, 4))
-        if key1 not in stats:
-            stats[key1] = {'continue': 0, 'break': 0}
+        stats.setdefault(key1, {'continue': 0, 'break': 0})
         stats[key1]['continue' if continued else 'break'] += 1
-        key2 = code
-        if key2 not in stats:
-            stats[key2] = {'continue': 0, 'break': 0}
-        stats[key2]['continue' if continued else 'break'] += 1
+        stats.setdefault(code, {'continue': 0, 'break': 0})
+        stats[code]['continue' if continued else 'break'] += 1
     return stats
 
 
 # =====================================================================
-# THUẬT TOÁN V9.0 - 18 TẦNG
+# ⭐ V10.0 - DETERMINISTIC TIEBREAKER (không random)
+# =====================================================================
+def deterministic_tiebreak(tai_cands, xiu_cands, opposite):
+    """
+    5 cấp tiebreaker ưu tiên - hoàn toàn xác định.
+    Cùng input → cùng output.
+    """
+    tai_score = round(sum(c[1] * c[3] for c in tai_cands), 2)
+    xiu_score = round(sum(c[1] * c[3] for c in xiu_cands), 2)
+
+    # Cấp 1: weighted score
+    if tai_score != xiu_score:
+        return ("Tài" if tai_score > xiu_score else "Xỉu"), tai_score, xiu_score
+
+    # Cấp 2: raw confidence sum
+    tai_conf = round(sum(c[1] for c in tai_cands), 2)
+    xiu_conf = round(sum(c[1] for c in xiu_cands), 2)
+    if tai_conf != xiu_conf:
+        return ("Tài" if tai_conf > xiu_conf else "Xỉu"), tai_score, xiu_score
+
+    # Cấp 3: max single confidence
+    tai_max = round(max((c[1] for c in tai_cands), default=0), 2)
+    xiu_max = round(max((c[1] for c in xiu_cands), default=0), 2)
+    if tai_max != xiu_max:
+        return ("Tài" if tai_max > xiu_max else "Xỉu"), tai_score, xiu_score
+
+    # Cấp 4: số lượng vote
+    if len(tai_cands) != len(xiu_cands):
+        return ("Tài" if len(tai_cands) > len(xiu_cands) else "Xỉu"), tai_score, xiu_score
+
+    # Cấp 5: anti-streak (deterministic)
+    return opposite, tai_score, xiu_score
+
+
+# =====================================================================
+# ⭐ THUẬT TOÁN V10.0 - 18 TẦNG, NO RANDOM
 # =====================================================================
 def estimate_streak_break_prob(results):
     blocks = build_blocks(results)
@@ -314,8 +344,7 @@ def estimate_streak_break_prob(results):
     total = broke + continued
     if total < 3:
         return None
-    break_prob = (broke + 1) / (total + 2)
-    return {'break_prob': break_prob, 'sample': total, 'current_len': current_len}
+    return {'break_prob': (broke + 1) / (total + 2), 'sample': total, 'current_len': current_len}
 
 
 def detect_repeating_block_pattern(blocks):
@@ -384,22 +413,14 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
     current_len = blocks[0]['len']
 
     # TẦNG 1: BỆT
-    if current_len >= 15:
-        candidates.append((opposite, 97.0, 60, 2.5))
-    elif current_len >= 12:
-        candidates.append((opposite, 95.0, 55, 2.3))
-    elif current_len >= 10:
-        candidates.append((opposite, 93.0, 55, 2.0))
-    elif current_len >= 8:
-        candidates.append((opposite, 88.0, 50, 1.8))
-    elif current_len >= 6:
-        candidates.append((opposite, 80.0, 45, 1.5))
-    elif current_len == 5:
-        candidates.append((opposite, 70.0, 35, 1.2))
-    elif current_len == 4:
-        candidates.append((current_val, 60.0, 30, 0.9))
-    elif current_len == 3:
-        candidates.append((current_val, 55.0, 25, 0.6))
+    if current_len >= 15:   candidates.append((opposite, 97.0, 60, 2.5))
+    elif current_len >= 12: candidates.append((opposite, 95.0, 55, 2.3))
+    elif current_len >= 10: candidates.append((opposite, 93.0, 55, 2.0))
+    elif current_len >= 8:  candidates.append((opposite, 88.0, 50, 1.8))
+    elif current_len >= 6:  candidates.append((opposite, 80.0, 45, 1.5))
+    elif current_len == 5:  candidates.append((opposite, 70.0, 35, 1.2))
+    elif current_len == 4:  candidates.append((current_val, 60.0, 30, 0.9))
+    elif current_len == 3:  candidates.append((current_val, 55.0, 25, 0.6))
 
     # TẦNG 2: ĐẢO 1-1
     alt_len = 0
@@ -408,18 +429,12 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
             alt_len += 1
         else:
             break
-    if alt_len >= 15:
-        candidates.append((opposite, 96.0, 50, 2.2))
-    elif alt_len >= 12:
-        candidates.append((opposite, 94.0, 50, 2.0))
-    elif alt_len >= 10:
-        candidates.append((opposite, 90.0, 45, 1.8))
-    elif alt_len >= 7:
-        candidates.append((opposite, 82.0, 35, 1.5))
-    elif alt_len >= 5:
-        candidates.append((opposite, 74.0, 28, 1.2))
-    elif alt_len >= 3:
-        candidates.append((opposite, 63.0, 20, 0.8))
+    if alt_len >= 15:   candidates.append((opposite, 96.0, 50, 2.2))
+    elif alt_len >= 12: candidates.append((opposite, 94.0, 50, 2.0))
+    elif alt_len >= 10: candidates.append((opposite, 90.0, 45, 1.8))
+    elif alt_len >= 7:  candidates.append((opposite, 82.0, 35, 1.5))
+    elif alt_len >= 5:  candidates.append((opposite, 74.0, 28, 1.2))
+    elif alt_len >= 3:  candidates.append((opposite, 63.0, 20, 0.8))
 
     # TẦNG 3: CHU KỲ KHỐI
     cycle = detect_repeating_block_pattern(blocks)
@@ -436,48 +451,33 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
     if break_info and current_len >= 3:
         bp = break_info['break_prob']
         sample = break_info['sample']
-        if bp >= 0.80:
-            candidates.append((opposite, 88.0, sample, 1.9))
-        elif bp >= 0.68:
-            candidates.append((opposite, 80.0, sample, 1.5))
-        elif bp >= 0.55:
-            candidates.append((opposite, 70.0, sample, 1.1))
-        elif bp <= 0.20:
-            candidates.append((current_val, 85.0, sample, 1.7))
-        elif bp <= 0.35:
-            candidates.append((current_val, 72.0, sample, 1.2))
+        if bp >= 0.80:   candidates.append((opposite, 88.0, sample, 1.9))
+        elif bp >= 0.68: candidates.append((opposite, 80.0, sample, 1.5))
+        elif bp >= 0.55: candidates.append((opposite, 70.0, sample, 1.1))
+        elif bp <= 0.20: candidates.append((current_val, 85.0, sample, 1.7))
+        elif bp <= 0.35: candidates.append((current_val, 72.0, sample, 1.2))
 
     # TẦNG 5: TREND 5
     if n >= 5:
         r5_tai = results[:5].count("Tài")
-        if r5_tai >= 4:
-            candidates.append(("Tài", 65.0, 5, 0.8))
-        elif r5_tai <= 1:
-            candidates.append(("Xỉu", 65.0, 5, 0.8))
+        if r5_tai >= 4:   candidates.append(("Tài", 65.0, 5, 0.8))
+        elif r5_tai <= 1: candidates.append(("Xỉu", 65.0, 5, 0.8))
 
-    # TẦNG 6: TREND 10 (mean reversion)
+    # TẦNG 6: TREND 10
     if n >= 10:
         r10_tai = results[:10].count("Tài")
-        if r10_tai >= 8:
-            candidates.append(("Xỉu", 70.0, 10, 1.1))
-        elif r10_tai >= 7:
-            candidates.append(("Xỉu", 65.0, 10, 0.9))
-        elif r10_tai <= 2:
-            candidates.append(("Tài", 70.0, 10, 1.1))
-        elif r10_tai <= 3:
-            candidates.append(("Tài", 65.0, 10, 0.9))
+        if r10_tai >= 8:   candidates.append(("Xỉu", 70.0, 10, 1.1))
+        elif r10_tai >= 7: candidates.append(("Xỉu", 65.0, 10, 0.9))
+        elif r10_tai <= 2: candidates.append(("Tài", 70.0, 10, 1.1))
+        elif r10_tai <= 3: candidates.append(("Tài", 65.0, 10, 0.9))
 
     # TẦNG 7: TREND 20
     if n >= 20:
         tai20 = results[:20].count("Tài")
-        if tai20 >= 15:
-            candidates.append(("Xỉu", 68.0, 20, 1.0))
-        elif tai20 >= 14:
-            candidates.append(("Xỉu", 63.0, 20, 0.8))
-        elif tai20 <= 5:
-            candidates.append(("Tài", 68.0, 20, 1.0))
-        elif tai20 <= 6:
-            candidates.append(("Tài", 63.0, 20, 0.8))
+        if tai20 >= 15:   candidates.append(("Xỉu", 68.0, 20, 1.0))
+        elif tai20 >= 14: candidates.append(("Xỉu", 63.0, 20, 0.8))
+        elif tai20 <= 5:  candidates.append(("Tài", 68.0, 20, 1.0))
+        elif tai20 <= 6:  candidates.append(("Tài", 63.0, 20, 0.8))
 
     # TẦNG 8: 81 MẪU
     if len(blocks) >= 5:
@@ -534,19 +534,15 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
     # TẦNG 11: DICE BIAS
     if dice_sums and len(dice_sums) >= 5:
         avg_recent = sum(dice_sums[:10]) / min(10, len(dice_sums))
-        if avg_recent >= 12.5:
-            candidates.append(("Tài", 65.0, 10, 0.9))
-        elif avg_recent <= 8.0:
-            candidates.append(("Xỉu", 65.0, 10, 0.9))
+        if avg_recent >= 12.5: candidates.append(("Tài", 65.0, 10, 0.9))
+        elif avg_recent <= 8.0: candidates.append(("Xỉu", 65.0, 10, 0.9))
 
     # TẦNG 12: MOMENTUM
     if n >= 10:
         r5_tai = results[:5].count("Tài")
         r10_tai = results[:10].count("Tài")
-        if r5_tai >= 4 and r10_tai <= 5:
-            candidates.append(("Xỉu", 63.0, 10, 0.9))
-        elif r5_tai <= 1 and r10_tai >= 5:
-            candidates.append(("Tài", 63.0, 10, 0.9))
+        if r5_tai >= 4 and r10_tai <= 5:  candidates.append(("Xỉu", 63.0, 10, 0.9))
+        elif r5_tai <= 1 and r10_tai >= 5: candidates.append(("Tài", 63.0, 10, 0.9))
 
     # TẦNG 13: ZIGZAG NGẮN
     if n >= 4:
@@ -556,10 +552,8 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
     # TẦNG 14: SKEW
     if n >= 20:
         tai_ratio = results[:20].count("Tài") / 20
-        if tai_ratio >= 0.70:
-            candidates.append(("Xỉu", 66.0, 20, 1.1))
-        elif tai_ratio <= 0.30:
-            candidates.append(("Tài", 66.0, 20, 1.1))
+        if tai_ratio >= 0.70:   candidates.append(("Xỉu", 66.0, 20, 1.1))
+        elif tai_ratio <= 0.30: candidates.append(("Tài", 66.0, 20, 1.1))
 
     # TẦNG 15: DRAGON-TIGER
     if n >= 6:
@@ -585,53 +579,61 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
     if current_len >= 3:
         candidates.append((opposite, 57.0, 5, 0.5))
 
-    # ==================== VOTING ====================
+    # ==================== VOTING V10.0 (DETERMINISTIC) ====================
     if not candidates:
         return opposite, 53.0
 
-    tai_score = sum(c[1] * c[3] for c in candidates if c[0] == "Tài")
-    xiu_score = sum(c[1] * c[3] for c in candidates if c[0] == "Xỉu")
+    tai_cands = [c for c in candidates if c[0] == "Tài"]
+    xiu_cands = [c for c in candidates if c[0] == "Xỉu"]
 
-    if tai_score == xiu_score:
-        return opposite, round(min(99.9, max(50.0, 53.0 * adaptive_boost)), 1)
-
-    winner = "Tài" if tai_score > xiu_score else "Xỉu"
-    winner_score = max(tai_score, xiu_score)
+    winner, tai_score, xiu_score = deterministic_tiebreak(tai_cands, xiu_cands, opposite)
+    winner_score = tai_score if winner == "Tài" else xiu_score
     total_score = tai_score + xiu_score
-    agree_ratio = winner_score / total_score
+    agree_ratio = winner_score / total_score if total_score > 0 else 0.5
 
-    best_conf = max((c[1] for c in candidates if c[0] == winner), default=55.0)
-    final_conf = best_conf * (0.70 + agree_ratio * 0.30)
-    final_conf *= adaptive_boost
+    winner_cands = tai_cands if winner == "Tài" else xiu_cands
+    best_conf = max((c[1] for c in winner_cands), default=55.0)
+    final_conf = best_conf * (0.70 + agree_ratio * 0.30) * adaptive_boost
     final_conf = max(50.0, min(99.9, final_conf))
     return winner, round(final_conf, 1)
 
 
 def get_adaptive_boost():
     with LOG_LOCK:
-        recent = [
-            (p, rec) for p, rec in PREDICTION_LOG.items()
-            if p > RESET_SESSION_ID and rec.get('is_correct') is not None
-        ]
+        recent = [(p, rec) for p, rec in PREDICTION_LOG.items()
+                  if p > RESET_SESSION_ID and rec.get('is_correct') is not None]
     if len(recent) < 10:
         return 1.0
     recent.sort(key=lambda x: x[0])
     recent = recent[-15:]
     acc = sum(1 for _, r in recent if r['is_correct']) / len(recent)
-    if acc >= 0.70:
-        return 1.05
-    if acc >= 0.60:
-        return 1.02
-    if acc <= 0.40:
-        return 0.92
-    if acc <= 0.50:
-        return 0.97
+    if acc >= 0.70: return 1.05
+    if acc >= 0.60: return 1.02
+    if acc <= 0.40: return 0.92
+    if acc <= 0.50: return 0.97
     return 1.0
 
 
 # =====================================================================
-# FETCH DATA
+# FETCH DATA (⭐ fallback DETERMINISTIC - không random)
 # =====================================================================
+def _deterministic_fallback(elapsed_min):
+    """Sinh dữ liệu giả LẶP LẠI được - dùng MD5(session_id)."""
+    current = 7116040 + elapsed_min
+    rows = []
+    for i in range(40):
+        sid = current - i
+        # MD5 của session ID → 8 hex đầu → int
+        h = int(hashlib.md5(str(sid).encode()).hexdigest()[:8], 16)
+        d1 = (h % 6) + 1
+        d2 = ((h >> 6) % 6) + 1
+        d3 = ((h >> 12) % 6) + 1
+        total = d1 + d2 + d3
+        r = "Tài" if total >= 11 else "Xỉu"
+        rows.append({"phien": sid, "result": r, "dice": f"{d1} + {d2} + {d3}", "total": total})
+    return rows
+
+
 def fetch_sessions():
     try:
         headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
@@ -652,15 +654,7 @@ def fetch_sessions():
     except Exception as e:
         print(f"[API ERROR] {e}")
     elapsed = int(time.time() / 60)
-    current = 7116040 + elapsed
-    random.seed(elapsed)
-    rows = []
-    for i in range(40):
-        sid = current - i
-        r = "Tài" if random.random() > 0.5 else "Xỉu"
-        d = [random.randint(1, 6) for _ in range(3)]
-        rows.append({"phien": sid, "result": r, "dice": f"{d[0]} + {d[1]} + {d[2]}", "total": sum(d)})
-    return rows, 'fallback'
+    return _deterministic_fallback(elapsed), 'fallback'
 
 
 # =====================================================================
@@ -720,6 +714,7 @@ def history():
         next_phien = latest_session['phien'] + 1
 
         if (NEXT_PRED_CACHE.get('phien') == latest_session['phien']
+                and NEXT_PRED_CACHE.get('version') == ALGO_VERSION
                 and NEXT_PRED_CACHE.get('prediction') in ("Tài", "Xỉu")):
             next_pred = NEXT_PRED_CACHE['prediction']
             next_conf = NEXT_PRED_CACHE['confidence']
@@ -732,16 +727,12 @@ def history():
                 'phien': latest_session['phien'],
                 'prediction': next_pred,
                 'confidence': next_conf,
+                'version': ALGO_VERSION,
             })
 
         out = [{
-            'phien': next_phien,
-            'is_next': True,
-            'prediction': next_pred,
-            'confidence': next_conf,
-            'result': 'Chờ...',
-            'dice': "? + ? + ?",
-            'is_correct': None,
+            'phien': next_phien, 'is_next': True, 'prediction': next_pred,
+            'confidence': next_conf, 'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None,
         }]
 
         MAX_DISPLAY = 100
@@ -757,23 +748,17 @@ def history():
                 rec = PREDICTION_LOG.get(phien)
                 if rec:
                     out.append({
-                        'phien': phien,
-                        'is_next': False,
-                        'prediction': rec['prediction'],
-                        'confidence': rec['confidence'],
-                        'result': rec['result'],
-                        'dice': current_session['dice'],
+                        'phien': phien, 'is_next': False,
+                        'prediction': rec['prediction'], 'confidence': rec['confidence'],
+                        'result': rec['result'], 'dice': current_session['dice'],
                         'is_correct': rec['is_correct'],
                     })
                     displayed += 1
 
         return jsonify({
             'rows': out,
-            'stats': {
-                'total': total_past,
-                'correct': correct_count,
-                'lose': total_past - correct_count,
-            },
+            'stats': {'total': total_past, 'correct': correct_count, 'lose': total_past - correct_count},
+            'algorithm': ALGO_VERSION,
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -781,21 +766,19 @@ def history():
 
 @app.route('/api/predict')
 def predict_only():
-    """API dự đoán phiên tiếp theo — cập nhật log trước khi predict."""
     try:
         raw_rows, source = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         if not valid:
             return jsonify({'status': 'error', 'message': 'Không có dữ liệu'}), 404
 
-        # ⭐ Update log trước để boost chính xác
         update_prediction_log(valid)
-
         latest = valid[-1]
         next_phien = latest['phien'] + 1
 
         cached = NEXT_PRED_CACHE
         if (cached.get('phien') == latest['phien']
+                and cached.get('version') == ALGO_VERSION
                 and cached.get('prediction') in ("Tài", "Xỉu")):
             pred = cached['prediction']
             conf = cached['confidence']
@@ -809,6 +792,7 @@ def predict_only():
                 'phien': latest['phien'],
                 'prediction': pred,
                 'confidence': conf,
+                'version': ALGO_VERSION,
             })
             cached_hit = False
 
@@ -818,6 +802,7 @@ def predict_only():
 
         return jsonify({
             'status': 'success',
+            'algorithm': ALGO_VERSION,
             'next_session': next_phien,
             'latest_session': latest['phien'],
             'latest_result': latest['result'],
@@ -826,11 +811,7 @@ def predict_only():
             'confidence': conf,
             'adaptive_boost': round(boost, 3),
             'accuracy': accuracy,
-            'stats': {
-                'total': total,
-                'correct': correct,
-                'lose': total - correct,
-            },
+            'stats': {'total': total, 'correct': correct, 'lose': total - correct},
             'reset_session_id': RESET_SESSION_ID,
             'data_source': source,
             'cached': cached_hit,
@@ -864,11 +845,10 @@ def reset_api():
 def stats_only():
     with LOG_LOCK:
         all_time = len(PREDICTION_LOG)
-        all_correct = sum(
-            1 for r in PREDICTION_LOG.values() if r.get('is_correct') is True
-        )
+        all_correct = sum(1 for r in PREDICTION_LOG.values() if r.get('is_correct') is True)
     total, correct = compute_stats()
     return jsonify({
+        'algorithm': ALGO_VERSION,
         'current_period': {'total': total, 'correct': correct, 'lose': total - correct},
         'all_time': {'total': all_time, 'correct': all_correct, 'lose': all_time - all_correct},
         'reset_session_id': RESET_SESSION_ID,
@@ -877,4 +857,5 @@ def stats_only():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Running {ALGO_VERSION} on port {port}")
     app.run(host='0.0.0.0', port=port, threaded=True)
