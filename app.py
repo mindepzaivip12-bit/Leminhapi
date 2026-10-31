@@ -13,7 +13,7 @@ CORS(app)
 API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 API_URL_TX = "https://wtx.tele68.com/v1/tx/lite-sessions?cp=R&cl=R&pf=web&at=6c4df7b574bc9f42dda8d0a266682894"
 
-# Bộ nhớ đệm lưu trữ lịch sử và mốc Reset
+# Bộ nhớ đệm lưu trữ lịch sử vĩnh viễn
 HISTORY_CACHE = {'md5': {}, 'tx': {}}
 RESET_IDS = {'md5': 0, 'tx': 0}
 
@@ -23,7 +23,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dự Đoán Tài Xỉu - Premium</title>
+<title>LC MD5 DOCQUYEN LEMINH</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -69,12 +69,13 @@ HTML_TEMPLATE = """
         z-index: 100;
     }
     .header-title {
-        font-size: 20px;
+        font-size: 22px;
         font-weight: 800;
         color: var(--tai-color);
         display: flex;
         align-items: center;
         gap: 8px;
+        text-shadow: 0 0 10px rgba(14, 165, 233, 0.2);
     }
     .header-title span {
         font-size: 12px;
@@ -82,7 +83,7 @@ HTML_TEMPLATE = """
         color: var(--tai-color);
         padding: 2px 8px;
         border-radius: 10px;
-        font-weight: 600;
+        font-weight: 700;
     }
     .header-actions { display: flex; gap: 10px; align-items: center; }
     
@@ -230,7 +231,7 @@ HTML_TEMPLATE = """
         .data-table th, .data-table td { padding: 10px 5px; font-size: 12px; }
         .badge { padding: 4px 8px; font-size: 11px; }
         .dice-text { font-size: 10px; }
-        .header-title { font-size: 16px; }
+        .header-title { font-size: 18px; }
         .time-update { display: none; }
     }
 </style>
@@ -239,7 +240,7 @@ HTML_TEMPLATE = """
 
 <div class="header">
     <div class="header-title">
-        TÀI XỈU PREMIUM <span>❄️</span>
+        LE MINH ❄️ <span>API</span>
     </div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
@@ -322,7 +323,6 @@ async function fetchData() {
         const r = await fetch(`/api/history?type=${currentType}`, { cache: 'no-store' });
         const data = await r.json();
         
-        // Cập nhật thời gian
         const now = new Date();
         document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
         
@@ -373,7 +373,7 @@ function renderTable(rows, stats) {
 
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = `<span class="status st-wait"> Chờ  </span>`;
+            statusHtml = `<span class="status st-wait">🐻 Chờ </span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -486,92 +486,39 @@ def fetch_sessions(api_type='md5'):
 
 
 # =====================================================================
-# THUẬT TOÁN FULL CẦU - FIXED V5.0
+# THUẬT TOÁN MẪU: "API BÁO THÌ BẺ" (LE MINH ❄️)
 # =====================================================================
 def analyze_pattern(results):
     """
-    Phân tích đa tầng, tự động điều chỉnh khi thiếu dữ liệu.
-    Trả về: (prediction, confidence)
+    Thuật toán: Lấy kết quả mới nhất từ API, nếu không có cầu đặc biệt thì bẻ ngược lại.
+    Nếu có bệt (streak), kiên trì bẻ đến khi bệt dài thì ngừng.
     """
-    # Nếu chưa có dữ liệu, trả về 50/50 ngẫu nhiên thay vì mặc định Tài
     if not results:
         return random.choice(["Tài", "Xỉu"]), 50.0
     
     last = results[0]
     opposite = "Xỉu" if last == "Tài" else "Tài"
-
-    # Nếu chỉ có 1 phiên, bẻ ngược lại để tránh bị kẹt
-    if len(results) == 1:
-        return opposite, 50.0
-        
-    # Nếu có 2 phiên, ưu tiên bám bệt (vì đa số hay ra bệt 2, 3)
-    if len(results) == 2:
-        return last, 55.0
-
-    # 1. CẦU BỆT (Streak)
+    
+    # 1. Tính độ dài chuỗi bệt (streak) hiện tại
     streak = 1
     for r in results[1:]:
         if r == last: streak += 1
         else: break
-
-    if streak >= 10: return opposite, 99.0
-    if streak >= 8:  return opposite, 96.0
-    if streak >= 6:  return opposite, 92.0
-    if streak >= 5:  return opposite, 85.0
-    if streak == 4:  return last,     70.0
-    if streak == 3:  return last,     65.0
-    
-    # 2. CẦU ĐẢO 1-1 (Alternating)
-    if len(results) >= 4:
-        is_alternating = all(results[i] != results[i+1] for i in range(min(len(results)-1, 7)))
-        if is_alternating:
-            return opposite, 90.0
-
-    # 3. CẦU 2-2
-    if len(results) >= 6:
-        if (results[0]==results[1] and results[2]==results[3] and results[4]==results[5] 
-            and results[0]!=results[2]):
-            return opposite, 88.0
-
-    # 4. CẦU 3-3
-    if len(results) >= 6:
-        if (results[0]==results[1]==results[2] and results[3]==results[4]==results[5] 
-            and results[0]!=results[3]):
-            return last, 85.0
-
-    # 5. CẦU 1-2-1
-    if len(results) >= 4:
-        if (results[0]==results[3] and results[1]==results[2] and results[0]!=results[1]):
-            return opposite, 85.0
-
-    # 6. CẦU 2-1-2
-    if len(results) >= 5:
-        if (results[0]==results[1] and results[3]==results[4] 
-            and results[1]!=results[2] and results[2]!=results[3]):
-            return opposite, 85.0
-
-    # 7. CẦU 3-1-3
-    if len(results) >= 7:
-        if (results[0]==results[1]==results[2] and results[4]==results[5]==results[6] 
-            and results[0]!=results[3]):
-            return opposite, 88.0
-
-    # 8. CẦU 2-2-1
-    if len(results) >= 5:
-        if (results[0]!=results[1] and results[1]==results[2] 
-            and results[2]!=results[3] and results[3]==results[4]):
-            return opposite, 80.0
-
-    # 9. XU HƯỚNG (Nghiêng) - Nếu 10 phiên gần nhất lệch hẳn
-    if len(results) >= 10:
-        recent = results[:10]
-        tais = recent.count("Tài")
-        xius = recent.count("Xỉu")
-        if tais >= 7: return "Xỉu", 75.0
-        if xius >= 7: return "Tài", 75.0
-
-    # 10. FALLBACK: Đảo nhịp cơ bản
-    return opposite, 55.0
+        
+    # 2. Nếu bệt quá dài (từ 6 phiên trở lên), ngừng bẻ để tránh gãy cầu (đánh thuận)
+    if streak >= 6:
+        return last, 95.0
+        
+    # 3. Nếu đang bệt từ 2 đến 5 phiên, thực hiện "BẺ" (Đánh ngược)
+    if streak >= 2:
+        return opposite, 85.0
+        
+    # 4. Nếu đang là cầu 1-1 (so le), "bẻ" cũng chính là bám cầu
+    if len(results) >= 3 and results[0] != results[1] and results[1] != results[2]:
+        return opposite, 80.0
+        
+    # 5. Mặc định: API báo gì thì bẻ ngược lại (Đánh ngược)
+    return opposite, 70.0
 
 # =====================================================================
 # API ROUTES
@@ -588,7 +535,7 @@ def history():
     try:
         raw_rows, source = fetch_sessions(api_type)
         
-        # Ghi vào bộ nhớ đệm
+        # Ghi dữ liệu vào bộ nhớ đệm
         for row in raw_rows:
             HISTORY_CACHE[api_type][row['phien']] = row
             
@@ -633,7 +580,6 @@ def history():
                 if is_correct:
                     correct_count += 1
             else:
-                # Phiên đầu tiên của bảng không thể dự đoán
                 pred, conf = "-", 0
                 is_correct = None
 
