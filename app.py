@@ -23,7 +23,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LC MD5 DOCQUYEN LEMINH</title>
+<title>LE MINH </title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -240,7 +240,7 @@ HTML_TEMPLATE = """
 
 <div class="header">
     <div class="header-title">
-        LE MINH ❄️ <span>API</span>
+        LE Minh <span>Kly</span>
     </div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
@@ -373,7 +373,7 @@ function renderTable(rows, stats) {
 
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = `<span class="status st-wait">🐻 Chờ </span>`;
+            statusHtml = `<span class="status st-wait"></span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -442,15 +442,18 @@ setInterval(fetchData, 5000);
 </html>
 """
 
-def generate_fallback(base=7116040):
+def generate_deterministic_fallback(base=7116040):
+    # Hàm tạo dữ liệu giả lập nhưng KHÔNG RANDOM, dựa vào thời gian thực
     elapsed = int(time.time() / 60)
     current = base + elapsed
-    random.seed(elapsed)
+    
     rows = []
+    # Tạo chuỗi cầu 1-1 cố định nếu API lỗi để test thuật toán
     for i in range(15):
         sid = current - i
-        r = "Tài" if random.random() > 0.5 else "Xỉu"
-        d = [random.randint(1, 6) for _ in range(3)]
+        # Xen kẽ Tài - Xỉu dựa trên số chẵn lẻ của sid
+        r = "Tài" if (sid % 2 == 0) else "Xỉu"
+        d = [3, 3, 4] if r == "Tài" else [1, 2, 3]
         rows.append({
             "phien": sid,
             "result": r,
@@ -482,43 +485,102 @@ def fetch_sessions(api_type='md5'):
                 return rows, 'live'
     except Exception as e:
         print(f"[API ERROR] {api_type}: {e}")
-    return generate_fallback(), 'fallback'
+    return generate_deterministic_fallback(), 'fallback'
 
 
 # =====================================================================
-# THUẬT TOÁN MẪU: "API BÁO THÌ BẺ" (LE MINH ❄️)
+# THUẬT TOÁN MA TRẬN CẦU - KHÔNG RANDOM (LE MINH ❄️ V8.0)
 # =====================================================================
 def analyze_pattern(results):
     """
-    Thuật toán: Lấy kết quả mới nhất từ API, nếu không có cầu đặc biệt thì bẻ ngược lại.
-    Nếu có bệt (streak), kiên trì bẻ đến khi bệt dài thì ngừng.
+    Phân tích dữ liệu thành các nhóm (Group) để bắt cầu.
+    TUYỆT ĐỐI KHÔNG DÙNG RANDOM. Cùng 1 dữ liệu -> Cùng 1 kết quả.
     """
+    # Trường hợp 1: Mảng rỗng (Chưa có dữ liệu) -> Mặc định Tài 50%
     if not results:
-        return random.choice(["Tài", "Xỉu"]), 50.0
+        return "Tài", 50.0
     
     last = results[0]
     opposite = "Xỉu" if last == "Tài" else "Tài"
-    
-    # 1. Tính độ dài chuỗi bệt (streak) hiện tại
-    streak = 1
+
+    # Trường hợp 2: Chỉ có 1 phiên -> Bẻ ngược lại
+    if len(results) == 1:
+        return opposite, 55.0
+        
+    # Trường hợp 3: Có 2 phiên
+    if len(results) == 2:
+        if results[0] == results[1]:
+            return last, 60.0 # Bám bệt 2
+        else:
+            return opposite, 60.0 # Bẻ 1-1
+
+    # Phân tích nhóm (Group)
+    groups = []
+    current_val = results[0]
+    count = 1
     for r in results[1:]:
-        if r == last: streak += 1
-        else: break
-        
-    # 2. Nếu bệt quá dài (từ 6 phiên trở lên), ngừng bẻ để tránh gãy cầu (đánh thuận)
-    if streak >= 6:
-        return last, 95.0
-        
-    # 3. Nếu đang bệt từ 2 đến 5 phiên, thực hiện "BẺ" (Đánh ngược)
-    if streak >= 2:
+        if r == current_val:
+            count += 1
+        else:
+            groups.append(count)
+            current_val = r
+            count = 1
+    groups.append(count)
+    
+    # === BẮT ĐẦU MA TRẬN CẦU ===
+
+    # 1. Cầu Bệt (Streak) từ 4 phiên trở lên -> Bẻ
+    if groups[0] >= 4:
         return opposite, 85.0
         
-    # 4. Nếu đang là cầu 1-1 (so le), "bẻ" cũng chính là bám cầu
-    if len(results) >= 3 and results[0] != results[1] and results[1] != results[2]:
-        return opposite, 80.0
+    # 2. Cầu 1-1 (Đảo liên tục 4 nhịp)
+    if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]:
+        return opposite, 90.0
         
-    # 5. Mặc định: API báo gì thì bẻ ngược lại (Đánh ngược)
-    return opposite, 70.0
+    # 3. Cầu 2-2 (Đảo nhóm 2)
+    if len(groups) >= 3 and groups[:3] == [2, 2, 2]:
+        return opposite, 88.0
+        
+    # 4. Cầu 3-3 (Đảo nhóm 3)
+    if len(groups) >= 2 and groups[:2] == [3, 3]:
+        return opposite, 85.0
+        
+    # 5. Cầu 1-2-3 / 3-2-1 (Tăng/giảm dần)
+    if len(groups) >= 3:
+        if groups[:3] == [1, 2, 3] or groups[:3] == [3, 2, 1]:
+            return opposite, 90.0
+
+    # 6. Cầu 2-3-1 / 1-3-2 (Biến đổi phức tạp)
+    if len(groups) >= 3:
+        if groups[:3] == [2, 3, 1] or groups[:3] == [1, 3, 2]:
+            return opposite, 88.0
+
+    # 7. Cầu 4-5-6 / 6-5-4 (Bệt dài có quy luật tăng/giảm)
+    if len(groups) >= 3:
+        if groups[:3] == [4, 5, 6] or groups[:3] == [6, 5, 4]:
+            return opposite, 92.0
+
+    # 8. Cầu 1-2-1 (Kép)
+    if len(groups) >= 3 and groups[:3] == [1, 2, 1]:
+        return opposite, 82.0
+
+    # 9. Cầu Xu hướng (Nghiêng) - 10 phiên gần nhất lệch hẳn
+    if len(results) >= 10:
+        tai_count = results[:10].count("Tài")
+        if tai_count >= 7: return "Xỉu", 75.0
+        if tai_count <= 3: return "Tài", 75.0
+
+    # 10. Cầu 2-1-2
+    if len(groups) >= 3 and groups[:3] == [2, 1, 2]:
+        return opposite, 80.0
+
+    # === FALLBACK: BẺ NHỊP CƠ BẢN ===
+    # Nếu không khớp các cầu trên, ta dựa vào độ dài nhóm hiện tại để bẻ
+    if groups[0] in [1, 2, 3]:
+        return opposite, 70.0
+        
+    # Cuối cùng, nếu không có gì, bẻ ngược lại kết quả vừa ra
+    return opposite, 50.0
 
 # =====================================================================
 # API ROUTES
@@ -568,8 +630,11 @@ def history():
             'is_correct': None
         })
 
-        # Quét toàn bộ lịch sử để tính đúng/sai
-        for i in range(len(valid) - 1, -1, -1):
+        # Quét toàn bộ lịch sử để tính đúng/sai (giới hạn 500 phiên để chống lag)
+        scan_limit = min(len(valid), 500)
+        
+        for i in range(len(valid) - 1, len(valid) - scan_limit - 1, -1):
+            if i < 0: break
             current_session = valid[i]
             history = [v['result'] for v in valid[:i]][::-1]
             
