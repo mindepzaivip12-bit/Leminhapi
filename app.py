@@ -11,10 +11,11 @@ CORS(app)
 
 # Cấu hình API
 API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
-# Đã sửa lỗi gõ nhầm 'đ' thành 'd' trong link API của bạn để đảm bảo không bị lỗi 404
 API_URL_TX = "https://wtx.tele68.com/v1/tx/lite-sessions?cp=R&cl=R&pf=web&at=6c4df7b574bc9f42dda8d0a266682894"
 
-RESET_SESSION_ID = 0
+# Bộ nhớ đệm lưu trữ lịch sử vĩnh viễn và mốc Reset độc lập cho 2 bảng
+HISTORY_CACHE = {'md5': {}, 'tx': {}}
+RESET_IDS = {'md5': 0, 'tx': 0}
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -33,9 +34,9 @@ HTML_TEMPLATE = """
         --text-muted: #64748b;
         --border-color: #e2e8f0;
         
-        --tai-color: #0ea5e9; /* Xanh biển */
+        --tai-color: #0ea5e9;
         --tai-bg: #e0f2fe;
-        --xiu-color: #ec4899; /* Hồng */
+        --xiu-color: #ec4899;
         --xiu-bg: #fce7f3;
         
         --win-color: #10b981;
@@ -55,7 +56,6 @@ HTML_TEMPLATE = """
         padding-bottom: 40px;
     }
 
-    /* HEADER */
     .header {
         background: var(--bg-card);
         padding: 15px 20px;
@@ -96,7 +96,6 @@ HTML_TEMPLATE = """
     }
     .btn-reset:hover { background: var(--lose-color); color: #fff; }
 
-    /* TABS */
     .tabs-container {
         max-width: 800px;
         margin: 20px auto 0;
@@ -123,7 +122,6 @@ HTML_TEMPLATE = """
         box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
     }
 
-    /* STATS BAR */
     .stats-bar {
         max-width: 800px;
         margin: 15px auto;
@@ -143,21 +141,24 @@ HTML_TEMPLATE = """
     .stat-value { font-size: 22px; font-weight: 800; color: var(--text-main); }
     .stat-value.win { color: var(--tai-color); }
 
-    /* TABLE CONTAINER */
-    .table-container {
+    /* Bọc bảng để giới hạn chiều cao, không bị kéo dài vô tận */
+    .table-wrapper {
         max-width: 800px;
         margin: 0 auto;
         padding: 0 15px;
-        overflow-x: auto;
     }
-    .data-table {
-        width: 100%;
+    .table-container {
         background: var(--bg-card);
         border-radius: 12px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+        max-height: 65vh; /* Thanh cuộn nội bộ */
+        overflow-y: auto;
+    }
+    
+    .data-table {
+        width: 100%;
         border-collapse: separate;
         border-spacing: 0;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-        overflow: hidden;
     }
     .data-table th {
         background: #f8fafc;
@@ -168,6 +169,9 @@ HTML_TEMPLATE = """
         padding: 15px 12px;
         text-align: center;
         border-bottom: 1px solid var(--border-color);
+        position: sticky;
+        top: 0;
+        z-index: 10;
     }
     .data-table td {
         padding: 14px 12px;
@@ -179,10 +183,8 @@ HTML_TEMPLATE = """
     .data-table tr:last-child td { border-bottom: none; }
     .data-table tr:hover { background: #f8fafc; }
     
-    /* Highlight cho phiên tiếp theo */
     .row-next { background: #f0f9ff; border-left: 3px solid var(--tai-color); }
 
-    /* BADGES */
     .badge {
         display: inline-block;
         padding: 6px 12px;
@@ -202,8 +204,6 @@ HTML_TEMPLATE = """
     .st-wait { background: var(--wait-bg); color: var(--wait-color); }
 
     .dice-text { font-size: 12px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
-    .pattern-text { font-size: 10px; color: var(--tai-color); background: var(--tai-bg); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; }
-
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
 
     @media (max-width: 500px) {
@@ -217,7 +217,7 @@ HTML_TEMPLATE = """
 
 <div class="header">
     <div class="header-title">
-        TÀI XỈU PREMIUM <span>V3.0</span>
+        TÀI XỈU PREMIUM <span></span>
     </div>
     <button class="btn-reset" onclick="confirmReset()">↻ Reset</button>
 </div>
@@ -242,20 +242,22 @@ HTML_TEMPLATE = """
     </div>
 </div>
 
-<div class="table-container">
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>Phiên</th>
-                <th>Dự đoán</th>
-                <th>Kết quả</th>
-                <th>Trạng thái</th>
-            </tr>
-        </thead>
-        <tbody id="table-body">
-            <tr><td colspan="4" class="loading">Đang kết nối Server...</td></tr>
-        </tbody>
-    </table>
+<div class="table-wrapper">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Phiên</th>
+                    <th>Dự đoán</th>
+                    <th>Kết quả</th>
+                    <th>Trạng thái</th>
+                </tr>
+            </thead>
+            <tbody id="table-body">
+                <tr><td colspan="4" class="loading">Đang kết nối Server...</td></tr>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <script>
@@ -266,15 +268,11 @@ function switchTab(type) {
     if (currentType === type) return;
     currentType = type;
     
-    // Cập nhật UI Tabs
     document.getElementById('tab-md5').classList.remove('active');
     document.getElementById('tab-tx').classList.remove('active');
     document.getElementById('tab-' + type).classList.add('active');
     
-    // Xóa dữ liệu cũ và hiển thị loading
     document.getElementById('table-body').innerHTML = '<tr><td colspan="4" class="loading">Đang tải dữ liệu...</td></tr>';
-    
-    // Tải dữ liệu mới
     fetchData();
 }
 
@@ -324,26 +322,18 @@ function renderTable(rows, stats) {
         return;
     }
 
-    tbody.innerHTML = '';
-    rows.forEach((row, idx) => {
-        const tr = document.createElement('tr');
-        if (row.is_next) tr.className = 'row-next';
+    let html = '';
+    rows.forEach((row) => {
+        const trClass = row.is_next ? 'class="row-next"' : '';
 
-        // Dự đoán
         let predHtml = `<span class="badge badge-empty">-</span>`;
         if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
-        
-        // Thêm độ tin cậy & cầu vào dưới dự đoán
-        let patternHtml = row.pattern ? `<span class="pattern-text">${row.pattern} (${row.confidence}%)</span>` : '';
-        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${patternHtml}</div>`;
 
-        // Kết quả
         let resultHtml = `<span class="badge badge-empty">-</span>`;
         if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
 
-        // Xúc xắc
         let diceDisplay = "";
         if (row.dice !== "? + ? + ?") {
             const p = row.dice.split(" + ");
@@ -352,10 +342,9 @@ function renderTable(rows, stats) {
         }
         let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
 
-        // Trạng thái
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = `<span class="status st-wait">⏳ Đang chờ</span>`;
+            statusHtml = `<span class="status st-wait"> Đang chờ</span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -364,20 +353,22 @@ function renderTable(rows, stats) {
             statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
         }
 
-        tr.innerHTML = `
-            <td>#${row.phien}</td>
-            <td>${predFull}</td>
-            <td>${resultFull}</td>
-            <td>${statusHtml}</td>
+        html += `
+            <tr ${trClass}>
+                <td>#${row.phien}</td>
+                <td>${predHtml}</td>
+                <td>${resultFull}</td>
+                <td>${statusHtml}</td>
+            </tr>
         `;
-        tbody.appendChild(tr);
     });
+    tbody.innerHTML = html;
 }
 
 async function confirmReset() {
     Swal.fire({
         title: 'Xác nhận Reset?',
-        text: "Lịch sử hiển thị trên màn hình sẽ bị ẩn đi. Hệ thống vẫn tính toán ngầm!",
+        text: "Toàn bộ lịch sử hiển thị của bảng này sẽ bị xoá và bắt đầu lại từ đầu!",
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#0ea5e9',
@@ -389,12 +380,16 @@ async function confirmReset() {
             isResetting = true;
             Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, didOpen: () => { Swal.showLoading() } });
             try {
-                const res = await fetch('/api/reset', { method: 'POST' });
+                const res = await fetch('/api/reset', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: currentType })
+                });
                 const data = await res.json();
                 if (data.status === 'success') {
                     Swal.fire({
                         title: 'Thành công!',
-                        text: 'Đã chốt mốc ẩn lịch sử từ phiên #' + data.reset_to,
+                        text: 'Đã xoá lịch sử và bắt đầu lại.',
                         icon: 'success',
                         confirmButtonColor: '#0ea5e9'
                     });
@@ -411,9 +406,7 @@ async function confirmReset() {
     });
 }
 
-// Khởi chạy lần đầu
 fetchData();
-// Tự động làm mới mỗi 5 giây
 setInterval(fetchData, 5000);
 </script>
 </body>
@@ -444,7 +437,6 @@ def fetch_sessions(api_type='md5'):
         r = requests.get(url, timeout=8, headers=headers)
         if r.status_code == 200:
             data = r.json()
-            # Xử lý chung cho cả 2 API vì cấu trúc list trả về tương tự nhau
             if 'list' in data and data['list']:
                 rows = []
                 for item in data['list']:
@@ -463,57 +455,62 @@ def fetch_sessions(api_type='md5'):
         print(f"[API ERROR] {api_type}: {e}")
     return generate_fallback(), 'fallback'
 
+
 # =====================================================================
-# THUẬT TOÁN FULL CẦU (Giữ nguyên độ chính xác cao)
+# THUẬT TOÁN FULL CẦU - NÂNG CẤP (Ẩn tên cầu, loại bỏ Markov/Nghiêng)
 # =====================================================================
 def analyze_pattern(results):
+    """
+    Phân tích đa tầng chuyên sâu vào các dạng cầu chuẩn xác.
+    Trả về: (prediction, confidence)
+    """
     if not results or len(results) < 3:
-        return "Tài", 50.0, "Khởi tạo"
+        return "Tài", 50.0
 
     last = results[0]
     opposite = "Xỉu" if last == "Tài" else "Tài"
 
-    # 1. CẦU BỆT
+    # 1. BẮT BỆT (Streak)
     streak = 1
     for r in results[1:]:
         if r == last: streak += 1
         else: break
 
-    if streak >= 10: return opposite, 99.0, f"Bẻ bệt {streak} siêu cấp"
-    if streak >= 8:  return opposite, 96.0, f"Bẻ bệt {streak} cực mạnh"
-    if streak >= 6:  return opposite, 92.0, f"Bẻ bệt {streak} mạnh"
-    if streak == 5:  return opposite, 85.0, f"Bẻ bệt {streak}"
-    if streak == 4:  return last,     70.0, f"Bám bệt {streak}"
-    if streak == 3:  return last,     62.0, f"Bám bệt {streak}"
-    if streak == 2:  return last,     55.0, f"Bám bệt {streak}"
+    if streak >= 10: return opposite, 99.0
+    if streak >= 8:  return opposite, 96.0
+    if streak >= 6:  return opposite, 92.0
+    if streak == 5:  return opposite, 85.0
+    if streak == 4:  return last,     70.0
+    if streak == 3:  return last,     62.0
+    if streak == 2:  return last,     55.0
 
     # 2. CẦU ĐẢO 1-1
     if len(results) >= 10 and all(results[i] != results[i+1] for i in range(10)):
-        return opposite, 97.0, "Đảo 1-1 siêu dài"
+        return opposite, 97.0
     if len(results) >= 7 and all(results[i] != results[i+1] for i in range(7)):
-        return opposite, 93.0, "Đảo 1-1 dài"
+        return opposite, 93.0
     if len(results) >= 5 and all(results[i] != results[i+1] for i in range(5)):
-        return opposite, 88.0, "Đảo 1-1"
+        return opposite, 88.0
     if len(results) >= 4 and all(results[i] != results[i+1] for i in range(4)):
-        return opposite, 76.0, "Đảo 1-1 ngắn"
+        return opposite, 76.0
 
     # 3. CẦU 2-2
     if len(results) >= 8:
         if (results[0]==results[1] and results[2]==results[3] and
             results[4]==results[5] and results[6]==results[7] and
             results[1]!=results[2] and results[3]!=results[4] and results[5]!=results[6]):
-            return opposite, 94.0, "Đảo 2-2 dài"
+            return opposite, 94.0
     if len(results) >= 6:
         if (results[0]==results[1] and results[2]==results[3] and results[4]==results[5]
             and results[1]!=results[2] and results[3]!=results[4]):
-            return opposite, 88.0, "Đảo 2-2"
+            return opposite, 88.0
 
     # 4. CẦU 3-3
     if len(results) >= 9:
         if (results[0]==results[1]==results[2] and results[3]==results[4]==results[5] and
             results[6]==results[7]==results[8] and
             results[2]!=results[3] and results[5]!=results[6]):
-            return opposite, 94.0, "Đảo 3-3"
+            return opposite, 94.0
 
     # 5. CẦU 4-4
     if len(results) >= 12:
@@ -521,64 +518,51 @@ def analyze_pattern(results):
             results[4]==results[5]==results[6]==results[7] and
             results[8]==results[9]==results[10]==results[11] and
             results[3]!=results[4] and results[7]!=results[8]):
-            return opposite, 96.0, "Đảo 4-4"
+            return opposite, 96.0
 
     # 6. CẦU 1-2-1 (kép)
     if len(results) >= 8:
         if (results[0]==results[3]==results[4]==results[7] and
             results[1]==results[2] and results[5]==results[6] and
             results[0]!=results[1] and results[4]!=results[5]):
-            return results[1], 90.0, "Cầu 1-2-1 kép"
+            return results[1], 90.0
     if len(results) >= 5:
         if (results[0]==results[3] and results[1]==results[2] and results[0]!=results[1]):
-            return results[1], 82.0, "Cầu 1-2-1"
+            return results[1], 82.0
 
     # 7. CẦU 2-1-2
     if len(results) >= 5:
         if (results[0]==results[1] and results[3]==results[4] and
             results[1]!=results[2] and results[2]!=results[3]):
-            return results[1], 82.0, "Cầu 2-1-2"
+            return results[1], 82.0
 
     # 8. CẦU 1-1-2
     if len(results) >= 6:
         if (results[0]==results[1] and results[1]!=results[2] and
             results[3]==results[4] and results[4]!=results[5]):
-            return results[2], 85.0, "Cầu 1-1-2"
+            return results[2], 85.0
 
-    # 9. CẦU NGHIÊNG
-    if len(results) >= 10:
-        tai_count = sum(1 for r in results[:10] if r == "Tài")
-        if tai_count >= 8: return "Xỉu", 78.0, "Nghiêng Xỉu mạnh"
-        if tai_count <= 2: return "Tài", 78.0, "Nghiêng Tài mạnh"
-        if tai_count >= 7: return "Tài", 68.0, "Nghiêng Tài"
-        if tai_count <= 3: return "Xỉu", 68.0, "Nghiêng Xỉu"
-
-    # 10. MARKOV WEIGHTED
-    if len(results) >= 6:
-        trans = {"Tài": 0, "Xỉu": 0}
-        for i in range(len(results) - 1):
-            if results[i] == last:
-                trans[results[i+1]] += 1
-        total = trans["Tài"] + trans["Xỉu"]
-        if total >= 3:
-            if trans["Tài"] / total >= 0.8: return "Tài", 78.0, "Markov Tài"
-            if trans["Xỉu"] / total >= 0.8: return "Xỉu", 78.0, "Markov Xỉu"
-            if trans["Tài"] > trans["Xỉu"]: return "Tài", 65.0, "Markov Tài nhẹ"
-            if trans["Xỉu"] > trans["Tài"]: return "Xỉu", 65.0, "Markov Xỉu nhẹ"
-
-    # 11. CẦU 2-2-1
+    # 9. CẦU 2-2-1
     if len(results) >= 5:
         if (results[0]!=results[1] and results[1]==results[2] and
             results[2]!=results[3] and results[3]==results[4]):
-            return results[1], 76.0, "Cầu 2-2-1"
+            return results[1], 76.0
 
-    # 12. ĐẢO ĐÔI
+    # 10. CẦU 3-1-3
+    if len(results) >= 7:
+        if (results[0]==results[1]==results[2] and results[4]==results[5]==results[6] and
+            results[2]!=results[3] and results[3]!=results[4]):
+            return results[3], 85.0
+
+    # 11. ĐẢO ĐÔI (1-2-1-2)
     if len(results) >= 4:
         if (results[0]!=results[1] and results[1]!=results[2] and
             results[2]!=results[3] and results[0]==results[2] and results[1]==results[3]):
-            return opposite, 72.0, "Đảo đôi"
+            return opposite, 72.0
 
-    return opposite, 55.0, "Đảo nhịp"
+    # DEFAULT: Đảo nhịp cơ bản
+    return opposite, 55.0
+
 
 # =====================================================================
 # API ROUTES
@@ -589,60 +573,69 @@ def index():
 
 @app.route('/api/history')
 def history():
-    global RESET_SESSION_ID
-    api_type = request.args.get('type', 'md5') # Mặc định là md5
+    api_type = request.args.get('type', 'md5')
+    reset_id = RESET_IDS.get(api_type, 0)
     
     try:
+        # 1. Lấy dữ liệu mới nhất từ API
         raw_rows, source = fetch_sessions(api_type)
-        valid = sorted(raw_rows, key=lambda x: x['phien'])
+        
+        # 2. Lưu vào bộ nhớ đệm (Ghi đè nếu trùng phiên)
+        for row in raw_rows:
+            HISTORY_CACHE[api_type][row['phien']] = row
+            
+        # 3. Dọn dẹp các phiên cũ (nằm trước mốc reset) để giải phóng bộ nhớ
+        keys_to_remove = [k for k in HISTORY_CACHE[api_type] if k <= reset_id]
+        for k in keys_to_remove:
+            del HISTORY_CACHE[api_type][k]
+
+        # 4. Lấy toàn bộ lịch sử hợp lệ và sắp xếp
+        valid = sorted(HISTORY_CACHE[api_type].values(), key=lambda x: x['phien'])
+
+        if not valid:
+            return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
         out = []
         correct_count = 0
         total_past = 0
 
+        # Dự đoán cho phiên tiếp theo
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
-        next_pred, next_conf, next_pattern = analyze_pattern(history_for_next)
+        next_pred, next_conf = analyze_pattern(history_for_next)
 
         out.append({
             'phien': next_phien,
             'is_next': True,
             'prediction': next_pred,
-            'confidence': next_conf,
             'result': 'Chờ...',
             'dice': "? + ? + ?",
-            'is_correct': None,
-            'pattern': next_pattern
+            'is_correct': None
         })
 
+        # Quét toàn bộ lịch sử (Không giới hạn số lượng, chạy đến khi reset)
         for i in range(len(valid) - 1, -1, -1):
             current_session = valid[i]
-            if current_session['phien'] <= RESET_SESSION_ID:
-                break
-            if len(out) > 20:
-                break
-
             history = [v['result'] for v in valid[:i]][::-1]
+            
             if history:
-                pred, conf, pattern = analyze_pattern(history)
+                pred, conf = analyze_pattern(history)
                 is_correct = (pred == current_session['result'])
                 total_past += 1
                 if is_correct:
                     correct_count += 1
             else:
-                pred, conf, pattern = "Tài", 50.0, "Khởi tạo"
+                pred, conf = "Tài", 50.0
                 is_correct = None
 
             out.append({
                 'phien': current_session['phien'],
                 'is_next': False,
                 'prediction': pred,
-                'confidence': conf,
                 'result': current_session['result'],
                 'dice': current_session['dice'],
-                'is_correct': is_correct,
-                'pattern': pattern
+                'is_correct': is_correct
             })
 
         return jsonify({
@@ -654,14 +647,18 @@ def history():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    global RESET_SESSION_ID
+    data = request.json or {}
+    api_type = data.get('type', 'md5')
+    
     try:
-        # Reset cả 2 bên hoặc reset chung 1 mốc
-        raw_rows, _ = fetch_sessions('md5')
+        raw_rows, _ = fetch_sessions(api_type)
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         if valid:
-            RESET_SESSION_ID = valid[-1]['phien']
-            return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
+            max_id = valid[-1]['phien']
+            RESET_IDS[api_type] = max_id
+            # Xóa sạch bộ nhớ đệm của bảng hiện tại để bắt đầu lại từ đầu
+            HISTORY_CACHE[api_type] = {}
+            return jsonify({'status': 'success', 'reset_to': max_id})
         return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
