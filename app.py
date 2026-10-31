@@ -9,11 +9,11 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
+API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=ab36aa88e2c9868ae0e8bc61adbd18dc"
 RESET_SESSION_ID = 0
 
 # =====================================================================
-# GIAO DIỆN HTML PREMIUM
+# GIAO DIỆN HTML PREMIUM V6.1 - SỐNG ĐỘNG
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -21,98 +21,415 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title> LC  Premium </title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<title>LC MD5 MINHLE ⚡ Premium </title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
     :root {
-        --bg-dark: #060913; --bg-card: #0d1424; --bg-card-hover: #131c30;
-        --text-main: #f1f5f9; --text-muted: #64748b; --border-color: #1e293b;
-        --tai-bg: #0284c7; --tai-bet-bg: rgba(2, 132, 199, 0.15);
-        --xiu-bg: #db2777; --xiu-bet-bg: rgba(219, 39, 119, 0.15);
-        --blue-main: #38bdf8; --blue-glow: rgba(56, 189, 248, 0.5);
+        --bg-dark: #030512; --bg-deep: #060a1c; --bg-card: rgba(13, 20, 36, 0.72);
+        --bg-card-hover: rgba(19, 28, 48, 0.9);
+        --text-main: #f8fafc; --text-muted: #64748b;
+        --border-color: rgba(30, 41, 59, 0.85);
+        --tai-bg: linear-gradient(135deg, #0ea5e9, #0284c7); 
+        --xiu-bg: linear-gradient(135deg, #ec4899, #be185d);
+        --blue-main: #38bdf8; --blue-glow: rgba(56, 189, 248, 0.65);
+        --cyan: #22d3ee; --purple: #a78bfa; --pink: #f472b6; --gold: #fbbf24;
         --lose-color: #ef4444; --win-color: #38bdf8;
-        --gold: #fbbf24;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-    @keyframes bgFloat { 0%, 100% { transform: translateY(0); opacity: 0.6; } 50% { transform: translateY(-30px); opacity: 1; } }
-    @keyframes rainbow-border { 0% { border-color: #38bdf8; box-shadow: 0 0 20px rgba(56,189,248,0.55); } 50% { border-color: #f472b6; box-shadow: 0 0 22px rgba(244,114,182,0.55); } 100% { border-color: #38bdf8; box-shadow: 0 0 20px rgba(56,189,248,0.55); } }
-    @keyframes textGlow { 0%, 100% { text-shadow: 0 0 6px var(--blue-glow); } 50% { text-shadow: 0 0 18px var(--blue-main); } }
-    @keyframes titleShine { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes slideIn { from { opacity: 0; transform: translateY(20px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
-    @keyframes shimmerBar { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-    @keyframes sparkle { 0%, 100% { opacity: 0; transform: scale(0); } 50% { opacity: 1; transform: scale(1) rotate(180deg); } }
-    @keyframes statPulse { 0%, 100% { text-shadow: 0 0 8px var(--blue-glow); } 50% { text-shadow: 0 0 20px var(--blue-main); } }
-    @keyframes dotPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(56,189,248,0.7); } 70% { box-shadow: 0 0 0 10px rgba(56,189,248,0); } }
+    html, body { height: 100%; }
     
-    body { background-color: var(--bg-dark); color: var(--text-main); padding-bottom: 30px; min-height: 100vh; background-image: radial-gradient(circle at 50% 0%, #0c1a32 0%, transparent 60%); overflow-x: hidden; }
+    @keyframes bgFloat { 0%,100%{transform:translateY(0) translateX(0)} 50%{transform:translateY(-40px) translateX(30px)} }
+    @keyframes bgFloat2 { 0%,100%{transform:translateY(0) translateX(0)} 50%{transform:translateY(30px) translateX(-35px)} }
+    @keyframes bgFloat3 { 0%,100%{transform:translateY(0) scale(1)} 50%{transform:translateY(-25px) scale(1.3)} }
+    @keyframes orbA { 0%,100%{transform:translate(0,0) scale(1); opacity: 0.5} 50%{transform:translate(60px,-80px) scale(1.15); opacity: 0.8} }
+    @keyframes orbB { 0%,100%{transform:translate(0,0) scale(1); opacity: 0.4} 50%{transform:translate(-70px,60px) scale(1.2); opacity: 0.75} }
+    @keyframes orbC { 0%,100%{transform:translate(0,0) scale(1); opacity: 0.35} 50%{transform:translate(40px,50px) scale(1.1); opacity: 0.7} }
     
-    .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; border-bottom: 1px solid var(--border-color); background: rgba(6, 9, 19, 0.85); backdrop-filter: blur(14px); position: sticky; top: 0; z-index: 100; }
-    .header-left { display: flex; align-items: center; gap: 10px; }
-    .header-live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--blue-main); animation: dotPulse 1.8s infinite; }
-    .header-title { font-size: 20px; font-weight: 900; background: linear-gradient(90deg, #7dd3fc, #38bdf8, #a78bfa, #f472b6, #38bdf8, #7dd3fc); background-size: 300% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; animation: titleShine 4s linear infinite; }
-    .btn-reset { background: rgba(239, 68, 68, 0.1); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.3s; }
-    .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 20px rgba(239,68,68,0.5); }
-
-    .stats-bar { max-width: 600px; margin: 15px auto 0; padding: 0 15px; display: flex; justify-content: space-between; gap: 10px; }
-    .stat-item { flex: 1; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px; text-align: center; position: relative; overflow: hidden; }
-    .stat-item::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px; background: linear-gradient(90deg, transparent, var(--blue-main), transparent); background-size: 200% 100%; animation: shimmerBar 3s linear infinite; }
-    .stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 4px; font-weight: 600; }
-    .stat-value { font-size: 20px; font-weight: 900; animation: statPulse 2.5s infinite; }
-    .stat-value.win { color: var(--blue-main); }
-
-    .container { padding: 15px; display: flex; flex-direction: column; gap: 12px; max-width: 600px; margin: 0 auto; }
-    .card-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; transition: all 0.3s; position: relative; animation: slideIn 0.5s ease-out backwards; overflow: hidden; }
-    .card-item:hover { background: var(--bg-card-hover); transform: translateY(-2px); }
-    .card-item.active { background: linear-gradient(145deg, #0d1424, #0f1a2e); animation: slideIn 0.5s ease-out backwards, rainbow-border 3s linear infinite; border-width: 1.5px; }
-    .card-item.active::after { content: '●'; position: absolute; top: 8px; right: 10px; color: var(--blue-main); font-size: 10px; animation: dotPulse 1.5s infinite; }
-
-    .col-left { display: flex; flex-direction: column; gap: 5px; flex: 1.2; }
-    .id-text { font-size: 16px; font-weight: 800; color: #fff; background: linear-gradient(90deg, #fff, #7dd3fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    @keyframes rainbow-border { 0%{border-color:#38bdf8;box-shadow:0 0 25px rgba(56,189,248,0.65),inset 0 0 25px rgba(56,189,248,0.1)} 
+        33%{border-color:#a78bfa;box-shadow:0 0 25px rgba(167,139,250,0.65),inset 0 0 25px rgba(167,139,250,0.1)}
+        66%{border-color:#f472b6;box-shadow:0 0 25px rgba(244,114,182,0.65),inset 0 0 25px rgba(244,114,182,0.1)}
+        100%{border-color:#38bdf8;box-shadow:0 0 25px rgba(56,189,248,0.65),inset 0 0 25px rgba(56,189,248,0.1)} }
+    
+    @keyframes textGlow { 0%,100%{text-shadow:0 0 8px var(--blue-glow),0 0 20px rgba(56,189,248,0.4)} 50%{text-shadow:0 0 20px var(--blue-main),0 0 40px rgba(56,189,248,0.6)} }
+    @keyframes titleShine { 0%{background-position:-200% center} 100%{background-position:200% center} }
+    @keyframes spin { to{transform:rotate(360deg)} }
+    @keyframes slideIn { from{opacity:0;transform:translateY(24px) scale(0.94)} to{opacity:1;transform:translateY(0) scale(1)} }
+    @keyframes shimmerBar { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+    @keyframes statPulse { 0%,100%{text-shadow:0 0 10px var(--blue-glow)} 50%{text-shadow:0 0 25px var(--blue-main),0 0 40px var(--blue-glow)} }
+    @keyframes dotPulse { 0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,0.75)} 70%{box-shadow:0 0 0 14px rgba(56,189,248,0)} }
+    @keyframes ripple { 0%{transform:scale(0);opacity:0.7} 100%{transform:scale(4);opacity:0} }
+    @keyframes breathe { 0%,100%{opacity:0.6;transform:scale(1)} 50%{opacity:1;transform:scale(1.05)} }
+    @keyframes wave { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
+    @keyframes diceRoll { 0%{transform:rotate(0) scale(1)} 50%{transform:rotate(180deg) scale(1.15)} 100%{transform:rotate(360deg) scale(1)} }
+    @keyframes fadeInUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes borderFlow { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+    @keyframes iconFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+    
+    body {
+        background: var(--bg-dark);
+        color: var(--text-main);
+        padding-bottom: 40px;
+        min-height: 100vh;
+        overflow-x: hidden;
+        position: relative;
+        background-image: 
+            radial-gradient(circle at 20% 0%, rgba(56,189,248,0.12) 0%, transparent 45%),
+            radial-gradient(circle at 80% 30%, rgba(167,139,250,0.10) 0%, transparent 45%),
+            radial-gradient(circle at 50% 100%, rgba(244,114,182,0.08) 0%, transparent 50%),
+            linear-gradient(180deg, #030512 0%, #060a1c 100%);
+    }
+    
+    /* Floating orbs background */
+    .bg-orbs { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+    .bg-orbs::before, .bg-orbs::after {
+        content: ''; position: absolute; border-radius: 50%; filter: blur(80px);
+    }
+    .bg-orbs::before {
+        width: 350px; height: 350px; top: -100px; left: -80px;
+        background: radial-gradient(circle, rgba(56,189,248,0.35), transparent 70%);
+        animation: orbA 18s ease-in-out infinite;
+    }
+    .bg-orbs::after {
+        width: 400px; height: 400px; bottom: -120px; right: -100px;
+        background: radial-gradient(circle, rgba(167,139,250,0.3), transparent 70%);
+        animation: orbB 22s ease-in-out infinite;
+    }
+    .bg-orb-c {
+        position: fixed; width: 280px; height: 280px; top: 40%; left: 50%;
+        background: radial-gradient(circle, rgba(244,114,182,0.22), transparent 70%);
+        filter: blur(80px); border-radius: 50%;
+        animation: orbC 25s ease-in-out infinite; pointer-events: none; z-index: 0;
+    }
+    /* Stars twinkling */
+    .stars { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+    .stars::before {
+        content: ''; position: absolute; inset: 0;
+        background-image: 
+            radial-gradient(1.5px 1.5px at 15% 20%, rgba(56,189,248,0.7), transparent 60%),
+            radial-gradient(1px 1px at 85% 60%, rgba(167,139,250,0.6), transparent 60%),
+            radial-gradient(1.5px 1.5px at 45% 85%, rgba(34,211,238,0.7), transparent 60%),
+            radial-gradient(1px 1px at 70% 15%, rgba(244,114,182,0.55), transparent 60%),
+            radial-gradient(2px 2px at 25% 70%, rgba(56,189,248,0.5), transparent 60%),
+            radial-gradient(1.5px 1.5px at 60% 45%, rgba(251,191,36,0.5), transparent 60%);
+        animation: bgFloat 20s ease-in-out infinite;
+    }
+    .stars::after {
+        content: ''; position: absolute; inset: 0;
+        background-image: 
+            radial-gradient(1px 1px at 10% 50%, rgba(56,189,248,0.5), transparent 60%),
+            radial-gradient(1px 1px at 90% 30%, rgba(167,139,250,0.5), transparent 60%),
+            radial-gradient(1.5px 1.5px at 55% 90%, rgba(244,114,182,0.5), transparent 60%),
+            radial-gradient(1.5px 1.5px at 35% 10%, rgba(56,189,248,0.55), transparent 60%);
+        animation: bgFloat2 25s ease-in-out infinite;
+    }
+    
+    /* HEADER */
+    .header {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 15px 20px;
+        border-bottom: 1px solid var(--border-color);
+        background: linear-gradient(180deg, rgba(6,9,25,0.92), rgba(6,9,25,0.7));
+        backdrop-filter: blur(20px);
+        position: sticky; top: 0; z-index: 100;
+        box-shadow: 0 4px 30px rgba(56,189,248,0.08);
+    }
+    .header-left { display: flex; align-items: center; gap: 11px; }
+    .header-live-dot {
+        width: 11px; height: 11px; border-radius: 50%;
+        background: radial-gradient(circle, #7dd3fc, #38bdf8);
+        animation: dotPulse 1.8s infinite;
+        box-shadow: 0 0 12px var(--blue-main);
+    }
+    .header-title {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 19px; font-weight: 900; letter-spacing: 0.5px;
+        background: linear-gradient(90deg, #7dd3fc, #38bdf8, #a78bfa, #f472b6, #38bdf8, #7dd3fc);
+        background-size: 300% auto;
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        animation: titleShine 5s linear infinite, textGlow 3s infinite;
+    }
+    .btn-reset {
+        position: relative; overflow: hidden;
+        background: rgba(239, 68, 68, 0.12);
+        color: var(--lose-color);
+        border: 1px solid var(--lose-color);
+        padding: 8px 18px; border-radius: 10px;
+        font-weight: 700; font-size: 13px; cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 0 15px rgba(239,68,68,0.15);
+    }
+    .btn-reset:hover {
+        background: var(--lose-color); color: #fff;
+        box-shadow: 0 0 25px rgba(239,68,68,0.65), inset 0 0 15px rgba(255,255,255,0.2);
+        transform: translateY(-2px);
+    }
+    .btn-reset:active::after {
+        content: ''; position: absolute; left: 50%; top: 50%;
+        width: 12px; height: 12px; border-radius: 50%; background: #fff;
+        transform: translate(-50%,-50%) scale(0);
+        animation: ripple 0.6s ease-out;
+    }
+    
+    /* STATS */
+    .stats-bar {
+        max-width: 600px; margin: 18px auto 0; padding: 0 15px;
+        display: flex; gap: 12px; position: relative; z-index: 1;
+    }
+    .stat-item {
+        flex: 1;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        padding: 12px 10px; text-align: center;
+        position: relative; overflow: hidden;
+        backdrop-filter: blur(14px);
+        transition: all 0.35s ease;
+    }
+    .stat-item:hover {
+        border-color: rgba(56,189,248,0.55);
+        transform: translateY(-3px);
+        box-shadow: 0 8px 25px rgba(56,189,248,0.15);
+    }
+    .stat-item::before {
+        content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+        background: linear-gradient(90deg, transparent, var(--blue-main), var(--purple), transparent);
+        background-size: 200% 100%;
+        animation: shimmerBar 3s linear infinite;
+    }
+    .stat-label {
+        font-size: 10px; color: var(--text-muted);
+        text-transform: uppercase; letter-spacing: 1.4px;
+        margin-bottom: 5px; font-weight: 700;
+    }
+    .stat-value {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 21px; font-weight: 900;
+        animation: statPulse 2.5s infinite;
+    }
+    .stat-value.win {
+        background: linear-gradient(135deg, #38bdf8, #22d3ee);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    
+    /* CONTAINER */
+    .container {
+        padding: 18px 15px;
+        display: flex; flex-direction: column; gap: 13px;
+        max-width: 600px; margin: 0 auto;
+        position: relative; z-index: 1;
+    }
+    
+    /* CARD */
+    .card-item {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        padding: 15px 17px;
+        display: flex; justify-content: space-between; align-items: center;
+        transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative; overflow: hidden;
+        animation: slideIn 0.5s ease-out backwards;
+        backdrop-filter: blur(14px);
+    }
+    .card-item::before {
+        content: ''; position: absolute;
+        left: 0; top: 0; bottom: 0; width: 3px;
+        background: linear-gradient(180deg, transparent, var(--blue-main), var(--purple), transparent);
+        opacity: 0; transition: opacity 0.35s;
+    }
+    .card-item:hover {
+        background: var(--bg-card-hover);
+        transform: translateY(-3px);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.4), 0 0 20px rgba(56,189,248,0.1);
+        border-color: rgba(56,189,248,0.4);
+    }
+    .card-item:hover::before { opacity: 1; }
+    
+    .card-item.active {
+        background: linear-gradient(145deg, rgba(13,20,36,0.95), rgba(15,26,46,0.95));
+        animation: slideIn 0.5s ease-out backwards, rainbow-border 3.5s linear infinite;
+        border-width: 1.5px;
+        position: relative;
+    }
+    .card-item.active::after {
+        content: '';
+        position: absolute; top: 12px; right: 14px;
+        width: 9px; height: 9px; border-radius: 50%;
+        background: radial-gradient(circle, #7dd3fc, #38bdf8);
+        box-shadow: 0 0 12px var(--blue-main);
+        animation: dotPulse 1.5s infinite;
+    }
+    .card-item.active .id-text {
+        background: linear-gradient(90deg, #fff, #7dd3fc, #a78bfa, #fff);
+        background-size: 200% auto;
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        animation: titleShine 3s linear infinite;
+    }
+    
+    /* COLUMNS */
+    .col-left { display: flex; flex-direction: column; gap: 6px; flex: 1.2; }
+    .id-text {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 16px; font-weight: 800; color: #fff;
+        letter-spacing: 0.4px;
+        background: linear-gradient(90deg, #fff, #7dd3fc);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
     .bot-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
     .bot-label { color: var(--text-muted); font-weight: 600; }
-    .bet-badge { padding: 3px 10px; border-radius: 20px; font-weight: 700; font-size: 11px; }
-    .bet-tai { background: var(--tai-bet-bg); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); }
-    .bet-xiu { background: var(--xiu-bet-bg); color: #f472b6; border: 1px solid rgba(244,114,182,0.3); }
-    .conf-text { color: var(--text-muted); font-size: 10.5px; font-style: italic; }
-    .signal-tag { font-size: 9.5px; color: var(--gold); font-weight: 700; padding: 2px 6px; border-radius: 8px; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); display: inline-block; margin-left: 5px; }
-    .conf-bar-wrap { height: 3px; background: rgba(56,189,248,0.12); border-radius: 2px; overflow: hidden; margin-top: 3px; }
-    .conf-bar { height: 100%; border-radius: 2px; background: linear-gradient(90deg, #38bdf8, #7dd3fc, #a78bfa, #38bdf8); background-size: 200% 100%; animation: shimmerBar 2s linear infinite; transition: width 0.6s; }
-
-    .col-mid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; flex: 1; }
-    .pred-badge { padding: 5px 14px; border-radius: 20px; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
-    .pred-tai { background: var(--tai-bg); color: #fff; box-shadow: 0 0 12px rgba(2,132,199,0.5); }
-    .pred-xiu { background: var(--xiu-bg); color: #fff; box-shadow: 0 0 12px rgba(219,39,119,0.5); }
-    .pred-empty { background: transparent; border: 1px dashed var(--border-color); color: var(--text-muted); }
-    .dice-text { font-size: 13px; font-weight: 600; color: #cbd5e1; white-space: nowrap; }
-
-    .col-right { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; flex: 0.8; gap: 3px; }
-    .status-text { font-size: 13px; font-weight: 700; }
-    .status-win { color: var(--win-color); animation: statPulse 2s infinite; }
+    .bet-badge {
+        padding: 4px 12px; border-radius: 20px;
+        font-weight: 800; font-size: 11px;
+        letter-spacing: 0.5px; position: relative;
+        overflow: hidden;
+    }
+    .bet-badge::after {
+        content: ''; position: absolute; inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+        animation: wave 2.5s infinite;
+    }
+    .bet-tai {
+        background: rgba(2, 132, 199, 0.22); color: #7dd3fc;
+        border: 1px solid rgba(56,189,248,0.5);
+        box-shadow: 0 0 12px rgba(56,189,248,0.2);
+    }
+    .bet-xiu {
+        background: rgba(219, 39, 119, 0.22); color: #f9a8d4;
+        border: 1px solid rgba(244,114,182,0.5);
+        box-shadow: 0 0 12px rgba(244,114,182,0.2);
+    }
+    .conf-text {
+        color: var(--text-muted); font-size: 10.5px;
+        font-style: italic; font-weight: 500;
+    }
+    .conf-text b {
+        color: var(--cyan); font-weight: 800; font-style: normal;
+        font-size: 12px;
+    }
+    .conf-bar-wrap {
+        height: 4px; background: rgba(56,189,248,0.12);
+        border-radius: 3px; overflow: hidden; margin-top: 4px;
+        position: relative;
+    }
+    .conf-bar {
+        height: 100%; border-radius: 3px;
+        background: linear-gradient(90deg, #38bdf8, #22d3ee, #a78bfa, #f472b6, #38bdf8);
+        background-size: 300% 100%;
+        animation: shimmerBar 2s linear infinite;
+        transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 0 8px var(--blue-glow);
+    }
+    
+    .col-mid {
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 8px; flex: 1;
+    }
+    .pred-badge {
+        padding: 7px 18px; border-radius: 22px;
+        font-family: 'Orbitron', sans-serif;
+        font-weight: 900; font-size: 13px;
+        text-transform: uppercase; letter-spacing: 1.4px;
+        position: relative; overflow: hidden;
+        transition: all 0.3s;
+    }
+    .pred-badge::before {
+        content: ''; position: absolute; inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+        animation: wave 2.8s infinite;
+    }
+    .pred-tai {
+        background: var(--tai-bg); color: #fff;
+        box-shadow: 0 0 18px rgba(2,132,199,0.7), inset 0 0 10px rgba(255,255,255,0.15);
+    }
+    .pred-xiu {
+        background: var(--xiu-bg); color: #fff;
+        box-shadow: 0 0 18px rgba(219,39,119,0.7), inset 0 0 10px rgba(255,255,255,0.15);
+    }
+    .pred-empty {
+        background: transparent;
+        border: 1px dashed var(--border-color);
+        color: var(--text-muted);
+    }
+    .pred-empty::before { display: none; }
+    .dice-text {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 13px; font-weight: 700;
+        color: #cbd5e1; white-space: nowrap;
+        letter-spacing: 0.5px;
+    }
+    .card-item.active .dice-text {
+        color: var(--cyan);
+        animation: breathe 1.8s ease-in-out infinite;
+    }
+    
+    .col-right {
+        display: flex; flex-direction: column;
+        align-items: flex-end; justify-content: center;
+        flex: 0.75; gap: 4px;
+    }
+    .status-text {
+        font-size: 13px; font-weight: 800;
+        display: flex; align-items: center; gap: 5px;
+    }
+    .status-win {
+        color: var(--win-color);
+        text-shadow: 0 0 14px var(--blue-glow);
+        animation: statPulse 2s infinite;
+    }
     .status-lose { color: var(--lose-color); }
     .status-wait { color: var(--blue-main); }
     .spin { display: inline-block; animation: spin 2s linear infinite; }
-    .loading { text-align: center; padding: 50px; color: var(--blue-main); font-weight: 600; letter-spacing: 1px; animation: textGlow 2s infinite; }
-    @media (max-width: 400px) { .header-title { font-size: 16px; } .stat-value { font-size: 16px; } .dice-text { font-size: 11px; } }
+    
+    .loading {
+        text-align: center; padding: 55px;
+        color: var(--blue-main); font-weight: 700;
+        letter-spacing: 1.5px; font-size: 14px;
+        animation: textGlow 2s infinite;
+    }
+    
+    @media (max-width: 400px) {
+        .header-title { font-size: 15px; }
+        .stat-value { font-size: 16px; }
+        .dice-text { font-size: 11px; }
+        .id-text { font-size: 14px; }
+        .pred-badge { padding: 6px 14px; font-size: 11px; }
+    }
 </style>
 </head>
 <body>
+<div class="bg-orbs"></div>
+<div class="bg-orb-c"></div>
+<div class="stars"></div>
+
 <div class="header">
     <div class="header-left">
         <div class="header-live-dot"></div>
-        <div class="header-title">⚡ LC MD5 MINHLE </div>
+        <div class="header-title">⚡ LC MD5 MINHLE</div>
     </div>
     <button class="btn-reset" onclick="confirmReset()">↻ Reset</button>
 </div>
+
 <div class="stats-bar">
-    <div class="stat-item"><div class="stat-label">Tổng phiên</div><div class="stat-value" id="stat-total">0</div></div>
-    <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
-    <div class="stat-item"><div class="stat-label">Tỷ lệ</div><div class="stat-value win" id="stat-rate">0%</div></div>
+    <div class="stat-item">
+        <div class="stat-label">Tổng phiên</div>
+        <div class="stat-value" id="stat-total">0</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-label">Thắng</div>
+        <div class="stat-value win" id="stat-win">0</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-label">Tỷ lệ</div>
+        <div class="stat-value win" id="stat-rate">0%</div>
+    </div>
 </div>
+
 <div class="container" id="list-container">
-    <div class="loading">Đang kết nối Server...</div>
+    <div class="loading">✦ Đang kết nối Server ✦</div>
 </div>
+
 <script>
 let isResetting = false;
 function animateNumber(el, target, suffix = '') {
@@ -127,6 +444,7 @@ function animateNumber(el, target, suffix = '') {
     }
     requestAnimationFrame(update);
 }
+
 async function fetchData() {
     if (isResetting) return;
     try {
@@ -134,11 +452,14 @@ async function fetchData() {
         const data = await r.json();
         renderList(data.rows || [], data.stats || {});
     } catch (e) {
-        document.getElementById('list-container').innerHTML = '<div class="loading" style="color:var(--lose-color)">Lỗi kết nối!</div>';
+        document.getElementById('list-container').innerHTML = 
+            '<div class="loading" style="color:var(--lose-color)">⚠ Lỗi kết nối Server</div>';
     }
 }
+
 function renderList(rows, stats) {
     const container = document.getElementById('list-container');
+    
     if (stats.total > 0) {
         animateNumber(document.getElementById('stat-total'), stats.total);
         animateNumber(document.getElementById('stat-win'), stats.correct);
@@ -148,88 +469,130 @@ function renderList(rows, stats) {
         document.getElementById('stat-win').innerText = '0';
         document.getElementById('stat-rate').innerText = '0%';
     }
+    
     if (!rows.length) {
-        container.innerHTML = '<div class="loading">Không có dữ liệu.</div>';
+        container.innerHTML = '<div class="loading">Không có dữ liệu. Đợi phiên mới...</div>';
         return;
     }
+    
     container.innerHTML = '';
     rows.forEach((row, idx) => {
         const div = document.createElement('div');
         div.className = 'card-item' + (row.is_next ? ' active' : '');
-        div.style.animationDelay = (idx * 40) + 'ms';
+        div.style.animationDelay = (idx * 45) + 'ms';
+        
         let predBadge = `<span class="pred-badge pred-empty">-</span>`;
-        let betBadge = `<span class="bet-badge" style="background:#1e293b;color:#94a3b8;">cược -</span>`;
+        let betBadge = `<span class="bet-badge" style="background:rgba(100,116,139,0.15);color:#94a3b8;border:1px solid rgba(100,116,139,0.3)">CƯỢC -</span>`;
+        
         if (row.prediction === "Tài") {
             predBadge = `<span class="pred-badge pred-tai">TÀI</span>`;
-            betBadge = `<span class="bet-badge bet-tai">cược tài</span>`;
-        }
-        if (row.prediction === "Xỉu") {
+            betBadge = `<span class="bet-badge bet-tai">CƯỢC TÀI</span>`;
+        } else if (row.prediction === "Xỉu") {
             predBadge = `<span class="pred-badge pred-xiu">XỈU</span>`;
-            betBadge = `<span class="bet-badge bet-xiu">cược xỉu</span>`;
+            betBadge = `<span class="bet-badge bet-xiu">CƯỢC XỈU</span>`;
         }
+        
         let resultBadge = `<span class="pred-badge pred-empty">-</span>`;
         if (row.result === "Tài") resultBadge = `<span class="pred-badge pred-tai">TÀI</span>`;
         if (row.result === "Xỉu") resultBadge = `<span class="pred-badge pred-xiu">XỈU</span>`;
+        
         let diceDisplay = "? + ? + ?";
         if (row.dice !== "? + ? + ?") {
             const p = row.dice.split(" + ");
             diceDisplay = `${row.dice} (${parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2])})`;
         }
+        
         let statusHtml = '';
-        if (row.is_next) statusHtml = `<div class="status-text status-wait">Chờ <span class="spin"></span></div>`;
-        else if (row.is_correct === true) statusHtml = `<div class="status-text status-win">Đúng </div>`;
-        else if (row.is_correct === false) statusHtml = `<div class="status-text status-lose">Sai</div>`;
-        else statusHtml = `<div class="status-text" style="color:var(--text-muted)">-</div>`;
-        const signalTag = row.signal_count ? `<span class="signal-tag" title="${(row.top_signals||[]).join(' | ')}">${row.signal_count} tín hiệu</span>` : '';
+        if (row.is_next) {
+            statusHtml = `<div class="status-text status-wait">Chờ <span class="spin"></span></div>`;
+        } else if (row.is_correct === true) {
+            statusHtml = `<div class="status-text status-win">Đúng Cửa ✅</div>`;
+        } else if (row.is_correct === false) {
+            statusHtml = `<div class="status-text status-lose">Sai Cửa❌</div>`;
+        } else {
+            statusHtml = `<div class="status-text" style="color:var(--text-muted)">-</div>`;
+        }
+        
         div.innerHTML = `
             <div class="col-left">
                 <div class="id-text">#${row.phien}</div>
                 <div class="bot-line"><span class="bot-label">Bot:</span> ${betBadge}</div>
-                <div class="conf-text">Độ tin cậy: ${row.confidence}%${signalTag}</div>
-                <div class="conf-bar-wrap"><div class="conf-bar" style="width:${row.confidence}%"></div></div>
-                ${row.pattern ? `<div style="font-size:9.5px;color:var(--text-muted);padding:2px 8px;border-radius:10px;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.15);margin-top:3px;display:inline-block">${row.pattern}</div>` : ''}
+                <div class="conf-text">Độ tin cậy: <b>${row.confidence}%</b></div>
+                <div class="conf-bar-wrap">
+                    <div class="conf-bar" style="width:${row.confidence}%"></div>
+                </div>
             </div>
-            <div class="col-mid">${row.is_next ? predBadge : resultBadge}<div class="dice-text">${diceDisplay}</div></div>
+            <div class="col-mid">
+                ${row.is_next ? predBadge : resultBadge}
+                <div class="dice-text">${diceDisplay}</div>
+            </div>
             <div class="col-right">${statusHtml}</div>
         `;
         container.appendChild(div);
     });
 }
+
 async function confirmReset() {
     Swal.fire({
-        title: 'Xác nhận Reset?', text: "Lịch sử hiển thị sẽ bị ẩn. Hệ thống vẫn tính ngầm!",
-        icon: 'warning', showCancelButton: true, confirmButtonColor: '#38bdf8', cancelButtonColor: '#1e293b',
-        confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
+        title: 'Xác nhận Reset?',
+        text: "Lịch sử hiển thị sẽ bị ẩn. Hệ thống vẫn tính ngầm!",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#38bdf8',
+        cancelButtonColor: '#1e293b',
+        confirmButtonText: 'Đồng ý',
+        cancelButtonText: 'Hủy',
+        background: '#0d1424',
+        color: '#f1f5f9'
     }).then(async (result) => {
         if (result.isConfirmed) {
             isResetting = true;
-            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+            Swal.fire({ 
+                title: 'Đang Reset...', 
+                allowOutsideClick: false, 
+                didOpen: () => Swal.showLoading(),
+                background: '#0d1424', color: '#f1f5f9'
+            });
             try {
                 const res = await fetch('/api/reset', { method: 'POST' });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    Swal.fire({ title: 'Thành công!', text: 'Đã chốt mốc #' + data.reset_to, icon: 'success', confirmButtonColor: '#38bdf8' });
+                    Swal.fire({ 
+                        title: 'Thành công!', 
+                        text: 'Đã chốt mốc #' + data.reset_to, 
+                        icon: 'success', 
+                        confirmButtonColor: '#38bdf8',
+                        background: '#0d1424', color: '#f1f5f9'
+                    });
                     isResetting = false; fetchData();
                 } else throw new Error(data.message);
             } catch (error) {
-                Swal.fire('Lỗi!', error.message, 'error'); isResetting = false;
+                Swal.fire({
+                    title: 'Lỗi!', text: error.message, icon: 'error',
+                    background: '#0d1424', color: '#f1f5f9'
+                });
+                isResetting = false;
             }
         }
     });
 }
-fetchData(); setInterval(fetchData, 5000);
+
+fetchData();
+setInterval(fetchData, 5000);
 </script>
 </body>
 </html>
 """
 
 # =====================================================================
-# THUẬT TOÁN V6.0 - 46 MẪU CẦU THÔNG MINH
+# THUẬT TOÁN V6.1 - 46 MẪU CẦU (ẨN KHỎI UI, VẪN TRẢ VỀ API)
 # =====================================================================
 def analyze_pattern(results, dice_sums=None):
     """
     Trả về: (prediction, confidence, pattern_name, top_signals, signal_count)
-    Sử dụng 46 mẫu cầu + hệ thống voting đa tầng.
+    - Đầy đủ 46 mẫu: đảo / bệt / chu kỳ / ngram / markov / dice / momentum /
+      fibonacci / symmetry / pattern / extreme / chuyển cầu
+    - Voting đa tầng với agreement boost
     """
     if not results or len(results) < 3:
         return "Tài", 50.0, "Khởi tạo", [], 0
@@ -242,22 +605,18 @@ def analyze_pattern(results, dice_sums=None):
     def add(pred, conf, name, priority):
         candidates.append((pred, round(conf, 1), name, priority))
     
-    # ---- Precompute BLOCKS ----
+    # ---- BLOCKS ----
     blocks = []
-    curr_val = results[0]
-    curr_count = 1
+    curr_val, curr_count = results[0], 1
     for r in results[1:]:
         if r == curr_val:
             curr_count += 1
         else:
             blocks.append({'val': curr_val, 'len': curr_count})
-            curr_val = r
-            curr_count = 1
+            curr_val, curr_count = r, 1
     blocks.append({'val': curr_val, 'len': curr_count})
     
-    # =========================================================
-    # 1-8: CẦU BỆT
-    # =========================================================
+    # ============ 1-8: CẦU BỆT ============
     streak = blocks[0]['len']
     if streak == 2: add(last, 52.0, "Bám bệt 2", 52)
     elif streak == 3: add(last, 56.0, "Bám bệt 3", 56)
@@ -268,9 +627,7 @@ def analyze_pattern(results, dice_sums=None):
     elif streak == 8: add(opposite, 85.0, "Bẻ bệt 8", 85)
     elif streak >= 9: add(opposite, min(95.0, 88.0 + streak - 9), f"Bẻ bệt siêu mạnh {streak}", 90)
     
-    # =========================================================
-    # 9-12: ĐẢO 1-1
-    # =========================================================
+    # ============ 9-12: ĐẢO 1-1 ============
     alt_len = 0
     for i in range(n - 1):
         if results[i] != results[i + 1]: alt_len += 1
@@ -281,9 +638,7 @@ def analyze_pattern(results, dice_sums=None):
     elif 7 <= alt_len <= 8: add(opposite, 82.0, f"Đảo 1-1 dài ({alt_len})", 82)
     elif alt_len >= 9: add(opposite, 90.0, f"Đảo 1-1 siêu dài ({alt_len})", 90)
     
-    # =========================================================
-    # 13-18: CẦU CHU KỲ 2-2 / 3-3 / 4-4
-    # =========================================================
+    # ============ 13-18: CHU KỲ 2-2 / 3-3 / 4-4 ============
     if len(blocks) >= 3:
         is_alt = True
         for i in range(1, min(len(blocks), 6)):
@@ -291,49 +646,30 @@ def analyze_pattern(results, dice_sums=None):
                 is_alt = False; break
         
         if is_alt:
-            # Cầu 2-2
-            if len(blocks) >= 3 and blocks[1]['len'] == 2 and blocks[2]['len'] == 2:
+            if blocks[1]['len'] == 2 and blocks[2]['len'] == 2:
                 curr = blocks[0]['len']
                 if curr < 2: add(blocks[0]['val'], 88.0, "Bám cầu 2-2 (dở)", 88)
                 elif curr == 2: add(opposite, 92.0, "Bẻ cầu 2-2", 92)
-            # Cầu 3-3
-            if len(blocks) >= 3 and blocks[1]['len'] == 3 and blocks[2]['len'] == 3:
+            if blocks[1]['len'] == 3 and blocks[2]['len'] == 3:
                 curr = blocks[0]['len']
                 if curr < 3: add(blocks[0]['val'], 90.0, "Bám cầu 3-3 (dở)", 90)
                 elif curr == 3: add(opposite, 94.0, "Bẻ cầu 3-3", 94)
-            # Cầu 4-4
-            if len(blocks) >= 3 and blocks[1]['len'] == 4 and blocks[2]['len'] == 4:
+            if blocks[1]['len'] == 4 and blocks[2]['len'] == 4:
                 curr = blocks[0]['len']
                 if curr < 4: add(blocks[0]['val'], 92.0, "Bám cầu 4-4 (dở)", 92)
                 elif curr == 4: add(opposite, 95.0, "Bẻ cầu 4-4", 95)
     
-    # =========================================================
-    # 19-24: CẦU PHỨC TẠP
-    # =========================================================
+    # ============ 19-24: CẦU PHỨC TẠP ============
     if len(blocks) >= 4:
         lens = [b['len'] for b in blocks[:5]]
-        # 1-2-1
-        if lens[0] == 1 and lens[1] == 2 and lens[2] == 1:
-            add(opposite, 82.0, "Cầu 1-2-1", 82)
-        # 2-1-2
-        if lens[0] == 2 and lens[1] == 1 and lens[2] == 2:
-            add(opposite, 82.0, "Cầu 2-1-2", 82)
-        # 1-1-2
-        if lens[0] == 2 and lens[1] == 1 and lens[2] == 1:
-            add(blocks[0]['val'], 74.0, "Cầu 1-1-2", 74)
-        # 2-2-1
-        if lens[0] == 1 and lens[1] == 2 and lens[2] == 2:
-            add(blocks[0]['val'], 74.0, "Cầu 2-2-1", 74)
-        # 3-1-3
-        if lens[0] == 3 and lens[1] == 1 and lens[2] == 3:
-            add(blocks[0]['val'], 78.0, "Cầu 3-1-3", 78)
-        # 1-2-3
-        if lens[0] == 3 and lens[1] == 2 and lens[2] == 1:
-            add(blocks[0]['val'], 76.0, "Cầu 1-2-3", 76)
+        if lens[0] == 1 and lens[1] == 2 and lens[2] == 1: add(opposite, 82.0, "Cầu 1-2-1", 82)
+        if lens[0] == 2 and lens[1] == 1 and lens[2] == 2: add(opposite, 82.0, "Cầu 2-1-2", 82)
+        if lens[0] == 2 and lens[1] == 1 and lens[2] == 1: add(blocks[0]['val'], 74.0, "Cầu 1-1-2", 74)
+        if lens[0] == 1 and lens[1] == 2 and lens[2] == 2: add(blocks[0]['val'], 74.0, "Cầu 2-2-1", 74)
+        if lens[0] == 3 and lens[1] == 1 and lens[2] == 3: add(blocks[0]['val'], 78.0, "Cầu 3-1-3", 78)
+        if lens[0] == 3 and lens[1] == 2 and lens[2] == 1: add(blocks[0]['val'], 76.0, "Cầu 1-2-3", 76)
     
-    # =========================================================
-    # 25-29: N-GRAM (3,4,5,6,7)
-    # =========================================================
+    # ============ 25-29: N-GRAM ============
     for ns in [3, 4, 5, 6, 7]:
         if n < ns + 1: continue
         current_seq = tuple(results[:ns])
@@ -350,9 +686,7 @@ def analyze_pattern(results, dice_sums=None):
                 conf = 60 + ratio * 22
                 add(winner, conf, f"N-gram {ns} ({max(match_tai, match_xiu)}/{total})", 60 + (8 - ns))
     
-    # =========================================================
-    # 30: MARKOV CHUYỂN TIẾP
-    # =========================================================
+    # ============ 30: MARKOV ============
     if n >= 6:
         trans = {"Tài": 0, "Xỉu": 0}
         for i in range(len(results) - 1):
@@ -363,129 +697,91 @@ def analyze_pattern(results, dice_sums=None):
             ratio = max(trans["Tài"], trans["Xỉu"]) / total
             add(winner, 62 + ratio * 15, "Markov chuyển tiếp", 65)
     
-    # =========================================================
-    # 31-34: DICE BIAS
-    # =========================================================
+    # ============ 31-34: DICE BIAS ============
     if dice_sums and len(dice_sums) >= 5:
         recent = dice_sums[:8]
         avg = sum(recent) / len(recent)
-        if avg >= 12.5: add("Tài", 68.0, f"Xúc xắc lệch Tài mạnh (avg {avg:.1f})", 66)
-        elif avg <= 8.5: add("Xỉu", 68.0, f"Xúc xắc lệch Xỉu mạnh (avg {avg:.1f})", 66)
-        elif avg >= 11.5: add("Tài", 58.0, f"Xúc xắc nghiêng Tài (avg {avg:.1f})", 55)
-        elif avg <= 9.5: add("Xỉu", 58.0, f"Xúc xắc nghiêng Xỉu (avg {avg:.1f})", 55)
+        if avg >= 12.5: add("Tài", 68.0, f"Xúc xắc lệch Tài mạnh ({avg:.1f})", 66)
+        elif avg <= 8.5: add("Xỉu", 68.0, f"Xúc xắc lệch Xỉu mạnh ({avg:.1f})", 66)
+        elif avg >= 11.5: add("Tài", 58.0, f"Xúc xắc nghiêng Tài ({avg:.1f})", 55)
+        elif avg <= 9.5: add("Xỉu", 58.0, f"Xúc xắc nghiêng Xỉu ({avg:.1f})", 55)
     
-    # =========================================================
-    # 35-36: MOMENTUM
-    # =========================================================
+    # ============ 35-37: MOMENTUM ============
     if n >= 10:
-        recent_10 = results[:10]
-        tai_count = recent_10.count("Tài")
-        xiu_count = recent_10.count("Xỉu")
+        tai_count = results[:10].count("Tài")
+        xiu_count = 10 - tai_count
         if tai_count >= 8: add("Tài", 68.0, f"Momentum Tài ({tai_count}/10)", 66)
         elif xiu_count >= 8: add("Xỉu", 68.0, f"Momentum Xỉu ({xiu_count}/10)", 66)
         elif tai_count >= 7: add("Tài", 60.0, f"Xu hướng Tài ({tai_count}/10)", 58)
         elif xiu_count >= 7: add("Xỉu", 60.0, f"Xu hướng Xỉu ({xiu_count}/10)", 58)
     
-    # =========================================================
-    # 37: ANTI-MOMENTUM (CONTRARIAN)
-    # =========================================================
     if n >= 12:
-        recent_12 = results[:12]
-        tai_count = recent_12.count("Tài")
-        xiu_count = recent_12.count("Xỉu")
-        if tai_count >= 10: add("Xỉu", 70.0, f"Đảo xu hướng Tài ({tai_count}/12)", 68)
-        elif xiu_count >= 10: add("Tài", 70.0, f"Đảo xu hướng Xỉu ({xiu_count}/12)", 68)
+        tai_c = results[:12].count("Tài")
+        xiu_c = 12 - tai_c
+        if tai_c >= 10: add("Xỉu", 70.0, f"Đảo xu hướng Tài ({tai_c}/12)", 68)
+        elif xiu_c >= 10: add("Tài", 70.0, f"Đảo xu hướng Xỉu ({xiu_c}/12)", 68)
     
-    # =========================================================
-    # 38-40: FIBONACCI
-    # =========================================================
+    # ============ 38-40: FIBONACCI ============
     if len(blocks) >= 3:
-        fib_pat = [b['len'] for b in blocks[:4]]
-        if fib_pat[:3] == [1, 1, 2]:
-            add(blocks[0]['val'], 72.0, "Fibonacci 1-1-2", 70)
-        elif fib_pat[:3] == [1, 2, 3]:
-            add(blocks[0]['val'], 72.0, "Fibonacci 1-2-3", 70)
-        elif len(fib_pat) >= 4 and fib_pat[:4] == [1, 1, 2, 3]:
-            add(blocks[0]['val'], 76.0, "Fibonacci 1-1-2-3", 74)
+        fib = [b['len'] for b in blocks[:4]]
+        if fib[:3] == [1, 1, 2]: add(blocks[0]['val'], 72.0, "Fibonacci 1-1-2", 70)
+        elif fib[:3] == [1, 2, 3]: add(blocks[0]['val'], 72.0, "Fibonacci 1-2-3", 70)
+        elif len(fib) >= 4 and fib[:4] == [1, 1, 2, 3]: add(blocks[0]['val'], 76.0, "Fibonacci 1-1-2-3", 74)
     
-    # =========================================================
-    # 41-42: ĐỐI XỨNG (SYMMETRY)
-    # =========================================================
+    # ============ 41-42: ĐỐI XỨNG ============
     if n >= 8:
-        left = results[:4]
-        right = results[4:8]
-        if left == right:
-            add(results[0], 70.0, "Đối xứng 4-4", 68)
-        elif left == right[::-1]:
-            add(opposite, 68.0, "Đối xứng gương", 66)
+        left, right = results[:4], results[4:8]
+        if left == right: add(results[0], 70.0, "Đối xứng 4-4", 68)
+        elif left == right[::-1]: add(opposite, 68.0, "Đối xứng gương", 66)
     
-    # =========================================================
-    # 43: PATTERN 2 PHIÊN
-    # =========================================================
+    # ============ 43: PATTERN 2 PHIÊN ============
     if n >= 4:
         last2 = tuple(results[:2])
-        match_tai, match_xiu = 0, 0
+        m_t, m_x = 0, 0
         for i in range(2, len(results) - 1):
             if tuple(results[i:i+2]) == last2:
-                if results[i-1] == "Tài": match_tai += 1
-                else: match_xiu += 1
-        total = match_tai + match_xiu
-        if total >= 2 and match_tai != match_xiu:
-            winner = "Tài" if match_tai > match_xiu else "Xỉu"
-            add(winner, 65.0, f"Pattern 2 phiên ({max(match_tai, match_xiu)}/{total})", 62)
+                if results[i-1] == "Tài": m_t += 1
+                else: m_x += 1
+        total = m_t + m_x
+        if total >= 2 and m_t != m_x:
+            winner = "Tài" if m_t > m_x else "Xỉu"
+            add(winner, 65.0, f"Pattern 2 phiên ({max(m_t, m_x)}/{total})", 62)
     
-    # =========================================================
-    # 44: DICE EXTREME
-    # =========================================================
+    # ============ 44: DICE EXTREME ============
     if dice_sums and len(dice_sums) >= 6:
         last3 = dice_sums[:3]
-        if all(s >= 14 for s in last3):
-            add("Xỉu", 62.0, "3 phiên Tài cao đột biến", 60)
-        elif all(s <= 7 for s in last3):
-            add("Tài", 62.0, "3 phiên Xỉu thấp đột biến", 60)
+        if all(s >= 14 for s in last3): add("Xỉu", 62.0, "3 phiên Tài cao đột biến", 60)
+        elif all(s <= 7 for s in last3): add("Tài", 62.0, "3 phiên Xỉu thấp đột biến", 60)
     
-    # =========================================================
-    # 45: CHU KỲ 4 LẶP
-    # =========================================================
+    # ============ 45: CHU KỲ 4 LẶP ============
     if n >= 8:
-        first4 = results[4:8]
-        last4 = results[:4]
-        if first4 == last4:
-            add(opposite, 66.0, "Chu kỳ 4 phiên lặp", 64)
+        if results[4:8] == results[:4]: add(opposite, 66.0, "Chu kỳ 4 phiên lặp", 64)
     
-    # =========================================================
-    # 46: CHUYỂN CẦU MỚI (bệt dài vừa kết thúc)
-    # =========================================================
+    # ============ 46: CHUYỂN CẦU MỚI ============
     if len(blocks) == 2 and blocks[1]['len'] >= 4 and blocks[0]['len'] <= 2:
         add(blocks[0]['val'], 74.0, f"Chuyển cầu mới (bệt {blocks[1]['len']} vừa gãy)", 72)
     
-    # =========================================================
-    # VOTING SYSTEM (đa tầng)
-    # =========================================================
+    # ============ VOTING ============
     if not candidates:
         return opposite, 55.0, "Đảo nhịp (mặc định)", [], 0
     
-    tai_weight = sum(c[1] for c in candidates if c[0] == "Tài")
-    xiu_weight = sum(c[1] for c in candidates if c[0] == "Xỉu")
-    total_weight = tai_weight + xiu_weight
+    tai_w = sum(c[1] for c in candidates if c[0] == "Tài")
+    xiu_w = sum(c[1] for c in candidates if c[0] == "Xỉu")
+    total_w = tai_w + xiu_w
+    final_pred = "Tài" if tai_w >= xiu_w else "Xỉu"
+    win_w = max(tai_w, xiu_w)
+    agreement = win_w / total_w if total_w > 0 else 0.5
     
-    final_pred = "Tài" if tai_weight >= xiu_weight else "Xỉu"
-    winning_weight = max(tai_weight, xiu_weight)
-    agreement = winning_weight / total_weight if total_weight > 0 else 0.5
-    
-    # Base confidence lấy từ tín hiệu mạnh nhất đồng thuận với kết quả cuối
     matching = [c for c in candidates if c[0] == final_pred]
     best_matching = max(matching, key=lambda x: (x[3], x[1]))
     base_conf = best_matching[1]
     
-    # Điều chỉnh theo độ đồng thuận
     if agreement >= 0.75: final_conf = min(98.0, base_conf * 1.10)
     elif agreement >= 0.65: final_conf = min(96.0, base_conf * 1.05)
-    elif agreement >= 0.55: final_conf = base_conf * 1.00
+    elif agreement >= 0.55: final_conf = base_conf
     elif agreement >= 0.45: final_conf = base_conf * 0.92
     else: final_conf = base_conf * 0.85
     
-    # Top 5 signals theo priority
     top_signals = sorted(candidates, key=lambda x: (x[3], x[1]), reverse=True)[:5]
     signal_names = [f"{s[2]}→{s[0]}({s[1]}%)" for s in top_signals]
     
@@ -493,7 +789,7 @@ def analyze_pattern(results, dice_sums=None):
 
 
 # =====================================================================
-# FETCH DỮ LIỆU
+# FETCH
 # =====================================================================
 def generate_fallback(base=7116040):
     elapsed = int(time.time() / 60)
@@ -506,6 +802,7 @@ def generate_fallback(base=7116040):
         d = [random.randint(1, 6) for _ in range(3)]
         rows.append({"phien": sid, "result": r, "dice": f"{d[0]} + {d[1]} + {d[2]}", "total": sum(d)})
     return rows
+
 
 def fetch_sessions():
     try:
@@ -528,7 +825,7 @@ def fetch_sessions():
 
 
 # =====================================================================
-# FLASK ROUTES
+# ROUTES
 # =====================================================================
 @app.route('/')
 def index():
@@ -545,41 +842,44 @@ def history():
         correct_count = 0
         total_past = 0
         
-        latest_session = valid[-1]
-        next_phien = latest_session['phien'] + 1
-        history_for_next = [v['result'] for v in valid][::-1]
-        dice_for_next = [v.get('total', 0) for v in valid][::-1]
+        latest = valid[-1]
+        next_phien = latest['phien'] + 1
+        h_next = [v['result'] for v in valid][::-1]
+        d_next = [v.get('total', 0) for v in valid][::-1]
         
-        next_pred, next_conf, next_pattern, top_sig, sig_count = analyze_pattern(history_for_next, dice_for_next)
+        next_pred, next_conf, next_pat, _, _ = analyze_pattern(h_next, d_next)
         
         out.append({
-            'phien': next_phien, 'is_next': True, 'prediction': next_pred, 'confidence': next_conf,
-            'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'pattern': next_pattern,
-            'signal_count': sig_count, 'top_signals': top_sig
+            'phien': next_phien, 'is_next': True,
+            'prediction': next_pred, 'confidence': next_conf,
+            'result': 'Chờ...', 'dice': "? + ? + ?",
+            'is_correct': None
         })
         
         for i in range(len(valid) - 1, -1, -1):
-            current_session = valid[i]
-            if current_session['phien'] <= RESET_SESSION_ID: break
+            cs = valid[i]
+            if cs['phien'] <= RESET_SESSION_ID: break
             if len(out) > 20: break
             
-            history_list = [v['result'] for v in valid[:i]][::-1]
-            dice_list = [v.get('total', 0) for v in valid[:i]][::-1]
+            h_list = [v['result'] for v in valid[:i]][::-1]
+            d_list = [v.get('total', 0) for v in valid[:i]][::-1]
             
-            if history_list:
-                pred, conf, pattern, _, _ = analyze_pattern(history_list, dice_list)
-                is_correct = (pred == current_session['result'])
+            if h_list:
+                pred, conf, _, _, _ = analyze_pattern(h_list, d_list)
+                is_correct = (pred == cs['result'])
                 total_past += 1
                 if is_correct: correct_count += 1
             else:
-                pred, conf, pattern = "Tài", 50.0, "Khởi tạo"
+                pred, conf = "Tài", 50.0
                 is_correct = None
-                
-            out.append({
-                'phien': current_session['phien'], 'is_next': False, 'prediction': pred, 'confidence': conf,
-                'result': current_session['result'], 'dice': current_session['dice'], 'is_correct': is_correct, 'pattern': pattern
-            })
             
+            out.append({
+                'phien': cs['phien'], 'is_next': False,
+                'prediction': pred, 'confidence': conf,
+                'result': cs['result'], 'dice': cs['dice'],
+                'is_correct': is_correct
+            })
+        
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -591,18 +891,22 @@ def predict_only():
     try:
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
-        if not valid: return jsonify({'status': 'error', 'message': 'Không có dữ liệu'}), 404
+        if not valid:
+            return jsonify({'status': 'error', 'message': 'Không có dữ liệu'}), 404
         
-        latest_session = valid[-1]
-        next_phien = latest_session['phien'] + 1
-        history_for_next = [v['result'] for v in valid][::-1]
-        dice_for_next = [v.get('total', 0) for v in valid][::-1]
-        next_pred, next_conf, next_pattern, top_sig, sig_count = analyze_pattern(history_for_next, dice_for_next)
+        next_phien = valid[-1]['phien'] + 1
+        h_next = [v['result'] for v in valid][::-1]
+        d_next = [v.get('total', 0) for v in valid][::-1]
+        pred, conf, pat, top_sig, sig_count = analyze_pattern(h_next, d_next)
         
         return jsonify({
-            'status': 'success', 'next_session': next_phien, 'prediction': next_pred,
-            'confidence': next_conf, 'pattern': next_pattern,
-            'signal_count': sig_count, 'top_signals': top_sig,
+            'status': 'success',
+            'next_session': next_phien,
+            'prediction': pred,
+            'confidence': conf,
+            'pattern': pat,
+            'signal_count': sig_count,
+            'top_signals': top_sig,
             'updated_at': datetime.now().strftime('%H:%M:%S')
         })
     except Exception as e:
@@ -615,31 +919,29 @@ def signals_api():
     try:
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
-        if not valid: return jsonify({'status': 'error', 'message': 'Không có dữ liệu'}), 404
+        if not valid:
+            return jsonify({'status': 'error', 'message': 'Không có dữ liệu'}), 404
         
         next_phien = valid[-1]['phien'] + 1
-        history_for_next = [v['result'] for v in valid][::-1]
-        dice_for_next = [v.get('total', 0) for v in valid][::-1]
+        h_next = [v['result'] for v in valid][::-1]
+        d_next = [v.get('total', 0) for v in valid][::-1]
         
-        # Lấy toàn bộ candidate signals (không chỉ top 5)
-        if not history_for_next or len(history_for_next) < 3:
+        if not h_next or len(h_next) < 3:
             return jsonify({'status': 'error', 'message': 'Chưa đủ dữ liệu'}), 400
         
-        # Tái tạo signals bằng cách gọi analyze rồi build list đầy đủ
-        # (analyze_pattern hiện chỉ trả top 5, nên ta sẽ expose toàn bộ qua một lần gọi riêng)
-        next_pred, next_conf, next_pattern, top_sig, sig_count = analyze_pattern(history_for_next, dice_for_next)
+        pred, conf, pat, top_sig, sig_count = analyze_pattern(h_next, d_next)
         
         return jsonify({
             'status': 'success',
             'next_session': next_phien,
-            'prediction': next_pred,
-            'confidence': next_conf,
-            'pattern_chosen': next_pattern,
+            'prediction': pred,
+            'confidence': conf,
+            'pattern_chosen': pat,
             'total_signals': sig_count,
             'all_signals': top_sig,
-            'recent_results': history_for_next[:15],
-            'recent_dice': dice_for_next[:15],
-            'algorithm_version': 'V6.0',
+            'recent_results': h_next[:15],
+            'recent_dice': d_next[:15],
+            'algorithm_version': 'V6.1',
             'total_patterns': 46,
             'updated_at': datetime.now().strftime('%H:%M:%S')
         })
