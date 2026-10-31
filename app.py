@@ -13,7 +13,7 @@ CORS(app)
 API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 API_URL_TX = "https://wtx.tele68.com/v1/tx/lite-sessions?cp=R&cl=R&pf=web&at=6c4df7b574bc9f42dda8d0a266682894"
 
-# Bộ nhớ đệm lưu trữ lịch sử vĩnh viễn và mốc Reset độc lập cho 2 bảng
+# Bộ nhớ đệm lưu trữ lịch sử và mốc Reset
 HISTORY_CACHE = {'md5': {}, 'tx': {}}
 RESET_IDS = {'md5': 0, 'tx': 0}
 
@@ -56,6 +56,7 @@ HTML_TEMPLATE = """
         padding-bottom: 40px;
     }
 
+    /* HEADER */
     .header {
         background: var(--bg-card);
         padding: 15px 20px;
@@ -83,6 +84,23 @@ HTML_TEMPLATE = """
         border-radius: 10px;
         font-weight: 600;
     }
+    .header-actions { display: flex; gap: 10px; align-items: center; }
+    
+    .time-update { font-size: 11px; color: var(--text-muted); font-weight: 600; }
+    
+    .btn-refresh {
+        background: var(--bg-page);
+        color: var(--text-main);
+        border: 1px solid var(--border-color);
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 13px;
+        cursor: pointer;
+        transition: 0.2s;
+    }
+    .btn-refresh:hover { background: var(--border-color); }
+    
     .btn-reset {
         background: var(--lose-bg);
         color: var(--lose-color);
@@ -96,6 +114,7 @@ HTML_TEMPLATE = """
     }
     .btn-reset:hover { background: var(--lose-color); color: #fff; }
 
+    /* TABS */
     .tabs-container {
         max-width: 800px;
         margin: 20px auto 0;
@@ -122,6 +141,7 @@ HTML_TEMPLATE = """
         box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
     }
 
+    /* STATS */
     .stats-bar {
         max-width: 800px;
         margin: 15px auto;
@@ -141,7 +161,7 @@ HTML_TEMPLATE = """
     .stat-value { font-size: 22px; font-weight: 800; color: var(--text-main); }
     .stat-value.win { color: var(--tai-color); }
 
-    /* Bọc bảng để giới hạn chiều cao, không bị kéo dài vô tận */
+    /* TABLE */
     .table-wrapper {
         max-width: 800px;
         margin: 0 auto;
@@ -151,7 +171,7 @@ HTML_TEMPLATE = """
         background: var(--bg-card);
         border-radius: 12px;
         box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-        max-height: 65vh; /* Thanh cuộn nội bộ */
+        max-height: 65vh;
         overflow-y: auto;
     }
     
@@ -210,6 +230,8 @@ HTML_TEMPLATE = """
         .data-table th, .data-table td { padding: 10px 5px; font-size: 12px; }
         .badge { padding: 4px 8px; font-size: 11px; }
         .dice-text { font-size: 10px; }
+        .header-title { font-size: 16px; }
+        .time-update { display: none; }
     }
 </style>
 </head>
@@ -217,9 +239,13 @@ HTML_TEMPLATE = """
 
 <div class="header">
     <div class="header-title">
-        TÀI XỈU PREMIUM <span></span>
+        TÀI XỈU PREMIUM <span>❄️</span>
     </div>
-    <button class="btn-reset" onclick="confirmReset()">↻ Reset</button>
+    <div class="header-actions">
+        <div class="time-update" id="time-update">--:--:--</div>
+        <button class="btn-refresh" onclick="fetchData()">↻</button>
+        <button class="btn-reset" onclick="confirmReset()">Reset</button>
+    </div>
 </div>
 
 <div class="tabs-container">
@@ -295,17 +321,20 @@ async function fetchData() {
     try {
         const r = await fetch(`/api/history?type=${currentType}`, { cache: 'no-store' });
         const data = await r.json();
+        
+        // Cập nhật thời gian
+        const now = new Date();
+        document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
+        
         renderTable(data.rows || [], data.stats || {});
     } catch (e) {
         console.error("Lỗi tải dữ liệu:", e);
-        document.getElementById('table-body').innerHTML = '<tr><td colspan="4" class="loading" style="color:var(--lose-color)">Lỗi kết nối Server!</td></tr>';
     }
 }
 
 function renderTable(rows, stats) {
     const tbody = document.getElementById('table-body');
 
-    // Update Stats
     if (stats.total > 0) {
         animateNumber(document.getElementById('stat-total'), stats.total);
         animateNumber(document.getElementById('stat-win'), stats.correct);
@@ -344,7 +373,7 @@ function renderTable(rows, stats) {
 
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = `<span class="status st-wait"> Đang chờ</span>`;
+            statusHtml = `<span class="status st-wait"> Chờ  </span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -434,7 +463,7 @@ def fetch_sessions(api_type='md5'):
     url = API_URL_MD5 if api_type == 'md5' else API_URL_TX
     try:
         headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
-        r = requests.get(url, timeout=8, headers=headers)
+        r = requests.get(url, timeout=5, headers=headers)
         if r.status_code == 200:
             data = r.json()
             if 'list' in data and data['list']:
@@ -457,20 +486,29 @@ def fetch_sessions(api_type='md5'):
 
 
 # =====================================================================
-# THUẬT TOÁN FULL CẦU - NÂNG CẤP (Ẩn tên cầu, loại bỏ Markov/Nghiêng)
+# THUẬT TOÁN FULL CẦU - FIXED V5.0
 # =====================================================================
 def analyze_pattern(results):
     """
-    Phân tích đa tầng chuyên sâu vào các dạng cầu chuẩn xác.
+    Phân tích đa tầng, tự động điều chỉnh khi thiếu dữ liệu.
     Trả về: (prediction, confidence)
     """
-    if not results or len(results) < 3:
-        return "Tài", 50.0
-
+    # Nếu chưa có dữ liệu, trả về 50/50 ngẫu nhiên thay vì mặc định Tài
+    if not results:
+        return random.choice(["Tài", "Xỉu"]), 50.0
+    
     last = results[0]
     opposite = "Xỉu" if last == "Tài" else "Tài"
 
-    # 1. BẮT BỆT (Streak)
+    # Nếu chỉ có 1 phiên, bẻ ngược lại để tránh bị kẹt
+    if len(results) == 1:
+        return opposite, 50.0
+        
+    # Nếu có 2 phiên, ưu tiên bám bệt (vì đa số hay ra bệt 2, 3)
+    if len(results) == 2:
+        return last, 55.0
+
+    # 1. CẦU BỆT (Streak)
     streak = 1
     for r in results[1:]:
         if r == last: streak += 1
@@ -479,90 +517,61 @@ def analyze_pattern(results):
     if streak >= 10: return opposite, 99.0
     if streak >= 8:  return opposite, 96.0
     if streak >= 6:  return opposite, 92.0
-    if streak == 5:  return opposite, 85.0
+    if streak >= 5:  return opposite, 85.0
     if streak == 4:  return last,     70.0
-    if streak == 3:  return last,     62.0
-    if streak == 2:  return last,     55.0
-
-    # 2. CẦU ĐẢO 1-1
-    if len(results) >= 10 and all(results[i] != results[i+1] for i in range(10)):
-        return opposite, 97.0
-    if len(results) >= 7 and all(results[i] != results[i+1] for i in range(7)):
-        return opposite, 93.0
-    if len(results) >= 5 and all(results[i] != results[i+1] for i in range(5)):
-        return opposite, 88.0
-    if len(results) >= 4 and all(results[i] != results[i+1] for i in range(4)):
-        return opposite, 76.0
+    if streak == 3:  return last,     65.0
+    
+    # 2. CẦU ĐẢO 1-1 (Alternating)
+    if len(results) >= 4:
+        is_alternating = all(results[i] != results[i+1] for i in range(min(len(results)-1, 7)))
+        if is_alternating:
+            return opposite, 90.0
 
     # 3. CẦU 2-2
-    if len(results) >= 8:
-        if (results[0]==results[1] and results[2]==results[3] and
-            results[4]==results[5] and results[6]==results[7] and
-            results[1]!=results[2] and results[3]!=results[4] and results[5]!=results[6]):
-            return opposite, 94.0
     if len(results) >= 6:
-        if (results[0]==results[1] and results[2]==results[3] and results[4]==results[5]
-            and results[1]!=results[2] and results[3]!=results[4]):
+        if (results[0]==results[1] and results[2]==results[3] and results[4]==results[5] 
+            and results[0]!=results[2]):
             return opposite, 88.0
 
     # 4. CẦU 3-3
-    if len(results) >= 9:
-        if (results[0]==results[1]==results[2] and results[3]==results[4]==results[5] and
-            results[6]==results[7]==results[8] and
-            results[2]!=results[3] and results[5]!=results[6]):
-            return opposite, 94.0
-
-    # 5. CẦU 4-4
-    if len(results) >= 12:
-        if (results[0]==results[1]==results[2]==results[3] and
-            results[4]==results[5]==results[6]==results[7] and
-            results[8]==results[9]==results[10]==results[11] and
-            results[3]!=results[4] and results[7]!=results[8]):
-            return opposite, 96.0
-
-    # 6. CẦU 1-2-1 (kép)
-    if len(results) >= 8:
-        if (results[0]==results[3]==results[4]==results[7] and
-            results[1]==results[2] and results[5]==results[6] and
-            results[0]!=results[1] and results[4]!=results[5]):
-            return results[1], 90.0
-    if len(results) >= 5:
-        if (results[0]==results[3] and results[1]==results[2] and results[0]!=results[1]):
-            return results[1], 82.0
-
-    # 7. CẦU 2-1-2
-    if len(results) >= 5:
-        if (results[0]==results[1] and results[3]==results[4] and
-            results[1]!=results[2] and results[2]!=results[3]):
-            return results[1], 82.0
-
-    # 8. CẦU 1-1-2
     if len(results) >= 6:
-        if (results[0]==results[1] and results[1]!=results[2] and
-            results[3]==results[4] and results[4]!=results[5]):
-            return results[2], 85.0
+        if (results[0]==results[1]==results[2] and results[3]==results[4]==results[5] 
+            and results[0]!=results[3]):
+            return last, 85.0
 
-    # 9. CẦU 2-2-1
-    if len(results) >= 5:
-        if (results[0]!=results[1] and results[1]==results[2] and
-            results[2]!=results[3] and results[3]==results[4]):
-            return results[1], 76.0
-
-    # 10. CẦU 3-1-3
-    if len(results) >= 7:
-        if (results[0]==results[1]==results[2] and results[4]==results[5]==results[6] and
-            results[2]!=results[3] and results[3]!=results[4]):
-            return results[3], 85.0
-
-    # 11. ĐẢO ĐÔI (1-2-1-2)
+    # 5. CẦU 1-2-1
     if len(results) >= 4:
-        if (results[0]!=results[1] and results[1]!=results[2] and
-            results[2]!=results[3] and results[0]==results[2] and results[1]==results[3]):
-            return opposite, 72.0
+        if (results[0]==results[3] and results[1]==results[2] and results[0]!=results[1]):
+            return opposite, 85.0
 
-    # DEFAULT: Đảo nhịp cơ bản
+    # 6. CẦU 2-1-2
+    if len(results) >= 5:
+        if (results[0]==results[1] and results[3]==results[4] 
+            and results[1]!=results[2] and results[2]!=results[3]):
+            return opposite, 85.0
+
+    # 7. CẦU 3-1-3
+    if len(results) >= 7:
+        if (results[0]==results[1]==results[2] and results[4]==results[5]==results[6] 
+            and results[0]!=results[3]):
+            return opposite, 88.0
+
+    # 8. CẦU 2-2-1
+    if len(results) >= 5:
+        if (results[0]!=results[1] and results[1]==results[2] 
+            and results[2]!=results[3] and results[3]==results[4]):
+            return opposite, 80.0
+
+    # 9. XU HƯỚNG (Nghiêng) - Nếu 10 phiên gần nhất lệch hẳn
+    if len(results) >= 10:
+        recent = results[:10]
+        tais = recent.count("Tài")
+        xius = recent.count("Xỉu")
+        if tais >= 7: return "Xỉu", 75.0
+        if xius >= 7: return "Tài", 75.0
+
+    # 10. FALLBACK: Đảo nhịp cơ bản
     return opposite, 55.0
-
 
 # =====================================================================
 # API ROUTES
@@ -577,19 +586,17 @@ def history():
     reset_id = RESET_IDS.get(api_type, 0)
     
     try:
-        # 1. Lấy dữ liệu mới nhất từ API
         raw_rows, source = fetch_sessions(api_type)
         
-        # 2. Lưu vào bộ nhớ đệm (Ghi đè nếu trùng phiên)
+        # Ghi vào bộ nhớ đệm
         for row in raw_rows:
             HISTORY_CACHE[api_type][row['phien']] = row
             
-        # 3. Dọn dẹp các phiên cũ (nằm trước mốc reset) để giải phóng bộ nhớ
+        # Dọn dẹp bộ nhớ đệm nếu có phiên cũ hơn mốc reset
         keys_to_remove = [k for k in HISTORY_CACHE[api_type] if k <= reset_id]
         for k in keys_to_remove:
             del HISTORY_CACHE[api_type][k]
 
-        # 4. Lấy toàn bộ lịch sử hợp lệ và sắp xếp
         valid = sorted(HISTORY_CACHE[api_type].values(), key=lambda x: x['phien'])
 
         if not valid:
@@ -599,7 +606,7 @@ def history():
         correct_count = 0
         total_past = 0
 
-        # Dự đoán cho phiên tiếp theo
+        # Dự đoán phiên tương lai
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
@@ -614,7 +621,7 @@ def history():
             'is_correct': None
         })
 
-        # Quét toàn bộ lịch sử (Không giới hạn số lượng, chạy đến khi reset)
+        # Quét toàn bộ lịch sử để tính đúng/sai
         for i in range(len(valid) - 1, -1, -1):
             current_session = valid[i]
             history = [v['result'] for v in valid[:i]][::-1]
@@ -626,7 +633,8 @@ def history():
                 if is_correct:
                     correct_count += 1
             else:
-                pred, conf = "Tài", 50.0
+                # Phiên đầu tiên của bảng không thể dự đoán
+                pred, conf = "-", 0
                 is_correct = None
 
             out.append({
@@ -656,7 +664,6 @@ def reset_api():
         if valid:
             max_id = valid[-1]['phien']
             RESET_IDS[api_type] = max_id
-            # Xóa sạch bộ nhớ đệm của bảng hiện tại để bắt đầu lại từ đầu
             HISTORY_CACHE[api_type] = {}
             return jsonify({'status': 'success', 'reset_to': max_id})
         return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
