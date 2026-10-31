@@ -367,7 +367,7 @@ function renderTable(rows, stats) {
 
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = `<span class="status st-wait"> Chờ</span>`;
+            statusHtml = `<span class="status st-wait"> Chờ </span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -461,28 +461,10 @@ def fetch_sessions(api_type='md5'):
         print(f"[API ERROR] {api_type}: {e}")
     return [], False
 
-# =====================================================================
-# THUẬT TOÁN MA TRẬN CẦU TOÀN DIỆN (ULTIMATE PATTERN MATRIX) - V11.0
-# =====================================================================
-def get_groups(results):
-    """Chuyển chuỗi kết quả thành các nhóm độ dài.
-    Ví dụ: ['Tài', 'Xỉu', 'Xỉu', 'Tài', 'Tài', 'Tài'] (mới nhất đến cũ nhất)
-    -> Trả về: [1, 2, 3]
-    """
-    if not results: return []
-    groups = []
-    current_val = results[0]
-    count = 1
-    for r in results[1:]:
-        if r == current_val:
-            count += 1
-        else:
-            groups.append(count)
-            current_val = r
-            count = 1
-    groups.append(count)
-    return groups
 
+# =====================================================================
+# THUẬT TOÁN CÂN BẰNG ĐỘNG (DYNAMIC BALANCE) - V10.0
+# =====================================================================
 def analyze_pattern(results, predictions_history=None):
     """
     results: Mảng kết quả (Tài/Xỉu) TỪ MỚI NHẤT ĐẾN CŨ NHẤT.
@@ -499,97 +481,98 @@ def analyze_pattern(results, predictions_history=None):
             return opposite, 60.0
         return last, 60.0
 
-    groups = get_groups(results)
-    current_streak = groups[0]
-    history_groups = groups[1:]
-
-    # =========================================================
-    # MA TRẬN CẦU (PATTERN MATRIX)
-    # Định dạng: ([Độ dài các nhóm cũ], Độ dài nhóm tiếp theo)
-    # =========================================================
-    PATTERNS = [
-        # --- Cầu Cơ Bản ---
-        ([1, 1, 1, 1], 1),       # Cầu 1-1
-        ([2, 2, 2], 2),          # Cầu 2-2
-        ([3, 3], 3),             # Cầu 3-3
-        ([4, 4], 4),             # Cầu 4-4
-        
-        # --- Cầu Tăng / Giảm ---
-        ([2, 3], 1),             # Cầu 3-2-1 (mới nhất là 2, cũ là 3 -> tiếp theo là 1)
-        ([3, 2], 3),             # Cầu 1-2-3 (mới nhất là 3, cũ là 2 -> tiếp theo là 3)
-        ([4, 5], 6),             # Cầu 4-5-6
-        ([5, 4], 3),             # Cầu 6-5-4
-        
-        # --- Cầu Biến Đổi ---
-        ([3, 1], 2),             # Cầu 2-1-3
-        ([1, 3], 2),             # Cầu 2-3-1
-        ([2, 1], 2),             # Cầu 2-1-2
-        ([1, 2], 1),             # Cầu 1-2-1
-        ([2, 1, 2], 2),          # Cầu 2-1-2-2
-        ([1, 2, 1], 1),          # Cầu 1-2-1-1
-        
-        # --- Cầu Nhảy Cóc / Bậc Thang ---
-        ([2, 2, 1], 1),          # Cầu 1-2-2
-        ([1, 1, 2], 2),          # Cầu 2-1-1
-        ([1, 3], 3),             # Cầu 3-1-3
-        ([2, 4], 4),             # Cầu 4-2-4
-    ]
-
-    expected_streak = None
-    for pattern, expected in PATTERNS:
-        if len(history_groups) >= len(pattern):
-            if history_groups[:len(pattern)] == pattern:
-                expected_streak = expected
-                break
-
-    # Nếu phát hiện cầu -> Bám hoặc Bẻ
-    if expected_streak is not None:
-        if current_streak < expected_streak:
-            # Cầu chưa đủ dài -> Bám (tiếp tục cửa hiện tại)
-            return last, 95.0
-        else:
-            # Cầu đã đủ dài -> Bẻ (đánh cửa ngược lại)
-            return opposite, 99.0
-
-    # =========================================================
-    # FALLBACK: HỆ THỐNG TÍNH ĐIỂM (Nếu không có cầu rõ ràng)
-    # =========================================================
     score_tai = 0.0
     score_xiu = 0.0
 
-    # 1. Bệt cơ bản (Nếu bệt >= 4 nhưng không khớp ma trận trên)
-    if current_streak >= 4:
+    # ---------------------------------------------------------
+    # 1. PATTERN MATCHING (Nhận diện cầu)
+    # ---------------------------------------------------------
+    groups = []
+    current_val = results[0]
+    count = 1
+    for r in results[1:]:
+        if r == current_val:
+            count += 1
+        else:
+            groups.append(count)
+            current_val = r
+            count = 1
+    groups.append(count)
+
+    # Cầu bệt
+    if groups[0] >= 4:
+        if last == "Tài": score_xiu += 5.0
+        else: score_tai += 5.0
+
+    # Cầu 1-1
+    if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]:
+        if last == "Tài": score_xiu += 4.5
+        else: score_tai += 4.5
+
+    # Cầu 2-2
+    if len(groups) >= 3 and groups[:3] == [2, 2, 2]:
         if last == "Tài": score_xiu += 4.0
         else: score_tai += 4.0
 
-    # 2. Markov Chain (Xác suất chuyển đổi)
+    # Cầu 1-2-3 / 3-2-1
+    if len(groups) >= 3:
+        if groups[:3] == [1, 2, 3] or groups[:3] == [3, 2, 1]:
+            if last == "Tài": score_xiu += 4.5
+            else: score_tai += 4.5
+
+    # ---------------------------------------------------------
+    # 2. MARKOV CHAIN (Xác suất chuyển đổi - Có giới hạn)
+    # ---------------------------------------------------------
     transitions = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
     for i in range(len(results) - 1):
-        transitions[results[i+1]][results[i]] += 1
-    if sum(transitions[last].values()) > 0:
-        prob = transitions[last][last] / sum(transitions[last].values())
-        if prob > 0.65:
-            if last == "Tài": score_tai += 2.0
-            else: score_xiu += 2.0
+        current_state = results[i+1]
+        next_state = results[i]
+        transitions[current_state][next_state] += 1
+        
+    total_from_last = sum(transitions[last].values())
+    if total_from_last > 0:
+        prob_tai = transitions[last]["Tài"] / total_from_last
+        prob_xiu = transitions[last]["Xỉu"] / total_from_last
+        # Giảm trọng số Markov xuống 2.0 để tránh bị nhiễu
+        if prob_tai > 0.65: score_tai += 2.0
+        elif prob_xiu > 0.65: score_xiu += 2.0
 
-    # 3. Mean Reversion (Hồi quy trung bình)
+    # ---------------------------------------------------------
+    # 3. MEAN REVERSION (Hồi quy về trung bình - Dựa trên thực tế)
+    # ---------------------------------------------------------
     recent_30 = results[:30]
     tai_30 = recent_30.count("Tài")
-    if len(recent_30) > 0:
-        ratio_tai = tai_30 / len(recent_30)
+    xiu_30 = recent_30.count("Xỉu")
+    total_30 = len(recent_30)
+    
+    if total_30 > 0:
+        ratio_tai = tai_30 / total_30
+        # Nếu thực tế đang lệch quá 60/40, ưu tiên cửa còn lại
         if ratio_tai > 0.60: score_xiu += 3.0
         elif ratio_tai < 0.40: score_tai += 3.0
 
-    # 4. Fairness Balancer (Cân bằng dự đoán)
+    # ---------------------------------------------------------
+    # 4. FAIRNESS BALANCER (Bộ cân bằng dự đoán)
+    # ---------------------------------------------------------
     if predictions_history and len(predictions_history) >= 5:
+        # Nhìn vào 10 dự đoán gần nhất
         recent_preds = predictions_history[-10:]
-        if recent_preds.count("Tài") >= 7: score_xiu += 3.0
-        elif recent_preds.count("Xỉu") >= 7: score_tai += 3.0
+        tai_preds = recent_preds.count("Tài")
+        xiu_preds = recent_preds.count("Xỉu")
+        
+        # Nếu đang dự đoán lệch quá, tự động kéo về cân bằng
+        if tai_preds >= 7: score_xiu += 3.0
+        elif xiu_preds >= 7: score_tai += 3.0
 
+    # ---------------------------------------------------------
+    # 5. QUYẾT ĐỊNH
+    # ---------------------------------------------------------
     if score_tai > score_xiu:
-        return "Tài", min(50.0 + score_tai * 4, 99.0)
+        confidence = min(50.0 + (score_tai * 4), 99.0)
+        return "Tài", confidence
     elif score_xiu > score_tai:
-        return "Xỉu", min(50.0 + score_xiu * 4, 99.0)
+        confidence = min(50.0 + (score_xiu * 4), 99.0)
+        return "Xỉu", confidence
     else:
         return opposite, 50.0
 
@@ -628,11 +611,14 @@ def history():
         correct_count = 0
         total_past = 0
 
+        # Dự đoán phiên tương lai
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
         
+        # Khởi tạo mảng lịch sử dự đoán
         pred_history = []
+        
         next_pred, next_conf = analyze_pattern(history_for_next, pred_history)
 
         out.append({
@@ -652,6 +638,7 @@ def history():
             history = [v['result'] for v in valid[:i]][::-1]
             
             if history:
+                # Truyền pred_history vào để thuật toán tự cân bằng
                 pred, conf = analyze_pattern(history, pred_history)
                 is_correct = (pred == current_session['result'])
                 total_past += 1
@@ -661,6 +648,7 @@ def history():
                 pred, conf = "-", 0
                 is_correct = None
 
+            # Lưu dự đoán vào lịch sử (chỉ lưu nếu có dự đoán)
             if pred != "-":
                 pred_history.append(pred)
 
