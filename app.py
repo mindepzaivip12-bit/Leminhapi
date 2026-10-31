@@ -44,6 +44,8 @@ HTML_TEMPLATE = """
         --lose-bg: #fee2e2;
         --wait-color: #f59e0b;
         --wait-bg: #fef3c7;
+        
+        --gold: #fbbf24;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
@@ -75,12 +77,14 @@ HTML_TEMPLATE = """
         gap: 8px;
     }
     .header-title span {
-        font-size: 12px;
-        background: var(--tai-bg);
-        color: var(--tai-color);
-        padding: 2px 8px;
-        border-radius: 10px;
-        font-weight: 700;
+        font-size: 11px;
+        background: linear-gradient(135deg, var(--tai-color), var(--xiu-color));
+        color: #fff;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     }
     .header-actions { display: flex; gap: 10px; align-items: center; }
     
@@ -219,6 +223,9 @@ HTML_TEMPLATE = """
     .st-wait { background: var(--wait-bg); color: var(--wait-color); }
 
     .dice-text { font-size: 12px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
+    
+    .algo-vote { font-size: 9px; color: var(--tai-color); background: var(--tai-bg); padding: 2px 6px; border-radius: 8px; margin-top: 4px; display: inline-block; font-weight: 700; }
+    
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
 
     @media (max-width: 500px) {
@@ -234,7 +241,7 @@ HTML_TEMPLATE = """
 
 <div class="header">
     <div class="header-title">
-        LE MINH  <span>🐼</span>
+        LE MINH ❄️ <span>LC MD5</span>
     </div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
@@ -353,6 +360,13 @@ function renderTable(rows, stats) {
         if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
 
+        // Hiển thị số lượng thuật toán đồng ý
+        let voteHtml = "";
+        if (row.votes && row.prediction !== "-") {
+            voteHtml = `<div class="algo-vote">${row.votes} Thuật toán đồng ý</div>`;
+        }
+        let predFull = `<div style="display:flex; flex-direction:column; align-items:center;">${predHtml}${voteHtml}</div>`;
+
         let resultHtml = `<span class="badge badge-empty">-</span>`;
         if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
@@ -379,7 +393,7 @@ function renderTable(rows, stats) {
         html += `
             <tr ${trClass}>
                 <td>#${row.phien}</td>
-                <td>${predHtml}</td>
+                <td>${predFull}</td>
                 <td>${resultFull}</td>
                 <td>${statusHtml}</td>
             </tr>
@@ -461,32 +475,13 @@ def fetch_sessions(api_type='md5'):
         print(f"[API ERROR] {api_type}: {e}")
     return [], False
 
-
 # =====================================================================
-# THUẬT TOÁN CÂN BẰNG ĐỘNG (DYNAMIC BALANCE) - V10.0
+# HỆ THỐNG HỘI ĐỒNG THUẬT TOÁN (ENSEMBLE AI) - V12.0
+# Kết hợp 7 thuật toán để đưa ra phán quyết cuối cùng
 # =====================================================================
-def analyze_pattern(results, predictions_history=None):
-    """
-    results: Mảng kết quả (Tài/Xỉu) TỪ MỚI NHẤT ĐẾN CŨ NHẤT.
-    predictions_history: Mảng các dự đoán trước đó (để tự cân bằng).
-    """
-    if not results:
-        return "Tài", 50.0
-    
-    last = results[0]
-    opposite = "Xỉu" if last == "Tài" else "Tài"
-    
-    if len(results) < 3:
-        if len(results) == 2 and results[0] != results[1]:
-            return opposite, 60.0
-        return last, 60.0
 
-    score_tai = 0.0
-    score_xiu = 0.0
-
-    # ---------------------------------------------------------
-    # 1. PATTERN MATCHING (Nhận diện cầu)
-    # ---------------------------------------------------------
+def get_groups(results):
+    if not results: return []
     groups = []
     current_val = results[0]
     count = 1
@@ -498,83 +493,130 @@ def analyze_pattern(results, predictions_history=None):
             current_val = r
             count = 1
     groups.append(count)
+    return groups
 
-    # Cầu bệt
-    if groups[0] >= 4:
-        if last == "Tài": score_xiu += 5.0
-        else: score_tai += 5.0
+def algo_pattern_matrix(results, groups):
+    """Thuật toán 1: Nhận diện cầu (Pattern Matching)"""
+    if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu", 95
+    if len(groups) >= 3 and groups[:3] == [2, 2, 2]: return "Tài" if results[0] == "Xỉu" else "Xỉu", 90
+    if len(groups) >= 2 and groups[:2] == [3, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu", 85
+    if len(groups) >= 3 and groups[:3] == [1, 2, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu", 90
+    if len(groups) >= 3 and groups[:3] == [3, 2, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu", 90
+    if groups[0] >= 4: return "Tài" if results[0] == "Xỉu" else "Xỉu", 85 # Bẻ bệt dài
+    return None, 0
 
-    # Cầu 1-1
-    if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]:
-        if last == "Tài": score_xiu += 4.5
-        else: score_tai += 4.5
-
-    # Cầu 2-2
-    if len(groups) >= 3 and groups[:3] == [2, 2, 2]:
-        if last == "Tài": score_xiu += 4.0
-        else: score_tai += 4.0
-
-    # Cầu 1-2-3 / 3-2-1
-    if len(groups) >= 3:
-        if groups[:3] == [1, 2, 3] or groups[:3] == [3, 2, 1]:
-            if last == "Tài": score_xiu += 4.5
-            else: score_tai += 4.5
-
-    # ---------------------------------------------------------
-    # 2. MARKOV CHAIN (Xác suất chuyển đổi - Có giới hạn)
-    # ---------------------------------------------------------
+def algo_markov_chain(results):
+    """Thuật toán 2: Chuỗi Markov (Xác suất chuyển đổi)"""
+    if len(results) < 10: return None, 0
+    last = results[0]
     transitions = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
     for i in range(len(results) - 1):
-        current_state = results[i+1]
-        next_state = results[i]
-        transitions[current_state][next_state] += 1
-        
-    total_from_last = sum(transitions[last].values())
-    if total_from_last > 0:
-        prob_tai = transitions[last]["Tài"] / total_from_last
-        prob_xiu = transitions[last]["Xỉu"] / total_from_last
-        # Giảm trọng số Markov xuống 2.0 để tránh bị nhiễu
-        if prob_tai > 0.65: score_tai += 2.0
-        elif prob_xiu > 0.65: score_xiu += 2.0
-
-    # ---------------------------------------------------------
-    # 3. MEAN REVERSION (Hồi quy về trung bình - Dựa trên thực tế)
-    # ---------------------------------------------------------
-    recent_30 = results[:30]
-    tai_30 = recent_30.count("Tài")
-    xiu_30 = recent_30.count("Xỉu")
-    total_30 = len(recent_30)
+        transitions[results[i+1]][results[i]] += 1
     
-    if total_30 > 0:
-        ratio_tai = tai_30 / total_30
-        # Nếu thực tế đang lệch quá 60/40, ưu tiên cửa còn lại
-        if ratio_tai > 0.60: score_xiu += 3.0
-        elif ratio_tai < 0.40: score_tai += 3.0
+    total = sum(transitions[last].values())
+    if total > 3:
+        prob_tai = transitions[last]["Tài"] / total
+        if prob_tai > 0.65: return "Tài", 75
+        if prob_tai < 0.35: return "Xỉu", 75
+    return None, 0
 
-    # ---------------------------------------------------------
-    # 4. FAIRNESS BALANCER (Bộ cân bằng dự đoán)
-    # ---------------------------------------------------------
-    if predictions_history and len(predictions_history) >= 5:
-        # Nhìn vào 10 dự đoán gần nhất
-        recent_preds = predictions_history[-10:]
-        tai_preds = recent_preds.count("Tài")
-        xiu_preds = recent_preds.count("Xỉu")
-        
-        # Nếu đang dự đoán lệch quá, tự động kéo về cân bằng
-        if tai_preds >= 7: score_xiu += 3.0
-        elif xiu_preds >= 7: score_tai += 3.0
+def algo_moving_average(results):
+    """Thuật toán 3: Trung bình động (SMA Crossover)"""
+    if len(results) < 20: return None, 0
+    short_term = results[:5].count("Tài") / 5
+    long_term = results[:20].count("Tài") / 20
+    
+    if short_term > long_term + 0.15: return "Tài", 70
+    if short_term < long_term - 0.15: return "Xỉu", 70
+    return None, 0
 
-    # ---------------------------------------------------------
-    # 5. QUYẾT ĐỊNH
-    # ---------------------------------------------------------
+def algo_oscillator(results):
+    """Thuật toán 4: Chỉ báo Động lượng (Quá mua/Quá bán)"""
+    if len(results) < 15: return None, 0
+    recent = results[:15]
+    tai_count = recent.count("Tài")
+    
+    if tai_count >= 11: return "Xỉu", 80 # Quá mua -> Bẻ
+    if tai_count <= 4: return "Tài", 80  # Quá bán -> Bẻ
+    return None, 0
+
+def algo_mean_reversion(results):
+    """Thuật toán 5: Hồi quy trung bình"""
+    if len(results) < 30: return None, 0
+    recent = results[:30]
+    tai_ratio = recent.count("Tài") / 30
+    
+    if tai_ratio > 0.65: return "Xỉu", 75
+    if tai_ratio < 0.35: return "Tài", 75
+    return None, 0
+
+def algo_streak_exhaustion(results, groups):
+    """Thuật toán 6: Cạn kiệt chuỗi (Streak)"""
+    if groups[0] >= 6: 
+        return "Tài" if results[0] == "Xỉu" else "Xỉu", 95
+    return None, 0
+
+def algo_fairness_balancer(pred_history):
+    """Thuật toán 7: Bộ cân bằng (Fairness)"""
+    if len(pred_history) < 10: return None, 0
+    recent = pred_history[-10:]
+    tai_preds = recent.count("Tài")
+    
+    if tai_preds >= 7: return "Xỉu", 60
+    if tai_preds <= 3: return "Tài", 60
+    return None, 0
+
+
+def ensemble_predict(results, pred_history=None):
+    """
+    Hàm tổng hợp: Chạy tất cả thuật toán và bỏ phiếu.
+    """
+    if not results:
+        return "Tài", 50.0, 0
+    if len(results) < 3:
+        return results[0], 50.0, 0
+
+    groups = get_groups(results)
+    
+    # Mỗi thuật toán trả về (Dự đoán, Trọng số) hoặc (None, 0)
+    algorithms = [
+        algo_pattern_matrix(results, groups),
+        algo_markov_chain(results),
+        algo_moving_average(results),
+        algo_oscillator(results),
+        algo_mean_reversion(results),
+        algo_streak_exhaustion(results, groups),
+        algo_fairness_balancer(pred_history or [])
+    ]
+
+    score_tai = 0
+    score_xiu = 0
+    votes = 0
+
+    for pred, weight in algorithms:
+        if pred == "Tài":
+            score_tai += weight
+            votes += 1
+        elif pred == "Xỉu":
+            score_xiu += weight
+            votes += 1
+
+    # Nếu không có thuật toán nào đưa ra tín hiệu (dữ liệu quá ít hoặc cầu nhiễu)
+    if score_tai == 0 and score_xiu == 0:
+        # Fallback: Bẻ nhịp cơ bản dựa vào nhóm hiện tại
+        if groups[0] >= 2:
+            return ("Xỉu" if results[0] == "Tài" else "Tài"), 55.0, 1
+        return results[0], 55.0, 1
+
     if score_tai > score_xiu:
-        confidence = min(50.0 + (score_tai * 4), 99.0)
-        return "Tài", confidence
+        confidence = min(50 + (score_tai / max(votes, 1)), 99)
+        return "Tài", confidence, votes
     elif score_xiu > score_tai:
-        confidence = min(50.0 + (score_xiu * 4), 99.0)
-        return "Xỉu", confidence
+        confidence = min(50 + (score_xiu / max(votes, 1)), 99)
+        return "Xỉu", confidence, votes
     else:
-        return opposite, 50.0
+        # Hòa điểm -> Bẻ nhịp
+        return ("Xỉu" if results[0] == "Tài" else "Tài"), 50.0, votes
 
 
 # =====================================================================
@@ -611,15 +653,12 @@ def history():
         correct_count = 0
         total_past = 0
 
-        # Dự đoán phiên tương lai
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
         
-        # Khởi tạo mảng lịch sử dự đoán
         pred_history = []
-        
-        next_pred, next_conf = analyze_pattern(history_for_next, pred_history)
+        next_pred, next_conf, next_votes = ensemble_predict(history_for_next, pred_history)
 
         out.append({
             'phien': next_phien,
@@ -627,7 +666,8 @@ def history():
             'prediction': next_pred,
             'result': 'Chờ...',
             'dice': "? + ? + ?",
-            'is_correct': None
+            'is_correct': None,
+            'votes': next_votes
         })
 
         scan_limit = min(len(valid), 500)
@@ -638,17 +678,15 @@ def history():
             history = [v['result'] for v in valid[:i]][::-1]
             
             if history:
-                # Truyền pred_history vào để thuật toán tự cân bằng
-                pred, conf = analyze_pattern(history, pred_history)
+                pred, conf, votes = ensemble_predict(history, pred_history)
                 is_correct = (pred == current_session['result'])
                 total_past += 1
                 if is_correct:
                     correct_count += 1
             else:
-                pred, conf = "-", 0
+                pred, conf, votes = "-", 0, 0
                 is_correct = None
 
-            # Lưu dự đoán vào lịch sử (chỉ lưu nếu có dự đoán)
             if pred != "-":
                 pred_history.append(pred)
 
@@ -658,7 +696,8 @@ def history():
                 'prediction': pred,
                 'result': current_session['result'],
                 'dice': current_session['dice'],
-                'is_correct': is_correct
+                'is_correct': is_correct,
+                'votes': votes
             })
 
         return jsonify({
