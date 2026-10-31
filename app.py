@@ -16,12 +16,13 @@ API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at
 # === GLOBAL STATE ===
 RESET_SESSION_ID = 0
 PREDICTION_LOG = {}
-LOG_LOCK = threading.RLock()  # RLock cho phép reentrant
+LOG_LOCK = threading.RLock()
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prediction_state.json")
 NEXT_PRED_CACHE = {'phien': None, 'prediction': None, 'confidence': None}
 
+
 # =====================================================================
-# PERSISTENCE - LƯU TRỮ VĨNH VIỄN (KHÔNG BAO GIỜ TỰ XOÁ)
+# PERSISTENCE
 # =====================================================================
 def load_state():
     global PREDICTION_LOG, RESET_SESSION_ID
@@ -35,23 +36,25 @@ def load_state():
     except Exception as e:
         print(f"[STATE LOAD ERROR] {e}")
 
+
 def save_state():
     try:
         with LOG_LOCK:
             data = {
                 'log': {str(k): v for k, v in PREDICTION_LOG.items()},
-                'reset_id': RESET_SESSION_ID
+                'reset_id': RESET_SESSION_ID,
             }
         with open(STATE_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, separators=(',', ':'))
     except Exception as e:
         print(f"[STATE SAVE ERROR] {e}")
 
-# Load khi khởi động
+
 load_state()
 
+
 # =====================================================================
-# GIAO DIỆN HTML
+# HTML TEMPLATE
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -109,7 +112,7 @@ HTML_TEMPLATE = """
     .status-lose { color: var(--lose-color); }
     .status-wait { color: var(--text-muted); }
     .loading { text-align: center; padding: 40px; color: var(--text-muted); font-weight: 600; }
-    @media (max-width: 400px) { 
+    @media (max-width: 400px) {
         .header-title { font-size: 15px; } .stat-value { font-size: 15px; }
         .dice-text { font-size: 11px; } .id-text { font-size: 13px; } .bot-line { font-size: 11px; }
     }
@@ -225,11 +228,13 @@ fetchData(); setInterval(fetchData, 5000);
 </html>
 """
 
+
 # =====================================================================
 # HELPER PATTERNS
 # =====================================================================
 def build_blocks(results):
-    if not results: return []
+    if not results:
+        return []
     blocks = []
     curr_val = results[0]
     curr_count = 1
@@ -243,17 +248,23 @@ def build_blocks(results):
     blocks.append({'val': curr_val, 'len': curr_count})
     return blocks
 
+
 def block_class(L):
-    if L == 1: return 'S'
-    if L <= 3: return 'M'
+    if L == 1:
+        return 'S'
+    if L <= 3:
+        return 'M'
     return 'L'
 
+
 def encode_pattern_81(block_lengths):
-    if len(block_lengths) < 4: return None
+    if len(block_lengths) < 4:
+        return None
     code = 0
     for L in block_lengths[-4:]:
         code = code * 3 + {'S': 0, 'M': 1, 'L': 2}[block_class(L)]
     return code
+
 
 def learn_81_patterns(results):
     stats = {}
@@ -261,53 +272,59 @@ def learn_81_patterns(results):
     for k in range(10, n):
         sub = results[k:]
         blocks = build_blocks(sub)
-        if len(blocks) < 5: continue
+        if len(blocks) < 5:
+            continue
         four_lens = [b['len'] for b in blocks[1:5]]
         code = encode_pattern_81(four_lens)
-        if code is None: continue
+        if code is None:
+            continue
         current_val = blocks[0]['val']
         current_len = blocks[0]['len']
         actual_next = results[k - 1]
         continued = (actual_next == current_val)
         key1 = (code, min(current_len, 4))
-        if key1 not in stats: stats[key1] = {'continue': 0, 'break': 0}
+        if key1 not in stats:
+            stats[key1] = {'continue': 0, 'break': 0}
         stats[key1]['continue' if continued else 'break'] += 1
         key2 = code
-        if key2 not in stats: stats[key2] = {'continue': 0, 'break': 0}
+        if key2 not in stats:
+            stats[key2] = {'continue': 0, 'break': 0}
         stats[key2]['continue' if continued else 'break'] += 1
     return stats
 
-# =====================================================================
-# ⭐ THUẬT TOÁN V9.0 - 18 TẦNG (NÂNG CẤP TOÀN DIỆN)
-# =====================================================================
 
+# =====================================================================
+# THUẬT TOÁN V9.0 - 18 TẦNG
+# =====================================================================
 def estimate_streak_break_prob(results):
-    """Phân tích xác suất BỆT GÃY dựa trên lịch sử streak lengths."""
     blocks = build_blocks(results)
-    if len(blocks) < 2: return None
+    if len(blocks) < 2:
+        return None
     current_len = blocks[0]['len']
-    if current_len < 2: return None  # Chỉ có ý nghĩa khi bệt >= 2
-    # Xem 30 streak gần nhất đã kết thúc
+    if current_len < 2:
+        return None
     past = [b['len'] for b in blocks[1:31]]
-    if not past: return None
-    # Các streak trong quá khứ đã từng đạt >= current_len
+    if not past:
+        return None
     reached = [l for l in past if l >= current_len]
-    if len(reached) < 3: return None
+    if len(reached) < 3:
+        return None
     broke = sum(1 for l in reached if l == current_len)
     continued = sum(1 for l in reached if l > current_len)
     total = broke + continued
-    if total < 3: return None
-    # Laplace smoothing
+    if total < 3:
+        return None
     break_prob = (broke + 1) / (total + 2)
     return {'break_prob': break_prob, 'sample': total, 'current_len': current_len}
 
 
 def detect_repeating_block_pattern(blocks):
-    """Phát hiện mẫu chu kỳ khối: A-B-A-B, A-B-C-A-B-C, 1-2-1-2, 2-3-2-3..."""
-    if len(blocks) < 4: return None
+    if len(blocks) < 4:
+        return None
     lens = [b['len'] for b in blocks[:9]]
     for period in [2, 3]:
-        if len(lens) < period * 2 + 1: continue
+        if len(lens) < period * 2 + 1:
+            continue
         repeats = 0
         for i in range(period, len(lens)):
             if lens[i] == lens[i - period]:
@@ -320,37 +337,40 @@ def detect_repeating_block_pattern(blocks):
                 'sequence': lens[:period],
                 'next_len': lens[period - 1],
                 'current_len': lens[0],
-                'strength': min(1.0, repeats / (period * 2.0))
+                'strength': min(1.0, repeats / (period * 2.0)),
             }
     return None
 
 
 def detect_long_pattern(results, min_len=6, max_len=25):
-    """Phát hiện chuỗi dài lặp lại tuần hoàn (period 6-25 phiên)."""
-    if len(results) < min_len * 2: return None
+    if len(results) < min_len * 2:
+        return None
     max_check = min(max_len, len(results) // 3)
     for L in range(min_len, max_check + 1):
-        if len(results) < L * 2: break
+        if len(results) < L * 2:
+            break
         recent = tuple(results[:L])
         repeats = 0
         for r in range(1, 4):
-            start = r * L; end = start + L
-            if end > len(results): break
+            start = r * L
+            end = start + L
+            if end > len(results):
+                break
             if tuple(results[start:end]) == recent:
                 repeats += 1
             else:
                 break
         if repeats >= 1:
             return {
-                'length': L, 'repeats': repeats,
+                'length': L,
+                'repeats': repeats,
                 'next': results[L - 1],
-                'confidence': min(90, 60 + L * 1.2 + repeats * 8)
+                'confidence': min(90, 60 + L * 1.2 + repeats * 8),
             }
     return None
 
 
 def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
-    """⭐ V9.0 - Thuật toán đa tầng, nhận diện đủ loại cầu + phá bệt thông minh."""
     if not results or len(results) < 3:
         return "Tài", 50.0
 
@@ -363,29 +383,45 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
     current_val = blocks[0]['val']
     current_len = blocks[0]['len']
 
-    # ========== TẦNG 1: CẦU BỆT (mở rộng 15+) ==========
-    if current_len >= 15:   candidates.append((opposite, 97.0, 60, 2.5))
-    elif current_len >= 12: candidates.append((opposite, 95.0, 55, 2.3))
-    elif current_len >= 10: candidates.append((opposite, 93.0, 55, 2.0))
-    elif current_len >= 8:  candidates.append((opposite, 88.0, 50, 1.8))
-    elif current_len >= 6:  candidates.append((opposite, 80.0, 45, 1.5))
-    elif current_len == 5:  candidates.append((opposite, 70.0, 35, 1.2))
-    elif current_len == 4:  candidates.append((current_val, 60.0, 30, 0.9))
-    elif current_len == 3:  candidates.append((current_val, 55.0, 25, 0.6))
+    # TẦNG 1: BỆT
+    if current_len >= 15:
+        candidates.append((opposite, 97.0, 60, 2.5))
+    elif current_len >= 12:
+        candidates.append((opposite, 95.0, 55, 2.3))
+    elif current_len >= 10:
+        candidates.append((opposite, 93.0, 55, 2.0))
+    elif current_len >= 8:
+        candidates.append((opposite, 88.0, 50, 1.8))
+    elif current_len >= 6:
+        candidates.append((opposite, 80.0, 45, 1.5))
+    elif current_len == 5:
+        candidates.append((opposite, 70.0, 35, 1.2))
+    elif current_len == 4:
+        candidates.append((current_val, 60.0, 30, 0.9))
+    elif current_len == 3:
+        candidates.append((current_val, 55.0, 25, 0.6))
 
-    # ========== TẦNG 2: ĐẢO 1-1 (mở rộng 15+) ==========
+    # TẦNG 2: ĐẢO 1-1
     alt_len = 0
     for i in range(n - 1):
-        if results[i] != results[i + 1]: alt_len += 1
-        else: break
-    if alt_len >= 15:   candidates.append((opposite, 96.0, 50, 2.2))
-    elif alt_len >= 12: candidates.append((opposite, 94.0, 50, 2.0))
-    elif alt_len >= 10: candidates.append((opposite, 90.0, 45, 1.8))
-    elif alt_len >= 7:  candidates.append((opposite, 82.0, 35, 1.5))
-    elif alt_len >= 5:  candidates.append((opposite, 74.0, 28, 1.2))
-    elif alt_len >= 3:  candidates.append((opposite, 63.0, 20, 0.8))
+        if results[i] != results[i + 1]:
+            alt_len += 1
+        else:
+            break
+    if alt_len >= 15:
+        candidates.append((opposite, 96.0, 50, 2.2))
+    elif alt_len >= 12:
+        candidates.append((opposite, 94.0, 50, 2.0))
+    elif alt_len >= 10:
+        candidates.append((opposite, 90.0, 45, 1.8))
+    elif alt_len >= 7:
+        candidates.append((opposite, 82.0, 35, 1.5))
+    elif alt_len >= 5:
+        candidates.append((opposite, 74.0, 28, 1.2))
+    elif alt_len >= 3:
+        candidates.append((opposite, 63.0, 20, 0.8))
 
-    # ========== TẦNG 3: CHU KỲ KHỐI (A-B-A-B, A-B-C) ==========
+    # TẦNG 3: CHU KỲ KHỐI
     cycle = detect_repeating_block_pattern(blocks)
     if cycle:
         bonus = cycle['strength']
@@ -395,42 +431,55 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
         elif cycle['current_len'] == cycle['next_len']:
             candidates.append((opposite, base_conf + 5, 40, 1.4 + bonus * 0.5))
 
-    # ========== TẦNG 4: PHÁ BỆT (Streak Break Analysis) ⭐ ==========
+    # TẦNG 4: PHÁ BỆT
     break_info = estimate_streak_break_prob(results)
     if break_info and current_len >= 3:
         bp = break_info['break_prob']
         sample = break_info['sample']
-        # bp cao = khả năng gãy cao → vote opposite
-        if bp >= 0.80:   candidates.append((opposite, 88.0, sample, 1.9))
-        elif bp >= 0.68: candidates.append((opposite, 80.0, sample, 1.5))
-        elif bp >= 0.55: candidates.append((opposite, 70.0, sample, 1.1))
-        # bp thấp = khả năng tiếp diễn cao → vote current
-        elif bp <= 0.20: candidates.append((current_val, 85.0, sample, 1.7))
-        elif bp <= 0.35: candidates.append((current_val, 72.0, sample, 1.2))
+        if bp >= 0.80:
+            candidates.append((opposite, 88.0, sample, 1.9))
+        elif bp >= 0.68:
+            candidates.append((opposite, 80.0, sample, 1.5))
+        elif bp >= 0.55:
+            candidates.append((opposite, 70.0, sample, 1.1))
+        elif bp <= 0.20:
+            candidates.append((current_val, 85.0, sample, 1.7))
+        elif bp <= 0.35:
+            candidates.append((current_val, 72.0, sample, 1.2))
 
-    # ========== TẦNG 5: TREND NGẮN (5 phiên) ==========
+    # TẦNG 5: TREND 5
     if n >= 5:
         r5_tai = results[:5].count("Tài")
-        if r5_tai >= 4:   candidates.append(("Tài", 65.0, 5, 0.8))
-        elif r5_tai <= 1: candidates.append(("Xỉu", 65.0, 5, 0.8))
+        if r5_tai >= 4:
+            candidates.append(("Tài", 65.0, 5, 0.8))
+        elif r5_tai <= 1:
+            candidates.append(("Xỉu", 65.0, 5, 0.8))
 
-    # ========== TẦNG 6: TREND TRUNG (10 phiên - Mean Reversion) ==========
+    # TẦNG 6: TREND 10 (mean reversion)
     if n >= 10:
         r10_tai = results[:10].count("Tài")
-        if r10_tai >= 8:   candidates.append(("Xỉu", 70.0, 10, 1.1))
-        elif r10_tai >= 7: candidates.append(("Xỉu", 65.0, 10, 0.9))
-        elif r10_tai <= 2: candidates.append(("Tài", 70.0, 10, 1.1))
-        elif r10_tai <= 3: candidates.append(("Tài", 65.0, 10, 0.9))
+        if r10_tai >= 8:
+            candidates.append(("Xỉu", 70.0, 10, 1.1))
+        elif r10_tai >= 7:
+            candidates.append(("Xỉu", 65.0, 10, 0.9))
+        elif r10_tai <= 2:
+            candidates.append(("Tài", 70.0, 10, 1.1))
+        elif r10_tai <= 3:
+            candidates.append(("Tài", 65.0, 10, 0.9))
 
-    # ========== TẦNG 7: TREND DÀI (20 phiên) ==========
+    # TẦNG 7: TREND 20
     if n >= 20:
         tai20 = results[:20].count("Tài")
-        if tai20 >= 15:   candidates.append(("Xỉu", 68.0, 20, 1.0))
-        elif tai20 >= 14: candidates.append(("Xỉu", 63.0, 20, 0.8))
-        elif tai20 <= 5:  candidates.append(("Tài", 68.0, 20, 1.0))
-        elif tai20 <= 6:  candidates.append(("Tài", 63.0, 20, 0.8))
+        if tai20 >= 15:
+            candidates.append(("Xỉu", 68.0, 20, 1.0))
+        elif tai20 >= 14:
+            candidates.append(("Xỉu", 63.0, 20, 0.8))
+        elif tai20 <= 5:
+            candidates.append(("Tài", 68.0, 20, 1.0))
+        elif tai20 <= 6:
+            candidates.append(("Tài", 63.0, 20, 0.8))
 
-    # ========== TẦNG 8: HỆ THỐNG 81 MẪU ==========
+    # TẦNG 8: 81 MẪU
     if len(blocks) >= 5:
         stats = learn_81_patterns(results)
         four_lens = [b['len'] for b in blocks[1:5]]
@@ -449,15 +498,18 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
                             candidates.append((opposite, min(conf_val, 90), total, 1.4))
                         break
 
-    # ========== TẦNG 9: N-GRAM (4-12) ==========
+    # TẦNG 9: N-GRAM
     for ns in [12, 10, 8, 7, 6, 5, 4]:
-        if n < ns + 1: continue
+        if n < ns + 1:
+            continue
         current_seq = tuple(results[:ns])
         match_tai = match_xiu = 0
         for i in range(len(results) - ns):
             if tuple(results[i:i + ns]) == current_seq and i + ns < len(results):
-                if results[i + ns] == "Tài": match_tai += 1
-                else: match_xiu += 1
+                if results[i + ns] == "Tài":
+                    match_tai += 1
+                else:
+                    match_xiu += 1
         total_m = match_tai + match_xiu
         if total_m >= 2 and match_tai != match_xiu:
             winner = "Tài" if match_tai > match_xiu else "Xỉu"
@@ -467,63 +519,69 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
                 candidates.append((winner, 55 + ratio * 25, total_m, weight))
                 break
 
-    # ========== TẦNG 10: MARKOV TRANSITION ==========
+    # TẦNG 10: MARKOV
     if n >= 10:
         trans = {"Tài": 0, "Xỉu": 0}
         for i in range(len(results) - 1):
-            if results[i] == last: trans[results[i + 1]] += 1
+            if results[i] == last:
+                trans[results[i + 1]] += 1
         total_t = trans["Tài"] + trans["Xỉu"]
         if total_t >= 3 and trans["Tài"] != trans["Xỉu"]:
             winner = "Tài" if trans["Tài"] > trans["Xỉu"] else "Xỉu"
             ratio = max(trans["Tài"], trans["Xỉu"]) / total_t
             candidates.append((winner, 58 + ratio * 20, total_t, 1.0))
 
-    # ========== TẦNG 11: DICE BIAS ==========
+    # TẦNG 11: DICE BIAS
     if dice_sums and len(dice_sums) >= 5:
         avg_recent = sum(dice_sums[:10]) / min(10, len(dice_sums))
-        if avg_recent >= 12.5: candidates.append(("Tài", 65.0, 10, 0.9))
-        elif avg_recent <= 8.0: candidates.append(("Xỉu", 65.0, 10, 0.9))
+        if avg_recent >= 12.5:
+            candidates.append(("Tài", 65.0, 10, 0.9))
+        elif avg_recent <= 8.0:
+            candidates.append(("Xỉu", 65.0, 10, 0.9))
 
-    # ========== TẦNG 12: MOMENTUM ==========
+    # TẦNG 12: MOMENTUM
     if n >= 10:
         r5_tai = results[:5].count("Tài")
         r10_tai = results[:10].count("Tài")
-        if r5_tai >= 4 and r10_tai <= 5: candidates.append(("Xỉu", 63.0, 10, 0.9))
-        elif r5_tai <= 1 and r10_tai >= 5: candidates.append(("Tài", 63.0, 10, 0.9))
+        if r5_tai >= 4 and r10_tai <= 5:
+            candidates.append(("Xỉu", 63.0, 10, 0.9))
+        elif r5_tai <= 1 and r10_tai >= 5:
+            candidates.append(("Tài", 63.0, 10, 0.9))
 
-    # ========== TẦNG 13: ZIGZAG NGẮN ==========
+    # TẦNG 13: ZIGZAG NGẮN
     if n >= 4:
         if results[0] != results[1] and results[1] != results[2] and results[2] != results[3]:
             candidates.append((opposite, 70.0, 8, 0.9))
 
-    # ========== TẦNG 14: SKEW DETECTION ==========
+    # TẦNG 14: SKEW
     if n >= 20:
         tai_ratio = results[:20].count("Tài") / 20
-        if tai_ratio >= 0.70: candidates.append(("Xỉu", 66.0, 20, 1.1))
-        elif tai_ratio <= 0.30: candidates.append(("Tài", 66.0, 20, 1.1))
+        if tai_ratio >= 0.70:
+            candidates.append(("Xỉu", 66.0, 20, 1.1))
+        elif tai_ratio <= 0.30:
+            candidates.append(("Tài", 66.0, 20, 1.1))
 
-    # ========== TẦNG 15: DRAGON-TIGER (đảo 6+) ==========
+    # TẦNG 15: DRAGON-TIGER
     if n >= 6:
         seg = results[:6]
         if all(seg[i] != seg[i + 1] for i in range(5)):
             candidates.append((opposite, 74.0, 6, 1.1))
 
-    # ========== TẦNG 16: ĐỐI XỨNG CHẴN/LẺ ⭐ ==========
+    # TẦNG 16: ĐỐI XỨNG CHẴN/LẺ
     if n >= 8:
         even_res = [results[i] for i in range(0, min(8, n), 2)]
         odd_res = [results[i] for i in range(1, min(8, n), 2)]
         if len(even_res) >= 3 and all(r == even_res[0] for r in even_res):
-            # Vị trí chẵn toàn Tài/Xỉu → vị trí lẻ có xu hướng ngược
             candidates.append((opposite, 62.0, len(even_res), 0.9))
         if len(odd_res) >= 3 and all(r == odd_res[0] for r in odd_res):
             candidates.append((opposite, 62.0, len(odd_res), 0.9))
 
-    # ========== TẦNG 17: LONG PATTERN (chu kỳ dài) ⭐ ==========
+    # TẦNG 17: LONG PATTERN
     long_pat = detect_long_pattern(results, min_len=6, max_len=20)
     if long_pat:
         candidates.append((long_pat['next'], long_pat['confidence'], long_pat['length'], 1.5))
 
-    # ========== TẦNG 18: STREAK-AWARE NHẸ ==========
+    # TẦNG 18: STREAK-AWARE NHẸ
     if current_len >= 3:
         candidates.append((opposite, 57.0, 5, 0.5))
 
@@ -551,20 +609,28 @@ def analyze_pattern(results, dice_sums=None, adaptive_boost=1.0):
 
 def get_adaptive_boost():
     with LOG_LOCK:
-        recent = [(p, rec) for p, rec in PREDICTION_LOG.items()
-                  if p > RESET_SESSION_ID and rec.get('is_correct') is not None]
-    if len(recent) < 10: return 1.0
+        recent = [
+            (p, rec) for p, rec in PREDICTION_LOG.items()
+            if p > RESET_SESSION_ID and rec.get('is_correct') is not None
+        ]
+    if len(recent) < 10:
+        return 1.0
     recent.sort(key=lambda x: x[0])
     recent = recent[-15:]
     acc = sum(1 for _, r in recent if r['is_correct']) / len(recent)
-    if acc >= 0.70: return 1.05
-    if acc >= 0.60: return 1.02
-    if acc <= 0.40: return 0.92
-    if acc <= 0.50: return 0.97
+    if acc >= 0.70:
+        return 1.05
+    if acc >= 0.60:
+        return 1.02
+    if acc <= 0.40:
+        return 0.92
+    if acc <= 0.50:
+        return 0.97
     return 1.0
 
+
 # =====================================================================
-# FETCH DỮ LIỆU
+# FETCH DATA
 # =====================================================================
 def fetch_sessions():
     try:
@@ -596,8 +662,9 @@ def fetch_sessions():
         rows.append({"phien": sid, "result": r, "dice": f"{d[0]} + {d[1]} + {d[2]}", "total": sum(d)})
     return rows, 'fallback'
 
+
 # =====================================================================
-# UPDATE LOG - TÍCH LŨY VĨNH VIỄN, KHÔNG BAO GIỜ TỰ XOÁ
+# LOG / STATS
 # =====================================================================
 def update_prediction_log(valid):
     new_added = False
@@ -605,7 +672,7 @@ def update_prediction_log(valid):
         for i, sess in enumerate(valid):
             phien = sess['phien']
             if phien in PREDICTION_LOG:
-                continue  # ⭐ BỎ QUA, KHÔNG XOÁ
+                continue
             history = [v['result'] for v in valid[:i]][::-1]
             dice = [v.get('total', 0) for v in valid[:i]][::-1]
             if len(history) < 3:
@@ -615,11 +682,11 @@ def update_prediction_log(valid):
                 'prediction': pred,
                 'result': sess['result'],
                 'confidence': conf,
-                'is_correct': (pred == sess['result'])
+                'is_correct': (pred == sess['result']),
             }
             new_added = True
     if new_added:
-        save_state()  # ⭐ Lưu xuống file ngay khi có dữ liệu mới
+        save_state()
 
 
 def compute_stats():
@@ -628,15 +695,18 @@ def compute_stats():
         for phien, rec in PREDICTION_LOG.items():
             if phien > RESET_SESSION_ID and rec.get('is_correct') is not None:
                 total += 1
-                if rec['is_correct']: correct += 1
+                if rec['is_correct']:
+                    correct += 1
     return total, correct
 
+
 # =====================================================================
-# FLASK ROUTES
+# ROUTES
 # =====================================================================
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
+
 
 @app.route('/api/history')
 def history():
@@ -649,99 +719,161 @@ def history():
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
 
-        # ⭐ Cache dự đoán phiên tiếp theo
-        if NEXT_PRED_CACHE['phien'] == latest_session['phien']:
-            next_pred, next_conf = NEXT_PRED_CACHE['prediction'], NEXT_PRED_CACHE['confidence']
+        if (NEXT_PRED_CACHE.get('phien') == latest_session['phien']
+                and NEXT_PRED_CACHE.get('prediction') in ("Tài", "Xỉu")):
+            next_pred = NEXT_PRED_CACHE['prediction']
+            next_conf = NEXT_PRED_CACHE['confidence']
         else:
             history_for_next = [v['result'] for v in valid][::-1]
             dice_for_next = [v.get('total', 0) for v in valid][::-1]
             boost = get_adaptive_boost()
             next_pred, next_conf = analyze_pattern(history_for_next, dice_for_next, boost)
-            NEXT_PRED_CACHE.update({'phien': latest_session['phien'], 'prediction': next_pred, 'confidence': next_conf})
+            NEXT_PRED_CACHE.update({
+                'phien': latest_session['phien'],
+                'prediction': next_pred,
+                'confidence': next_conf,
+            })
 
         out = [{
-            'phien': next_phien, 'is_next': True, 'prediction': next_pred,
-            'confidence': next_conf, 'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None
+            'phien': next_phien,
+            'is_next': True,
+            'prediction': next_pred,
+            'confidence': next_conf,
+            'result': 'Chờ...',
+            'dice': "? + ? + ?",
+            'is_correct': None,
         }]
 
-        MAX_DISPLAY = 100  # ⭐ Tăng lên 100 (log vẫn giữ vĩnh viễn phía server)
+        MAX_DISPLAY = 100
         displayed = 0
         with LOG_LOCK:
             for i in range(len(valid) - 1, -1, -1):
-                if displayed >= MAX_DISPLAY: break
+                if displayed >= MAX_DISPLAY:
+                    break
                 current_session = valid[i]
-                if current_session['phien'] <= RESET_SESSION_ID: break
+                if current_session['phien'] <= RESET_SESSION_ID:
+                    break
                 phien = current_session['phien']
                 rec = PREDICTION_LOG.get(phien)
                 if rec:
                     out.append({
-                        'phien': phien, 'is_next': False,
-                        'prediction': rec['prediction'], 'confidence': rec['confidence'],
-                        'result': rec['result'], 'dice': current_session['dice'],
-                        'is_correct': rec['is_correct']
+                        'phien': phien,
+                        'is_next': False,
+                        'prediction': rec['prediction'],
+                        'confidence': rec['confidence'],
+                        'result': rec['result'],
+                        'dice': current_session['dice'],
+                        'is_correct': rec['is_correct'],
                     })
                     displayed += 1
 
         return jsonify({
             'rows': out,
-            'stats': {'total': total_past, 'correct': correct_count, 'lose': total_past - correct_count}
+            'stats': {
+                'total': total_past,
+                'correct': correct_count,
+                'lose': total_past - correct_count,
+            },
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/api/predict')
 def predict_only():
+    """API dự đoán phiên tiếp theo — cập nhật log trước khi predict."""
     try:
-        raw_rows, _ = fetch_sessions()
+        raw_rows, source = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         if not valid:
             return jsonify({'status': 'error', 'message': 'Không có dữ liệu'}), 404
+
+        # ⭐ Update log trước để boost chính xác
+        update_prediction_log(valid)
+
         latest = valid[-1]
         next_phien = latest['phien'] + 1
-        if NEXT_PRED_CACHE['phien'] == latest['phien']:
-            pred, conf = NEXT_PRED_CACHE['prediction'], NEXT_PRED_CACHE['confidence']
+
+        cached = NEXT_PRED_CACHE
+        if (cached.get('phien') == latest['phien']
+                and cached.get('prediction') in ("Tài", "Xỉu")):
+            pred = cached['prediction']
+            conf = cached['confidence']
+            cached_hit = True
         else:
             hist = [v['result'] for v in valid][::-1]
             dice = [v.get('total', 0) for v in valid][::-1]
             boost = get_adaptive_boost()
             pred, conf = analyze_pattern(hist, dice, boost)
-            NEXT_PRED_CACHE.update({'phien': latest['phien'], 'prediction': pred, 'confidence': conf})
+            NEXT_PRED_CACHE.update({
+                'phien': latest['phien'],
+                'prediction': pred,
+                'confidence': conf,
+            })
+            cached_hit = False
+
+        total, correct = compute_stats()
+        accuracy = round(correct / total * 100, 1) if total > 0 else 0.0
+        boost = get_adaptive_boost()
+
         return jsonify({
-            'status': 'success', 'next_session': next_phien,
-            'prediction': pred, 'confidence': conf,
-            'adaptive_boost': round(get_adaptive_boost(), 3),
-            'updated_at': datetime.now().strftime('%H:%M:%S')
+            'status': 'success',
+            'next_session': next_phien,
+            'latest_session': latest['phien'],
+            'latest_result': latest['result'],
+            'latest_dice': latest['dice'],
+            'prediction': pred,
+            'confidence': conf,
+            'adaptive_boost': round(boost, 3),
+            'accuracy': accuracy,
+            'stats': {
+                'total': total,
+                'correct': correct,
+                'lose': total - correct,
+            },
+            'reset_session_id': RESET_SESSION_ID,
+            'data_source': source,
+            'cached': cached_hit,
+            'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         })
+
+    except requests.exceptions.Timeout:
+        return jsonify({'status': 'error', 'message': 'API timeout'}), 504
+    except requests.exceptions.RequestException as e:
+        return jsonify({'status': 'error', 'message': f'API lỗi: {e}'}), 502
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    """⭐ Reset."""
     global RESET_SESSION_ID
     try:
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
         if valid:
             RESET_SESSION_ID = valid[-1]['phien']
-            save_state()  # Persist ngay
+            save_state()
             return jsonify({'status': 'success', 'reset_to': RESET_SESSION_ID})
         return jsonify({'status': 'error', 'message': 'Không lấy được dữ liệu'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+
 @app.route('/api/stats')
 def stats_only():
-    """API xem stats tổng quát (bao gồm cả trước reset để audit)."""
     with LOG_LOCK:
         all_time = len(PREDICTION_LOG)
-        all_correct = sum(1 for r in PREDICTION_LOG.values() if r.get('is_correct') is True)
+        all_correct = sum(
+            1 for r in PREDICTION_LOG.values() if r.get('is_correct') is True
+        )
     total, correct = compute_stats()
     return jsonify({
         'current_period': {'total': total, 'correct': correct, 'lose': total - correct},
         'all_time': {'total': all_time, 'correct': all_correct, 'lose': all_time - all_correct},
-        'reset_session_id': RESET_SESSION_ID
+        'reset_session_id': RESET_SESSION_ID,
     })
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
