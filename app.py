@@ -9,159 +9,144 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=ab36aa88e2c9868ae0e8bc61adbd18dc"
+API_URL = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 RESET_SESSION_ID = 0
 
-# =====================================================================
-# GIAO DIỆN HTML PREMIUM V6.1 - SỐNG ĐỘNG
-# =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LC MD5 MINHLE ⚡ Premium </title>
+<title>LC MD5</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
     :root {
-        --bg-dark: #030512; --bg-deep: #060a1c; --bg-card: rgba(13, 20, 36, 0.72);
-        --bg-card-hover: rgba(19, 28, 48, 0.9);
-        --text-main: #f8fafc; --text-muted: #64748b;
-        --border-color: rgba(30, 41, 59, 0.85);
-        --tai-bg: linear-gradient(135deg, #0ea5e9, #0284c7); 
-        --xiu-bg: linear-gradient(135deg, #ec4899, #be185d);
-        --blue-main: #38bdf8; --blue-glow: rgba(56, 189, 248, 0.65);
-        --cyan: #22d3ee; --purple: #a78bfa; --pink: #f472b6; --gold: #fbbf24;
-        --lose-color: #ef4444; --win-color: #38bdf8;
+        --bg-primary: #f8fdff;
+        --bg-secondary: #e0f2fe;
+        --bg-card: #ffffff;
+        --bg-card-hover: #f8fdff;
+        --bg-active: linear-gradient(145deg, #ffffff, #f0f9ff);
+        --text-primary: #0c4a6e;
+        --text-secondary: #475569;
+        --text-muted: #94a3b8;
+        --border: #bae6fd;
+        --border-hover: #7dd3fc;
+        --border-active: #38bdf8;
+        
+        --blue-light: #e0f2fe;
+        --blue-soft: #7dd3fc;
+        --blue-primary: #0ea5e9;
+        --blue-deep: #0284c7;
+        --blue-dark: #075985;
+        --blue-glow: rgba(56, 189, 248, 0.35);
+        
+        --pink-primary: #ec4899;
+        --pink-deep: #db2777;
+        --pink-light: #fce7f3;
+        
+        --green: #10b981;
+        --red: #ef4444;
+        --gold: #f59e0b;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
     html, body { height: 100%; }
     
-    @keyframes bgFloat { 0%,100%{transform:translateY(0) translateX(0)} 50%{transform:translateY(-40px) translateX(30px)} }
-    @keyframes bgFloat2 { 0%,100%{transform:translateY(0) translateX(0)} 50%{transform:translateY(30px) translateX(-35px)} }
-    @keyframes bgFloat3 { 0%,100%{transform:translateY(0) scale(1)} 50%{transform:translateY(-25px) scale(1.3)} }
-    @keyframes orbA { 0%,100%{transform:translate(0,0) scale(1); opacity: 0.5} 50%{transform:translate(60px,-80px) scale(1.15); opacity: 0.8} }
-    @keyframes orbB { 0%,100%{transform:translate(0,0) scale(1); opacity: 0.4} 50%{transform:translate(-70px,60px) scale(1.2); opacity: 0.75} }
-    @keyframes orbC { 0%,100%{transform:translate(0,0) scale(1); opacity: 0.35} 50%{transform:translate(40px,50px) scale(1.1); opacity: 0.7} }
-    
-    @keyframes rainbow-border { 0%{border-color:#38bdf8;box-shadow:0 0 25px rgba(56,189,248,0.65),inset 0 0 25px rgba(56,189,248,0.1)} 
-        33%{border-color:#a78bfa;box-shadow:0 0 25px rgba(167,139,250,0.65),inset 0 0 25px rgba(167,139,250,0.1)}
-        66%{border-color:#f472b6;box-shadow:0 0 25px rgba(244,114,182,0.65),inset 0 0 25px rgba(244,114,182,0.1)}
-        100%{border-color:#38bdf8;box-shadow:0 0 25px rgba(56,189,248,0.65),inset 0 0 25px rgba(56,189,248,0.1)} }
-    
-    @keyframes textGlow { 0%,100%{text-shadow:0 0 8px var(--blue-glow),0 0 20px rgba(56,189,248,0.4)} 50%{text-shadow:0 0 20px var(--blue-main),0 0 40px rgba(56,189,248,0.6)} }
+    @keyframes bgFloat { 0%,100%{transform:translate(0,0)} 50%{transform:translate(30px,-40px)} }
+    @keyframes bgFloat2 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(-25px,35px)} }
+    @keyframes bubble { 0%,100%{transform:translateY(0) scale(1); opacity:0.4} 50%{transform:translateY(-20px) scale(1.15); opacity:0.8} }
+    @keyframes rainbow-border { 0%{border-color:#38bdf8;box-shadow:0 0 0 0 rgba(56,189,248,0.4),0 4px 20px rgba(56,189,248,0.2)} 
+        33%{border-color:#a78bfa;box-shadow:0 0 0 0 rgba(167,139,250,0.4),0 4px 20px rgba(167,139,250,0.2)}
+        66%{border-color:#f472b6;box-shadow:0 0 0 0 rgba(244,114,182,0.4),0 4px 20px rgba(244,114,182,0.2)}
+        100%{border-color:#38bdf8;box-shadow:0 0 0 0 rgba(56,189,248,0.4),0 4px 20px rgba(56,189,248,0.2)} }
+    @keyframes textGlow { 0%,100%{text-shadow:0 0 10px rgba(56,189,248,0.3)} 50%{text-shadow:0 0 20px rgba(56,189,248,0.6)} }
     @keyframes titleShine { 0%{background-position:-200% center} 100%{background-position:200% center} }
     @keyframes spin { to{transform:rotate(360deg)} }
     @keyframes slideIn { from{opacity:0;transform:translateY(24px) scale(0.94)} to{opacity:1;transform:translateY(0) scale(1)} }
     @keyframes shimmerBar { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
-    @keyframes statPulse { 0%,100%{text-shadow:0 0 10px var(--blue-glow)} 50%{text-shadow:0 0 25px var(--blue-main),0 0 40px var(--blue-glow)} }
-    @keyframes dotPulse { 0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,0.75)} 70%{box-shadow:0 0 0 14px rgba(56,189,248,0)} }
+    @keyframes statPop { 0%,100%{transform:scale(1)} 50%{transform:scale(1.04)} }
+    @keyframes dotPulse { 0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,0.6)} 70%{box-shadow:0 0 0 12px rgba(56,189,248,0)} }
     @keyframes ripple { 0%{transform:scale(0);opacity:0.7} 100%{transform:scale(4);opacity:0} }
-    @keyframes breathe { 0%,100%{opacity:0.6;transform:scale(1)} 50%{opacity:1;transform:scale(1.05)} }
     @keyframes wave { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
-    @keyframes diceRoll { 0%{transform:rotate(0) scale(1)} 50%{transform:rotate(180deg) scale(1.15)} 100%{transform:rotate(360deg) scale(1)} }
-    @keyframes fadeInUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
-    @keyframes borderFlow { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-    @keyframes iconFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+    @keyframes breathe { 0%,100%{opacity:0.7} 50%{opacity:1} }
+    @keyframes pulseRing { 0%{transform:scale(0.8);opacity:1} 100%{transform:scale(2);opacity:0} }
     
     body {
-        background: var(--bg-dark);
-        color: var(--text-main);
-        padding-bottom: 40px;
+        background: 
+            radial-gradient(circle at 20% 0%, rgba(56,189,248,0.15) 0%, transparent 40%),
+            radial-gradient(circle at 80% 100%, rgba(167,139,250,0.12) 0%, transparent 45%),
+            linear-gradient(180deg, #f8fdff 0%, #e0f2fe 40%, #f0f9ff 100%);
+        color: var(--text-primary);
         min-height: 100vh;
+        padding-bottom: 40px;
         overflow-x: hidden;
         position: relative;
-        background-image: 
-            radial-gradient(circle at 20% 0%, rgba(56,189,248,0.12) 0%, transparent 45%),
-            radial-gradient(circle at 80% 30%, rgba(167,139,250,0.10) 0%, transparent 45%),
-            radial-gradient(circle at 50% 100%, rgba(244,114,182,0.08) 0%, transparent 50%),
-            linear-gradient(180deg, #030512 0%, #060a1c 100%);
+        background-attachment: fixed;
     }
     
-    /* Floating orbs background */
-    .bg-orbs { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
-    .bg-orbs::before, .bg-orbs::after {
-        content: ''; position: absolute; border-radius: 50%; filter: blur(80px);
+    /* Bubble decorations */
+    .bubbles { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+    .bubbles::before, .bubbles::after {
+        content: ''; position: absolute; border-radius: 50%;
+        background: radial-gradient(circle, rgba(125,211,252,0.5), transparent 70%);
+        filter: blur(30px);
     }
-    .bg-orbs::before {
-        width: 350px; height: 350px; top: -100px; left: -80px;
-        background: radial-gradient(circle, rgba(56,189,248,0.35), transparent 70%);
-        animation: orbA 18s ease-in-out infinite;
+    .bubbles::before { width: 300px; height: 300px; top: -80px; left: -80px; animation: bgFloat 20s ease-in-out infinite; }
+    .bubbles::after { width: 350px; height: 350px; bottom: -100px; right: -100px; animation: bgFloat2 25s ease-in-out infinite; }
+    .bubble-mid {
+        position: fixed; width: 220px; height: 220px; top: 45%; left: 55%;
+        background: radial-gradient(circle, rgba(244,114,182,0.25), transparent 70%);
+        filter: blur(40px); border-radius: 50%;
+        animation: bubble 22s ease-in-out infinite; pointer-events: none; z-index: 0;
     }
-    .bg-orbs::after {
-        width: 400px; height: 400px; bottom: -120px; right: -100px;
+    .bubble-small1 {
+        position: fixed; width: 150px; height: 150px; top: 20%; right: 15%;
         background: radial-gradient(circle, rgba(167,139,250,0.3), transparent 70%);
-        animation: orbB 22s ease-in-out infinite;
-    }
-    .bg-orb-c {
-        position: fixed; width: 280px; height: 280px; top: 40%; left: 50%;
-        background: radial-gradient(circle, rgba(244,114,182,0.22), transparent 70%);
-        filter: blur(80px); border-radius: 50%;
-        animation: orbC 25s ease-in-out infinite; pointer-events: none; z-index: 0;
-    }
-    /* Stars twinkling */
-    .stars { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
-    .stars::before {
-        content: ''; position: absolute; inset: 0;
-        background-image: 
-            radial-gradient(1.5px 1.5px at 15% 20%, rgba(56,189,248,0.7), transparent 60%),
-            radial-gradient(1px 1px at 85% 60%, rgba(167,139,250,0.6), transparent 60%),
-            radial-gradient(1.5px 1.5px at 45% 85%, rgba(34,211,238,0.7), transparent 60%),
-            radial-gradient(1px 1px at 70% 15%, rgba(244,114,182,0.55), transparent 60%),
-            radial-gradient(2px 2px at 25% 70%, rgba(56,189,248,0.5), transparent 60%),
-            radial-gradient(1.5px 1.5px at 60% 45%, rgba(251,191,36,0.5), transparent 60%);
-        animation: bgFloat 20s ease-in-out infinite;
-    }
-    .stars::after {
-        content: ''; position: absolute; inset: 0;
-        background-image: 
-            radial-gradient(1px 1px at 10% 50%, rgba(56,189,248,0.5), transparent 60%),
-            radial-gradient(1px 1px at 90% 30%, rgba(167,139,250,0.5), transparent 60%),
-            radial-gradient(1.5px 1.5px at 55% 90%, rgba(244,114,182,0.5), transparent 60%),
-            radial-gradient(1.5px 1.5px at 35% 10%, rgba(56,189,248,0.55), transparent 60%);
-        animation: bgFloat2 25s ease-in-out infinite;
+        filter: blur(35px); border-radius: 50%;
+        animation: bubble 18s ease-in-out infinite reverse; pointer-events: none; z-index: 0;
     }
     
     /* HEADER */
     .header {
         display: flex; justify-content: space-between; align-items: center;
         padding: 15px 20px;
-        border-bottom: 1px solid var(--border-color);
-        background: linear-gradient(180deg, rgba(6,9,25,0.92), rgba(6,9,25,0.7));
+        background: rgba(255, 255, 255, 0.85);
         backdrop-filter: blur(20px);
+        border-bottom: 2px solid transparent;
+        border-image: linear-gradient(90deg, transparent, #7dd3fc, #a78bfa, #f472b6, #7dd3fc, transparent) 1;
         position: sticky; top: 0; z-index: 100;
-        box-shadow: 0 4px 30px rgba(56,189,248,0.08);
+        box-shadow: 0 4px 20px rgba(56,189,248,0.12);
     }
     .header-left { display: flex; align-items: center; gap: 11px; }
     .header-live-dot {
         width: 11px; height: 11px; border-radius: 50%;
-        background: radial-gradient(circle, #7dd3fc, #38bdf8);
+        background: radial-gradient(circle, #7dd3fc, #0ea5e9);
+        box-shadow: 0 0 12px #38bdf8, 0 0 0 3px rgba(56,189,248,0.2);
         animation: dotPulse 1.8s infinite;
-        box-shadow: 0 0 12px var(--blue-main);
     }
     .header-title {
         font-family: 'Orbitron', sans-serif;
         font-size: 19px; font-weight: 900; letter-spacing: 0.5px;
-        background: linear-gradient(90deg, #7dd3fc, #38bdf8, #a78bfa, #f472b6, #38bdf8, #7dd3fc);
+        background: linear-gradient(90deg, #0284c7, #38bdf8, #a78bfa, #f472b6, #38bdf8, #0284c7);
         background-size: 300% auto;
         -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-        animation: titleShine 5s linear infinite, textGlow 3s infinite;
+        animation: titleShine 5s linear infinite;
+        filter: drop-shadow(0 2px 4px rgba(56,189,248,0.3));
     }
     .btn-reset {
         position: relative; overflow: hidden;
-        background: rgba(239, 68, 68, 0.12);
-        color: var(--lose-color);
-        border: 1px solid var(--lose-color);
+        background: #fff;
+        color: var(--red);
+        border: 1.5px solid var(--red);
         padding: 8px 18px; border-radius: 10px;
         font-weight: 700; font-size: 13px; cursor: pointer;
         transition: all 0.3s ease;
-        box-shadow: 0 0 15px rgba(239,68,68,0.15);
+        box-shadow: 0 2px 10px rgba(239,68,68,0.15);
     }
     .btn-reset:hover {
-        background: var(--lose-color); color: #fff;
-        box-shadow: 0 0 25px rgba(239,68,68,0.65), inset 0 0 15px rgba(255,255,255,0.2);
+        background: var(--red); color: #fff;
+        box-shadow: 0 4px 20px rgba(239,68,68,0.4);
         transform: translateY(-2px);
     }
     .btn-reset:active::after {
@@ -178,23 +163,23 @@ HTML_TEMPLATE = """
     }
     .stat-item {
         flex: 1;
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
+        background: #ffffff;
+        border: 1.5px solid var(--border);
         border-radius: 14px;
         padding: 12px 10px; text-align: center;
         position: relative; overflow: hidden;
-        backdrop-filter: blur(14px);
         transition: all 0.35s ease;
+        box-shadow: 0 4px 15px rgba(56,189,248,0.08);
     }
     .stat-item:hover {
-        border-color: rgba(56,189,248,0.55);
+        border-color: var(--border-hover);
         transform: translateY(-3px);
-        box-shadow: 0 8px 25px rgba(56,189,248,0.15);
+        box-shadow: 0 8px 25px rgba(56,189,248,0.2);
     }
     .stat-item::before {
-        content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
-        background: linear-gradient(90deg, transparent, var(--blue-main), var(--purple), transparent);
-        background-size: 200% 100%;
+        content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 3px;
+        background: linear-gradient(90deg, #7dd3fc, #38bdf8, #a78bfa, #f472b6, #38bdf8, #7dd3fc);
+        background-size: 300% 100%;
         animation: shimmerBar 3s linear infinite;
     }
     .stat-label {
@@ -205,11 +190,12 @@ HTML_TEMPLATE = """
     .stat-value {
         font-family: 'Orbitron', sans-serif;
         font-size: 21px; font-weight: 900;
-        animation: statPulse 2.5s infinite;
+        color: var(--blue-dark);
     }
     .stat-value.win {
-        background: linear-gradient(135deg, #38bdf8, #22d3ee);
+        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        animation: statPop 2.5s infinite;
     }
     
     /* CONTAINER */
@@ -222,46 +208,46 @@ HTML_TEMPLATE = """
     
     /* CARD */
     .card-item {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
+        background: #ffffff;
+        border: 1.5px solid var(--border);
         border-radius: 14px;
         padding: 15px 17px;
         display: flex; justify-content: space-between; align-items: center;
         transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
         position: relative; overflow: hidden;
         animation: slideIn 0.5s ease-out backwards;
-        backdrop-filter: blur(14px);
+        box-shadow: 0 4px 15px rgba(56,189,248,0.08);
     }
     .card-item::before {
         content: ''; position: absolute;
         left: 0; top: 0; bottom: 0; width: 3px;
-        background: linear-gradient(180deg, transparent, var(--blue-main), var(--purple), transparent);
+        background: linear-gradient(180deg, transparent, #38bdf8, #a78bfa, transparent);
         opacity: 0; transition: opacity 0.35s;
     }
     .card-item:hover {
         background: var(--bg-card-hover);
         transform: translateY(-3px);
-        box-shadow: 0 10px 30px rgba(0,0,0,0.4), 0 0 20px rgba(56,189,248,0.1);
-        border-color: rgba(56,189,248,0.4);
+        box-shadow: 0 10px 30px rgba(56,189,248,0.18);
+        border-color: var(--border-hover);
     }
     .card-item:hover::before { opacity: 1; }
     
     .card-item.active {
-        background: linear-gradient(145deg, rgba(13,20,36,0.95), rgba(15,26,46,0.95));
+        background: var(--bg-active);
         animation: slideIn 0.5s ease-out backwards, rainbow-border 3.5s linear infinite;
-        border-width: 1.5px;
+        border-width: 2px;
         position: relative;
     }
     .card-item.active::after {
         content: '';
         position: absolute; top: 12px; right: 14px;
         width: 9px; height: 9px; border-radius: 50%;
-        background: radial-gradient(circle, #7dd3fc, #38bdf8);
-        box-shadow: 0 0 12px var(--blue-main);
+        background: radial-gradient(circle, #7dd3fc, #0284c7);
+        box-shadow: 0 0 12px #38bdf8;
         animation: dotPulse 1.5s infinite;
     }
     .card-item.active .id-text {
-        background: linear-gradient(90deg, #fff, #7dd3fc, #a78bfa, #fff);
+        background: linear-gradient(90deg, #0284c7, #38bdf8, #a78bfa, #0284c7);
         background-size: 200% auto;
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         animation: titleShine 3s linear infinite;
@@ -271,9 +257,10 @@ HTML_TEMPLATE = """
     .col-left { display: flex; flex-direction: column; gap: 6px; flex: 1.2; }
     .id-text {
         font-family: 'Orbitron', sans-serif;
-        font-size: 16px; font-weight: 800; color: #fff;
+        font-size: 16px; font-weight: 800;
         letter-spacing: 0.4px;
-        background: linear-gradient(90deg, #fff, #7dd3fc);
+        color: var(--blue-dark);
+        background: linear-gradient(90deg, #075985, #0ea5e9);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }
     .bot-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
@@ -286,39 +273,40 @@ HTML_TEMPLATE = """
     }
     .bet-badge::after {
         content: ''; position: absolute; inset: 0;
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
         animation: wave 2.5s infinite;
     }
     .bet-tai {
-        background: rgba(2, 132, 199, 0.22); color: #7dd3fc;
-        border: 1px solid rgba(56,189,248,0.5);
-        box-shadow: 0 0 12px rgba(56,189,248,0.2);
+        background: linear-gradient(135deg, #e0f2fe, #bae6fd);
+        color: #0369a1;
+        border: 1px solid #7dd3fc;
+        box-shadow: 0 2px 8px rgba(56,189,248,0.25);
     }
     .bet-xiu {
-        background: rgba(219, 39, 119, 0.22); color: #f9a8d4;
-        border: 1px solid rgba(244,114,182,0.5);
-        box-shadow: 0 0 12px rgba(244,114,182,0.2);
+        background: linear-gradient(135deg, #fce7f3, #fbcfe8);
+        color: #9f1239;
+        border: 1px solid #f9a8d4;
+        box-shadow: 0 2px 8px rgba(244,114,182,0.25);
     }
     .conf-text {
         color: var(--text-muted); font-size: 10.5px;
         font-style: italic; font-weight: 500;
     }
     .conf-text b {
-        color: var(--cyan); font-weight: 800; font-style: normal;
+        color: var(--blue-deep); font-weight: 800; font-style: normal;
         font-size: 12px;
     }
     .conf-bar-wrap {
-        height: 4px; background: rgba(56,189,248,0.12);
+        height: 4px; background: #e0f2fe;
         border-radius: 3px; overflow: hidden; margin-top: 4px;
-        position: relative;
     }
     .conf-bar {
         height: 100%; border-radius: 3px;
-        background: linear-gradient(90deg, #38bdf8, #22d3ee, #a78bfa, #f472b6, #38bdf8);
+        background: linear-gradient(90deg, #0ea5e9, #22d3ee, #a78bfa, #f472b6, #0ea5e9);
         background-size: 300% 100%;
         animation: shimmerBar 2s linear infinite;
         transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 0 0 8px var(--blue-glow);
+        box-shadow: 0 0 8px rgba(56,189,248,0.4);
     }
     
     .col-mid {
@@ -340,27 +328,29 @@ HTML_TEMPLATE = """
         animation: wave 2.8s infinite;
     }
     .pred-tai {
-        background: var(--tai-bg); color: #fff;
-        box-shadow: 0 0 18px rgba(2,132,199,0.7), inset 0 0 10px rgba(255,255,255,0.15);
+        background: linear-gradient(135deg, #0284c7, #0ea5e9);
+        color: #fff;
+        box-shadow: 0 4px 15px rgba(2,132,199,0.45), inset 0 1px 0 rgba(255,255,255,0.3);
     }
     .pred-xiu {
-        background: var(--xiu-bg); color: #fff;
-        box-shadow: 0 0 18px rgba(219,39,119,0.7), inset 0 0 10px rgba(255,255,255,0.15);
+        background: linear-gradient(135deg, #db2777, #ec4899);
+        color: #fff;
+        box-shadow: 0 4px 15px rgba(219,39,119,0.45), inset 0 1px 0 rgba(255,255,255,0.3);
     }
     .pred-empty {
         background: transparent;
-        border: 1px dashed var(--border-color);
+        border: 1.5px dashed var(--border);
         color: var(--text-muted);
     }
     .pred-empty::before { display: none; }
     .dice-text {
         font-family: 'Orbitron', sans-serif;
         font-size: 13px; font-weight: 700;
-        color: #cbd5e1; white-space: nowrap;
+        color: var(--text-secondary); white-space: nowrap;
         letter-spacing: 0.5px;
     }
     .card-item.active .dice-text {
-        color: var(--cyan);
+        color: var(--blue-deep);
         animation: breathe 1.8s ease-in-out infinite;
     }
     
@@ -373,18 +363,14 @@ HTML_TEMPLATE = """
         font-size: 13px; font-weight: 800;
         display: flex; align-items: center; gap: 5px;
     }
-    .status-win {
-        color: var(--win-color);
-        text-shadow: 0 0 14px var(--blue-glow);
-        animation: statPulse 2s infinite;
-    }
-    .status-lose { color: var(--lose-color); }
-    .status-wait { color: var(--blue-main); }
+    .status-win { color: var(--blue-deep); text-shadow: 0 0 8px rgba(56,189,248,0.4); }
+    .status-lose { color: var(--red); }
+    .status-wait { color: var(--blue-primary); }
     .spin { display: inline-block; animation: spin 2s linear infinite; }
     
     .loading {
         text-align: center; padding: 55px;
-        color: var(--blue-main); font-weight: 700;
+        color: var(--blue-primary); font-weight: 700;
         letter-spacing: 1.5px; font-size: 14px;
         animation: textGlow 2s infinite;
     }
@@ -399,9 +385,9 @@ HTML_TEMPLATE = """
 </style>
 </head>
 <body>
-<div class="bg-orbs"></div>
-<div class="bg-orb-c"></div>
-<div class="stars"></div>
+<div class="bubbles"></div>
+<div class="bubble-mid"></div>
+<div class="bubble-small1"></div>
 
 <div class="header">
     <div class="header-left">
@@ -444,7 +430,6 @@ function animateNumber(el, target, suffix = '') {
     }
     requestAnimationFrame(update);
 }
-
 async function fetchData() {
     if (isResetting) return;
     try {
@@ -452,14 +437,12 @@ async function fetchData() {
         const data = await r.json();
         renderList(data.rows || [], data.stats || {});
     } catch (e) {
-        document.getElementById('list-container').innerHTML = 
-            '<div class="loading" style="color:var(--lose-color)">⚠ Lỗi kết nối Server</div>';
+        document.getElementById('list-container').innerHTML =
+            '<div class="loading" style="color:var(--red)">⚠ Lỗi kết nối Server</div>';
     }
 }
-
 function renderList(rows, stats) {
     const container = document.getElementById('list-container');
-    
     if (stats.total > 0) {
         animateNumber(document.getElementById('stat-total'), stats.total);
         animateNumber(document.getElementById('stat-win'), stats.correct);
@@ -469,21 +452,17 @@ function renderList(rows, stats) {
         document.getElementById('stat-win').innerText = '0';
         document.getElementById('stat-rate').innerText = '0%';
     }
-    
     if (!rows.length) {
         container.innerHTML = '<div class="loading">Không có dữ liệu. Đợi phiên mới...</div>';
         return;
     }
-    
     container.innerHTML = '';
     rows.forEach((row, idx) => {
         const div = document.createElement('div');
         div.className = 'card-item' + (row.is_next ? ' active' : '');
         div.style.animationDelay = (idx * 45) + 'ms';
-        
         let predBadge = `<span class="pred-badge pred-empty">-</span>`;
-        let betBadge = `<span class="bet-badge" style="background:rgba(100,116,139,0.15);color:#94a3b8;border:1px solid rgba(100,116,139,0.3)">CƯỢC -</span>`;
-        
+        let betBadge = `<span class="bet-badge" style="background:#f1f5f9;color:#94a3b8;border:1px solid #cbd5e1">CƯỢC -</span>`;
         if (row.prediction === "Tài") {
             predBadge = `<span class="pred-badge pred-tai">TÀI</span>`;
             betBadge = `<span class="bet-badge bet-tai">CƯỢC TÀI</span>`;
@@ -491,28 +470,19 @@ function renderList(rows, stats) {
             predBadge = `<span class="pred-badge pred-xiu">XỈU</span>`;
             betBadge = `<span class="bet-badge bet-xiu">CƯỢC XỈU</span>`;
         }
-        
         let resultBadge = `<span class="pred-badge pred-empty">-</span>`;
         if (row.result === "Tài") resultBadge = `<span class="pred-badge pred-tai">TÀI</span>`;
         if (row.result === "Xỉu") resultBadge = `<span class="pred-badge pred-xiu">XỈU</span>`;
-        
         let diceDisplay = "? + ? + ?";
         if (row.dice !== "? + ? + ?") {
             const p = row.dice.split(" + ");
             diceDisplay = `${row.dice} (${parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2])})`;
         }
-        
         let statusHtml = '';
-        if (row.is_next) {
-            statusHtml = `<div class="status-text status-wait">Chờ <span class="spin"></span></div>`;
-        } else if (row.is_correct === true) {
-            statusHtml = `<div class="status-text status-win">Đúng Cửa ✅</div>`;
-        } else if (row.is_correct === false) {
-            statusHtml = `<div class="status-text status-lose">Sai Cửa❌</div>`;
-        } else {
-            statusHtml = `<div class="status-text" style="color:var(--text-muted)">-</div>`;
-        }
-        
+        if (row.is_next) statusHtml = `<div class="status-text status-wait">Chờ <span class="spin">⏳</span></div>`;
+        else if (row.is_correct === true) statusHtml = `<div class="status-text status-win">Đúng ✅</div>`;
+        else if (row.is_correct === false) statusHtml = `<div class="status-text status-lose">Sai ❌</div>`;
+        else statusHtml = `<div class="status-text" style="color:var(--text-muted)">-</div>`;
         div.innerHTML = `
             <div class="col-left">
                 <div class="id-text">#${row.phien}</div>
@@ -531,52 +501,43 @@ function renderList(rows, stats) {
         container.appendChild(div);
     });
 }
-
 async function confirmReset() {
     Swal.fire({
         title: 'Xác nhận Reset?',
         text: "Lịch sử hiển thị sẽ bị ẩn. Hệ thống vẫn tính ngầm!",
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#38bdf8',
-        cancelButtonColor: '#1e293b',
-        confirmButtonText: 'Đồng ý',
-        cancelButtonText: 'Hủy',
-        background: '#0d1424',
-        color: '#f1f5f9'
+        icon: 'warning', showCancelButton: true,
+        confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
+        confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy',
+        background: '#ffffff', color: '#0c4a6e'
     }).then(async (result) => {
         if (result.isConfirmed) {
             isResetting = true;
-            Swal.fire({ 
-                title: 'Đang Reset...', 
-                allowOutsideClick: false, 
+            Swal.fire({
+                title: 'Đang Reset...', allowOutsideClick: false,
                 didOpen: () => Swal.showLoading(),
-                background: '#0d1424', color: '#f1f5f9'
+                background: '#ffffff', color: '#0c4a6e'
             });
             try {
                 const res = await fetch('/api/reset', { method: 'POST' });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    Swal.fire({ 
-                        title: 'Thành công!', 
-                        text: 'Đã chốt mốc #' + data.reset_to, 
-                        icon: 'success', 
-                        confirmButtonColor: '#38bdf8',
-                        background: '#0d1424', color: '#f1f5f9'
+                    Swal.fire({
+                        title: 'Thành công!', text: 'Đã chốt mốc #' + data.reset_to,
+                        icon: 'success', confirmButtonColor: '#0ea5e9',
+                        background: '#ffffff', color: '#0c4a6e'
                     });
                     isResetting = false; fetchData();
                 } else throw new Error(data.message);
             } catch (error) {
                 Swal.fire({
                     title: 'Lỗi!', text: error.message, icon: 'error',
-                    background: '#0d1424', color: '#f1f5f9'
+                    background: '#ffffff', color: '#0c4a6e'
                 });
                 isResetting = false;
             }
         }
     });
 }
-
 fetchData();
 setInterval(fetchData, 5000);
 </script>
@@ -585,14 +546,18 @@ setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# THUẬT TOÁN V6.1 - 46 MẪU CẦU (ẨN KHỎI UI, VẪN TRẢ VỀ API)
+# THUẬT TOÁN V7.0 - ĐẢO & BÁO FULL SYSTEM
 # =====================================================================
 def analyze_pattern(results, dice_sums=None):
     """
     Trả về: (prediction, confidence, pattern_name, top_signals, signal_count)
-    - Đầy đủ 46 mẫu: đảo / bệt / chu kỳ / ngram / markov / dice / momentum /
-      fibonacci / symmetry / pattern / extreme / chuyển cầu
-    - Voting đa tầng với agreement boost
+    Đầy đủ các nhóm cầu:
+    - Bệt (bám/bẻ)
+    - Đảo đơn / kép / tam / tứ / hỗn hợp / gãy
+    - Báo bệt sắp gãy / báo đảo sắp gãy / báo chu kỳ sắp hết
+    - Cầu phức tạp (1-2-1, 2-1-2, 3-2-3, ...)
+    - N-gram, Markov, Dice bias, Momentum, Anti-momentum
+    - Fibonacci, Đối xứng, Pattern, Chu kỳ 4, Chuyển cầu
     """
     if not results or len(results) < 3:
         return "Tài", 50.0, "Khởi tạo", [], 0
@@ -605,7 +570,7 @@ def analyze_pattern(results, dice_sums=None):
     def add(pred, conf, name, priority):
         candidates.append((pred, round(conf, 1), name, priority))
     
-    # ---- BLOCKS ----
+    # ============================ BLOCKS ============================
     blocks = []
     curr_val, curr_count = results[0], 1
     for r in results[1:]:
@@ -616,50 +581,104 @@ def analyze_pattern(results, dice_sums=None):
             curr_val, curr_count = r, 1
     blocks.append({'val': curr_val, 'len': curr_count})
     
-    # ============ 1-8: CẦU BỆT ============
+    # ========== NHÓM 1: CẦU BỆT (1-8) ==========
     streak = blocks[0]['len']
     if streak == 2: add(last, 52.0, "Bám bệt 2", 52)
     elif streak == 3: add(last, 56.0, "Bám bệt 3", 56)
     elif streak == 4: add(last, 62.0, "Bám bệt 4", 62)
     elif streak == 5: add(opposite, 68.0, "Bẻ bệt 5", 68)
-    elif streak == 6: add(opposite, 76.0, "Bẻ bệt 6", 76)
-    elif streak == 7: add(opposite, 82.0, "Bẻ bệt 7", 82)
-    elif streak == 8: add(opposite, 85.0, "Bẻ bệt 8", 85)
-    elif streak >= 9: add(opposite, min(95.0, 88.0 + streak - 9), f"Bẻ bệt siêu mạnh {streak}", 90)
+    elif streak == 6: add(opposite, 78.0, "Bẻ bệt 6", 78)
+    elif streak == 7: add(opposite, 84.0, "Bẻ bệt 7", 84)
+    elif streak == 8: add(opposite, 88.0, "Bẻ bệt 8", 88)
+    elif streak >= 9: add(opposite, min(96.0, 90.0 + streak - 9), f"Bẻ bệt siêu mạnh {streak}", 92)
     
-    # ============ 9-12: ĐẢO 1-1 ============
+    # ========== NHÓM 2: ĐẢO ĐƠN 1-1 (9-16) ==========
     alt_len = 0
     for i in range(n - 1):
         if results[i] != results[i + 1]: alt_len += 1
         else: break
     
-    if 3 <= alt_len <= 4: add(opposite, 62.0, f"Đảo 1-1 ({alt_len})", 62)
-    elif 5 <= alt_len <= 6: add(opposite, 72.0, f"Đảo 1-1 ({alt_len})", 72)
-    elif 7 <= alt_len <= 8: add(opposite, 82.0, f"Đảo 1-1 dài ({alt_len})", 82)
-    elif alt_len >= 9: add(opposite, 90.0, f"Đảo 1-1 siêu dài ({alt_len})", 90)
+    if alt_len == 2: add(results[0], 58.0, "Đảo đơn ngắn 3", 58)
+    elif alt_len == 3: add(opposite, 66.0, "Đảo đơn 4", 66)
+    elif alt_len == 4: add(opposite, 72.0, "Đảo đơn 5", 72)
+    elif alt_len == 5: add(opposite, 80.0, "Đảo đơn 6", 80)
+    elif alt_len == 6: add(opposite, 86.0, "Đảo đơn 7", 86)
+    elif alt_len == 7: add(opposite, 90.0, "Đảo đơn 8 (sắp gãy)", 90)
+    elif alt_len >= 8: add(opposite, min(96.0, 92.0 + alt_len - 8), f"Đảo đơn siêu dài {alt_len+1}", 92)
     
-    # ============ 13-18: CHU KỲ 2-2 / 3-3 / 4-4 ============
+    # ========== NHÓM 3: ĐẢO KÉP 2-2-2 (17-20) ==========
+    if len(blocks) >= 4:
+        is_alt2 = all(blocks[i]['len'] == 2 for i in range(min(4, len(blocks))))
+        if is_alt2 and blocks[0]['val'] != blocks[1]['val']:
+            curr = blocks[0]['len']
+            if curr < 2: add(blocks[0]['val'], 88.0, "Bám đảo kép 2-2 (dở)", 88)
+            elif curr == 2: add(opposite, 92.0, "Bẻ đảo kép 2-2", 92)
+    
+    # ========== NHÓM 4: ĐẢO TAM 3-3-3 (21-24) ==========
+    if len(blocks) >= 4:
+        is_alt3 = all(blocks[i]['len'] == 3 for i in range(min(3, len(blocks))))
+        if is_alt3 and blocks[0]['val'] != blocks[1]['val']:
+            curr = blocks[0]['len']
+            if curr < 3: add(blocks[0]['val'], 90.0, "Bám đảo tam 3-3 (dở)", 90)
+            elif curr == 3: add(opposite, 94.0, "Bẻ đảo tam 3-3", 94)
+    
+    # ========== NHÓM 5: ĐẢO TỨ 4-4-4 (25-28) ==========
     if len(blocks) >= 3:
-        is_alt = True
-        for i in range(1, min(len(blocks), 6)):
-            if blocks[i]['val'] == blocks[i-1]['val']:
-                is_alt = False; break
-        
-        if is_alt:
-            if blocks[1]['len'] == 2 and blocks[2]['len'] == 2:
-                curr = blocks[0]['len']
-                if curr < 2: add(blocks[0]['val'], 88.0, "Bám cầu 2-2 (dở)", 88)
-                elif curr == 2: add(opposite, 92.0, "Bẻ cầu 2-2", 92)
-            if blocks[1]['len'] == 3 and blocks[2]['len'] == 3:
-                curr = blocks[0]['len']
-                if curr < 3: add(blocks[0]['val'], 90.0, "Bám cầu 3-3 (dở)", 90)
-                elif curr == 3: add(opposite, 94.0, "Bẻ cầu 3-3", 94)
-            if blocks[1]['len'] == 4 and blocks[2]['len'] == 4:
-                curr = blocks[0]['len']
-                if curr < 4: add(blocks[0]['val'], 92.0, "Bám cầu 4-4 (dở)", 92)
-                elif curr == 4: add(opposite, 95.0, "Bẻ cầu 4-4", 95)
+        is_alt4 = all(blocks[i]['len'] == 4 for i in range(min(3, len(blocks))))
+        if is_alt4 and blocks[0]['val'] != blocks[1]['val']:
+            curr = blocks[0]['len']
+            if curr < 4: add(blocks[0]['val'], 92.0, "Bám đảo tứ 4-4 (dở)", 92)
+            elif curr == 4: add(opposite, 95.0, "Bẻ đảo tứ 4-4", 95)
     
-    # ============ 19-24: CẦU PHỨC TẠP ============
+    # ========== NHÓM 6: ĐẢO HỖN HỢP 1-2 / 2-1 (29-32) ==========
+    if len(blocks) >= 4:
+        lens = [b['len'] for b in blocks[:5]]
+        # 1-2-1-2
+        if lens[:4] == [1, 2, 1, 2]: add(opposite, 82.0, "Đảo hỗn hợp 1-2-1-2", 82)
+        # 2-1-2-1
+        elif lens[:4] == [2, 1, 2, 1]: add(opposite, 82.0, "Đảo hỗn hợp 2-1-2-1", 82)
+        # 1-2-2-1 (đối xứng)
+        elif lens[:4] == [1, 2, 2, 1]: add(blocks[0]['val'], 78.0, "Đảo 1-2-2-1", 78)
+        # 2-1-1-2
+        elif lens[:4] == [2, 1, 1, 2]: add(blocks[0]['val'], 78.0, "Đảo 2-1-1-2", 78)
+    
+    # ========== NHÓM 7: ĐẢO GÃY (33-36) ==========
+    # Đảo dài vừa gãy -> chuyển sang bệt mới
+    if alt_len == 0 and len(blocks) >= 2:
+        prev_alt = 0
+        for i in range(1, len(blocks)):
+            if blocks[i]['val'] != blocks[i-1]['val']: prev_alt += 1
+            else: break
+        # Nếu trước đó có đảo 4+ và vừa gãy -> bám bệt mới
+        if prev_alt >= 4 and blocks[0]['len'] <= 2:
+            add(blocks[0]['val'], 74.0, f"Đảo {prev_alt} vừa gãy → bám bệt", 74)
+    
+    # ========== NHÓM 8: BÁO BỆT SẮP GÃY (37-40) ==========
+    # Bệt dài 6+ -> tín hiệu báo sắp gãy mạnh (dice, momentum đối nghịch)
+    if streak >= 6:
+        # Báo cấp 1: streak 6
+        if streak == 6: add(opposite, 80.0, "BÁO gãy bệt 6", 80)
+        elif streak == 7: add(opposite, 86.0, "BÁO gãy bệt 7", 86)
+        elif streak >= 8: add(opposite, 90.0, f"BÁO gãy bệt {streak}", 90)
+    
+    # ========== NHÓM 9: BÁO ĐẢO SẮP GÃY (41-44) ==========
+    # Đảo dài 6+ -> tín hiệu báo sắp gãy sang bệt
+    if alt_len >= 6:
+        if alt_len == 6: add(last, 72.0, "BÁO gãy đảo 6", 72)
+        elif alt_len == 7: add(last, 80.0, "BÁO gãy đảo 7", 80)
+        elif alt_len >= 8: add(last, 86.0, f"BÁO gãy đảo {alt_len}", 86)
+    
+    # ========== NHÓM 10: BÁO CHU KỲ SẮP HẾT (45-47) ==========
+    # Phát hiện chu kỳ 2-2, 3-3 sắp kết thúc (blốc hiện tại gần đủ)
+    if len(blocks) >= 3:
+        if blocks[1]['len'] == 2 and blocks[2]['len'] == 2:
+            if blocks[0]['len'] == 1: add(blocks[0]['val'], 85.0, "BÁO chu kỳ 2-2 sắp hết (còn 1)", 85)
+            elif blocks[0]['len'] == 2: add(opposite, 90.0, "BÁO chu kỳ 2-2 kết thúc", 90)
+        if blocks[1]['len'] == 3 and blocks[2]['len'] == 3:
+            if blocks[0]['len'] == 2: add(blocks[0]['val'], 88.0, "BÁO chu kỳ 3-3 sắp hết (còn 1)", 88)
+            elif blocks[0]['len'] == 3: add(opposite, 92.0, "BÁO chu kỳ 3-3 kết thúc", 92)
+    
+    # ========== NHÓM 11: CẦU PHỨC TẠP (48-55) ==========
     if len(blocks) >= 4:
         lens = [b['len'] for b in blocks[:5]]
         if lens[0] == 1 and lens[1] == 2 and lens[2] == 1: add(opposite, 82.0, "Cầu 1-2-1", 82)
@@ -667,10 +686,12 @@ def analyze_pattern(results, dice_sums=None):
         if lens[0] == 2 and lens[1] == 1 and lens[2] == 1: add(blocks[0]['val'], 74.0, "Cầu 1-1-2", 74)
         if lens[0] == 1 and lens[1] == 2 and lens[2] == 2: add(blocks[0]['val'], 74.0, "Cầu 2-2-1", 74)
         if lens[0] == 3 and lens[1] == 1 and lens[2] == 3: add(blocks[0]['val'], 78.0, "Cầu 3-1-3", 78)
+        if lens[0] == 3 and lens[1] == 2 and lens[2] == 3: add(blocks[0]['val'], 80.0, "Cầu 3-2-3", 80)
+        if lens[0] == 2 and lens[1] == 3 and lens[2] == 2: add(blocks[0]['val'], 80.0, "Cầu 2-3-2", 80)
         if lens[0] == 3 and lens[1] == 2 and lens[2] == 1: add(blocks[0]['val'], 76.0, "Cầu 1-2-3", 76)
     
-    # ============ 25-29: N-GRAM ============
-    for ns in [3, 4, 5, 6, 7]:
+    # ========== NHÓM 12: N-GRAM (56-61) ==========
+    for ns in [3, 4, 5, 6, 7, 8]:
         if n < ns + 1: continue
         current_seq = tuple(results[:ns])
         match_tai, match_xiu = 0, 0
@@ -684,9 +705,9 @@ def analyze_pattern(results, dice_sums=None):
             ratio = max(match_tai, match_xiu) / total
             if ratio >= 0.6:
                 conf = 60 + ratio * 22
-                add(winner, conf, f"N-gram {ns} ({max(match_tai, match_xiu)}/{total})", 60 + (8 - ns))
+                add(winner, conf, f"N-gram {ns} ({max(match_tai, match_xiu)}/{total})", 58 + (8 - ns))
     
-    # ============ 30: MARKOV ============
+    # ========== NHÓM 13: MARKOV (62) ==========
     if n >= 6:
         trans = {"Tài": 0, "Xỉu": 0}
         for i in range(len(results) - 1):
@@ -695,46 +716,47 @@ def analyze_pattern(results, dice_sums=None):
         if total >= 3 and trans["Tài"] != trans["Xỉu"]:
             winner = "Tài" if trans["Tài"] > trans["Xỉu"] else "Xỉu"
             ratio = max(trans["Tài"], trans["Xỉu"]) / total
-            add(winner, 62 + ratio * 15, "Markov chuyển tiếp", 65)
+            add(winner, 62 + ratio * 15, "Markov chuyển tiếp", 62)
     
-    # ============ 31-34: DICE BIAS ============
+    # ========== NHÓM 14: DICE BIAS (63-66) ==========
     if dice_sums and len(dice_sums) >= 5:
         recent = dice_sums[:8]
         avg = sum(recent) / len(recent)
-        if avg >= 12.5: add("Tài", 68.0, f"Xúc xắc lệch Tài mạnh ({avg:.1f})", 66)
-        elif avg <= 8.5: add("Xỉu", 68.0, f"Xúc xắc lệch Xỉu mạnh ({avg:.1f})", 66)
-        elif avg >= 11.5: add("Tài", 58.0, f"Xúc xắc nghiêng Tài ({avg:.1f})", 55)
-        elif avg <= 9.5: add("Xỉu", 58.0, f"Xúc xắc nghiêng Xỉu ({avg:.1f})", 55)
+        if avg >= 12.5: add("Tài", 70.0, f"Dice lệch Tài mạnh ({avg:.1f})", 68)
+        elif avg <= 8.5: add("Xỉu", 70.0, f"Dice lệch Xỉu mạnh ({avg:.1f})", 68)
+        elif avg >= 11.5: add("Tài", 58.0, f"Dice nghiêng Tài ({avg:.1f})", 55)
+        elif avg <= 9.5: add("Xỉu", 58.0, f"Dice nghiêng Xỉu ({avg:.1f})", 55)
     
-    # ============ 35-37: MOMENTUM ============
+    # ========== NHÓM 15: MOMENTUM (67-70) ==========
     if n >= 10:
-        tai_count = results[:10].count("Tài")
-        xiu_count = 10 - tai_count
-        if tai_count >= 8: add("Tài", 68.0, f"Momentum Tài ({tai_count}/10)", 66)
-        elif xiu_count >= 8: add("Xỉu", 68.0, f"Momentum Xỉu ({xiu_count}/10)", 66)
-        elif tai_count >= 7: add("Tài", 60.0, f"Xu hướng Tài ({tai_count}/10)", 58)
-        elif xiu_count >= 7: add("Xỉu", 60.0, f"Xu hướng Xỉu ({xiu_count}/10)", 58)
+        tai_c = results[:10].count("Tài")
+        xiu_c = 10 - tai_c
+        if tai_c >= 9: add("Tài", 74.0, f"Momentum Tài cực mạnh ({tai_c}/10)", 72)
+        elif xiu_c >= 9: add("Xỉu", 74.0, f"Momentum Xỉu cực mạnh ({xiu_c}/10)", 72)
+        elif tai_c >= 8: add("Tài", 66.0, f"Momentum Tài ({tai_c}/10)", 64)
+        elif xiu_c >= 8: add("Xỉu", 66.0, f"Momentum Xỉu ({xiu_c}/10)", 64)
     
     if n >= 12:
         tai_c = results[:12].count("Tài")
         xiu_c = 12 - tai_c
-        if tai_c >= 10: add("Xỉu", 70.0, f"Đảo xu hướng Tài ({tai_c}/12)", 68)
-        elif xiu_c >= 10: add("Tài", 70.0, f"Đảo xu hướng Xỉu ({xiu_c}/12)", 68)
+        if tai_c >= 10: add("Xỉu", 72.0, f"Đảo momentum Tài ({tai_c}/12)", 70)
+        elif xiu_c >= 10: add("Tài", 72.0, f"Đảo momentum Xỉu ({xiu_c}/12)", 70)
     
-    # ============ 38-40: FIBONACCI ============
+    # ========== NHÓM 16: FIBONACCI (71-74) ==========
     if len(blocks) >= 3:
         fib = [b['len'] for b in blocks[:4]]
         if fib[:3] == [1, 1, 2]: add(blocks[0]['val'], 72.0, "Fibonacci 1-1-2", 70)
         elif fib[:3] == [1, 2, 3]: add(blocks[0]['val'], 72.0, "Fibonacci 1-2-3", 70)
         elif len(fib) >= 4 and fib[:4] == [1, 1, 2, 3]: add(blocks[0]['val'], 76.0, "Fibonacci 1-1-2-3", 74)
+        elif fib[:3] == [2, 3, 5]: add(blocks[0]['val'], 76.0, "Fibonacci 2-3-5", 74)
     
-    # ============ 41-42: ĐỐI XỨNG ============
+    # ========== NHÓM 17: ĐỐI XỨNG (75-76) ==========
     if n >= 8:
         left, right = results[:4], results[4:8]
         if left == right: add(results[0], 70.0, "Đối xứng 4-4", 68)
         elif left == right[::-1]: add(opposite, 68.0, "Đối xứng gương", 66)
     
-    # ============ 43: PATTERN 2 PHIÊN ============
+    # ========== NHÓM 18: PATTERN 2/3 PHIÊN (77-78) ==========
     if n >= 4:
         last2 = tuple(results[:2])
         m_t, m_x = 0, 0
@@ -747,21 +769,21 @@ def analyze_pattern(results, dice_sums=None):
             winner = "Tài" if m_t > m_x else "Xỉu"
             add(winner, 65.0, f"Pattern 2 phiên ({max(m_t, m_x)}/{total})", 62)
     
-    # ============ 44: DICE EXTREME ============
+    # ========== NHÓM 19: DICE EXTREME (79-80) ==========
     if dice_sums and len(dice_sums) >= 6:
         last3 = dice_sums[:3]
-        if all(s >= 14 for s in last3): add("Xỉu", 62.0, "3 phiên Tài cao đột biến", 60)
-        elif all(s <= 7 for s in last3): add("Tài", 62.0, "3 phiên Xỉu thấp đột biến", 60)
+        if all(s >= 14 for s in last3): add("Xỉu", 65.0, "3 phiên dice cao đột biến", 62)
+        elif all(s <= 7 for s in last3): add("Tài", 65.0, "3 phiên dice thấp đột biến", 62)
     
-    # ============ 45: CHU KỲ 4 LẶP ============
+    # ========== NHÓM 20: CHU KỲ 4 LẶP (81) ==========
     if n >= 8:
         if results[4:8] == results[:4]: add(opposite, 66.0, "Chu kỳ 4 phiên lặp", 64)
     
-    # ============ 46: CHUYỂN CẦU MỚI ============
+    # ========== NHÓM 21: CHUYỂN CẦU MỚI (82) ==========
     if len(blocks) == 2 and blocks[1]['len'] >= 4 and blocks[0]['len'] <= 2:
-        add(blocks[0]['val'], 74.0, f"Chuyển cầu mới (bệt {blocks[1]['len']} vừa gãy)", 72)
+        add(blocks[0]['val'], 76.0, f"Chuyển cầu (bệt {blocks[1]['len']} vừa gãy)", 74)
     
-    # ============ VOTING ============
+    # ============================ VOTING SYSTEM ============================
     if not candidates:
         return opposite, 55.0, "Đảo nhịp (mặc định)", [], 0
     
@@ -769,23 +791,26 @@ def analyze_pattern(results, dice_sums=None):
     xiu_w = sum(c[1] for c in candidates if c[0] == "Xỉu")
     total_w = tai_w + xiu_w
     final_pred = "Tài" if tai_w >= xiu_w else "Xỉu"
-    win_w = max(tai_w, xiu_w)
-    agreement = win_w / total_w if total_w > 0 else 0.5
+    winning_w = max(tai_w, xiu_w)
+    agreement = winning_w / total_w if total_w > 0 else 0.5
     
     matching = [c for c in candidates if c[0] == final_pred]
     best_matching = max(matching, key=lambda x: (x[3], x[1]))
     base_conf = best_matching[1]
     
-    if agreement >= 0.75: final_conf = min(98.0, base_conf * 1.10)
-    elif agreement >= 0.65: final_conf = min(96.0, base_conf * 1.05)
-    elif agreement >= 0.55: final_conf = base_conf
-    elif agreement >= 0.45: final_conf = base_conf * 0.92
-    else: final_conf = base_conf * 0.85
+    # Calibration theo agreement + sample size
+    sample_factor = min(1.05, 0.85 + n * 0.01)  # n càng lớn càng tin
+    
+    if agreement >= 0.78: final_conf = min(98.0, base_conf * 1.12 * sample_factor)
+    elif agreement >= 0.68: final_conf = min(96.0, base_conf * 1.06 * sample_factor)
+    elif agreement >= 0.58: final_conf = base_conf * sample_factor
+    elif agreement >= 0.48: final_conf = base_conf * 0.92 * sample_factor
+    else: final_conf = base_conf * 0.82 * sample_factor
     
     top_signals = sorted(candidates, key=lambda x: (x[3], x[1]), reverse=True)[:5]
     signal_names = [f"{s[2]}→{s[0]}({s[1]}%)" for s in top_signals]
     
-    return final_pred, round(final_conf, 1), best_matching[2], signal_names, len(candidates)
+    return final_pred, round(min(98.0, final_conf), 1), best_matching[2], signal_names, len(candidates)
 
 
 # =====================================================================
@@ -847,7 +872,7 @@ def history():
         h_next = [v['result'] for v in valid][::-1]
         d_next = [v.get('total', 0) for v in valid][::-1]
         
-        next_pred, next_conf, next_pat, _, _ = analyze_pattern(h_next, d_next)
+        next_pred, next_conf, _, _, _ = analyze_pattern(h_next, d_next)
         
         out.append({
             'phien': next_phien, 'is_next': True,
@@ -887,7 +912,6 @@ def history():
 
 @app.route('/api/predict')
 def predict_only():
-    """API dự đoán nhanh phiên tiếp theo"""
     try:
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
@@ -915,7 +939,6 @@ def predict_only():
 
 @app.route('/api/signals')
 def signals_api():
-    """API chi tiết tất cả tín hiệu (debug/analysis)"""
     try:
         raw_rows, _ = fetch_sessions()
         valid = sorted(raw_rows, key=lambda x: x['phien'])
@@ -941,8 +964,8 @@ def signals_api():
             'all_signals': top_sig,
             'recent_results': h_next[:15],
             'recent_dice': d_next[:15],
-            'algorithm_version': 'V6.1',
-            'total_patterns': 46,
+            'algorithm_version': 'V7.0',
+            'total_patterns': 82,
             'updated_at': datetime.now().strftime('%H:%M:%S')
         })
     except Exception as e:
