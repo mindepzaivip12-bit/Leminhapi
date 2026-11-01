@@ -236,7 +236,7 @@ HTML_TEMPLATE = """
     }
 
     .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
-    .algo-vote { font-size: 10px; color: var(--tai-color); background: var(--tai-bg); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
+    .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
 
     @media (max-width: 500px) {
@@ -370,11 +370,11 @@ function renderTable(rows, stats) {
         if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
 
-        let voteHtml = "";
-        if (row.votes && row.prediction !== "-") {
-            voteHtml = `<div class="algo-vote">${row.votes} Thuật toán đồng ý</div>`;
+        let confHtml = "";
+        if (row.conf && row.prediction !== "-") {
+            confHtml = `<div class="conf-badge">${row.conf}%</div>`;
         }
-        let predFull = `<div style="display:flex; flex-direction:column; align-items:center;">${predHtml}${voteHtml}</div>`;
+        let predFull = `<div style="display:flex; flex-direction:column; align-items:center;">${predHtml}${confHtml}</div>`;
 
         let resultHtml = `<span class="badge badge-empty">-</span>`;
         if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
@@ -589,9 +589,9 @@ def algo_fairness_balancer(pred_history):
 
 def adaptive_ensemble_predict(results, pred_history, algo_performance):
     if not results:
-        return "Tài", 50.0, 0
+        return "Tài", 50
     if len(results) < 3:
-        return results[0], 50.0, 0
+        return results[0], 50
 
     groups = get_groups(results)
     
@@ -636,16 +636,22 @@ def adaptive_ensemble_predict(results, pred_history, algo_performance):
             elif pred == "Xỉu": score_xiu += final_weight
 
     if score_tai == 0 and score_xiu == 0:
-        return results[0], 50.0, 0
+        return results[0], 50
 
+    total_score = score_tai + score_xiu
     if score_tai > score_xiu:
-        confidence = min(50 + (score_tai / max(active_votes, 1)) * 4.5, 98)
-        return "Tài", confidence, active_votes
+        # Tự động scale tỉ lệ từ 50 đến 100%
+        ratio = score_tai / total_score if total_score > 0 else 0.5
+        confidence = int(round(50 + ratio * 50))
+        confidence = max(50, min(100, confidence))
+        return "Tài", confidence
     elif score_xiu > score_tai:
-        confidence = min(50 + (score_xiu / max(active_votes, 1)) * 4.5, 98)
-        return "Xỉu", confidence, active_votes
+        ratio = score_xiu / total_score if total_score > 0 else 0.5
+        confidence = int(round(50 + ratio * 50))
+        confidence = max(50, min(100, confidence))
+        return "Xỉu", confidence
     else:
-        return ("Xỉu" if results[0] == "Tài" else "Tài"), 50.0, active_votes
+        return ("Xỉu" if results[0] == "Tài" else "Tài"), 50
 
 
 # =====================================================================
@@ -689,7 +695,7 @@ def history():
         pred_history = []
         algo_performance = {k: {"correct": 0, "total": 0} for k in ["pattern", "markov", "bayes", "oscillator", "mean_rev", "streak", "fairness"]}
         
-        next_pred, next_conf, next_votes = adaptive_ensemble_predict(history_for_next, pred_history, algo_performance)
+        next_pred, next_conf = adaptive_ensemble_predict(history_for_next, pred_history, algo_performance)
 
         out.append({
             'phien': next_phien,
@@ -698,7 +704,7 @@ def history():
             'result': 'Chờ...',
             'dice': "? + ? + ?",
             'is_correct': None,
-            'votes': next_votes
+            'conf': next_conf
         })
 
         scan_limit = min(len(valid), 500)
@@ -709,13 +715,13 @@ def history():
             history = [v['result'] for v in valid[:i]][::-1]
             
             if history:
-                pred, conf, votes = adaptive_ensemble_predict(history, pred_history, algo_performance)
+                pred, conf = adaptive_ensemble_predict(history, pred_history, algo_performance)
                 is_correct = (pred == current_session['result'])
                 total_past += 1
                 if is_correct:
                     correct_count += 1
             else:
-                pred, conf, votes = "-", 0, 0
+                pred, conf = "-", 50
                 is_correct = None
 
             if history and pred != "-":
@@ -744,7 +750,7 @@ def history():
                 'result': current_session['result'],
                 'dice': current_session['dice'],
                 'is_correct': is_correct,
-                'votes': votes
+                'conf': conf
             })
 
         return jsonify({
