@@ -489,7 +489,7 @@ def fetch_sessions(api_type='md5'):
     return [], False
 
 # =====================================================================
-# HỆ THỐNG TỰ THÍCH NGHI & ĐÀO SÂU MẪU (DEEP ENSEMBLE v15.0)
+# HỆ THỐNG ĐẢO CẦU & ENSEMBLE NÂNG CẤP (v16.0)
 # =====================================================================
 
 def get_groups(results):
@@ -507,44 +507,44 @@ def get_groups(results):
     groups.append(count)
     return groups
 
-def algo_pattern_matrix(results, groups):
-    if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 3 and groups[:3] == [2, 2, 2]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 3 and groups[:3] == [3, 3, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 2 and groups[:2] == [4, 4]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 4 and groups[:4] == [1, 2, 3, 4]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 3 and groups[:3] == [1, 2, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 3 and groups[:3] == [3, 2, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 4 and groups[:4] == [1, 1, 2, 2]: return results[0]
-    if len(groups) >= 3 and groups[:3] == [1, 2, 2]: return results[0]
-    if len(groups) >= 3 and groups[:3] == [2, 2, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if groups[0] >= 5: return "Tài" if results[0] == "Xỉu" else "Xỉu"
+def algo_pattern_matrix_v16(results, groups):
+    if not groups: return None
+    # Bắt bẻ cầu bệt khi dài >= 4
+    if groups[0] >= 4:
+        return "Tài" if results[0] == "Xỉu" else "Xỉu"
+    # Bắt cầu 1-1 hoặc cầu đảo nhịp
+    if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]:
+        return "Tài" if results[0] == "Xỉu" else "Xỉu"
+    if len(groups) >= 3 and groups[:3] == [2, 2, 2]:
+        return "Tài" if results[0] == "Xỉu" else "Xỉu"
+    if len(groups) >= 3 and groups[:3] == [1, 2, 1]:
+        return results[0]
     return None
 
-def algo_markov_chain(results):
-    if len(results) < 20: return None
-    sample_space = results[:50]
+def algo_markov_chain_v16(results):
+    if len(results) < 15: return None
+    sample_space = results[:40]
     last = sample_space[0]
     transitions = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
     for i in range(len(sample_space) - 1):
         transitions[sample_space[i+1]][sample_space[i]] += 1
     total = sum(transitions[last].values())
-    if total > 5:
+    if total >= 4:
         prob_tai = transitions[last]["Tài"] / total
-        if prob_tai > 0.58: return "Tài"
-        if prob_tai < 0.42: return "Xỉu"
+        if prob_tai > 0.60: return "Tài"
+        if prob_tai < 0.40: return "Xỉu"
     return None
 
-def algo_bayesian(results):
-    if len(results) < 25: return None
-    sample_space = results[:50]
-    if len(sample_space) < 4: return None
-    target_seq = tuple(sample_space[:4])
+def algo_bayesian_v16(results):
+    if len(results) < 20: return None
+    sample_space = results[:30]
+    if len(sample_space) < 3: return None
+    target_seq = tuple(sample_space[:3])
     count_target = 0
     count_next_tai = 0
     count_next_xiu = 0
-    for i in range(len(sample_space) - 4):
-        seq = tuple(sample_space[i+1:i+5])
+    for i in range(len(sample_space) - 3):
+        seq = tuple(sample_space[i+1:i+4])
         if seq == target_seq:
             count_target += 1
             if sample_space[i] == "Tài": count_next_tai += 1
@@ -552,38 +552,40 @@ def algo_bayesian(results):
     if count_target >= 1:
         total_matched = count_next_tai + count_next_xiu
         if total_matched > 0:
-            if (count_next_tai / total_matched) > 0.62: return "Tài"
-            if (count_next_xiu / total_matched) > 0.62: return "Xỉu"
+            if (count_next_tai / total_matched) >= 0.65: return "Tài"
+            if (count_next_xiu / total_matched) >= 0.65: return "Xỉu"
     return None
 
-def algo_oscillator(results):
-    if len(results) < 20: return None
-    recent = results[:35]
+def algo_oscillator_v16(results):
+    if len(results) < 15: return None
+    recent = results[:25]
     tai_count = recent.count("Tài")
     ratio = tai_count / len(recent)
-    if ratio >= 0.72: return "Xỉu"
-    if ratio <= 0.28: return "Tài"
+    if ratio >= 0.75: return "Xỉu"
+    if ratio <= 0.25: return "Tài"
     return None
 
-def algo_mean_reversion(results):
-    if len(results) < 40: return None
-    recent = results[:50]
+def algo_mean_reversion_v16(results):
+    if len(results) < 30: return None
+    recent = results[:40]
     tai_ratio = recent.count("Tài") / len(recent)
-    if tai_ratio > 0.65: return "Xỉu"
-    if tai_ratio < 0.35: return "Tài"
+    if tai_ratio > 0.70: return "Xỉu"
+    if tai_ratio < 0.30: return "Tài"
     return None
 
-def algo_streak_exhaustion(results, groups):
-    if groups[0] >= 5: 
+def algo_streak_reversal_v16(groups, results):
+    if not groups: return None
+    # Nếu nhịp cầu ngắn liên tục (1,1,1,...) hoặc bệt vừa gãy
+    if groups[0] >= 3:
         return "Tài" if results[0] == "Xỉu" else "Xỉu"
     return None
 
-def algo_fairness_balancer(pred_history):
-    if len(pred_history) < 15: return None
-    recent = pred_history[-15:]
+def algo_fairness_balancer_v16(pred_history):
+    if len(pred_history) < 10: return None
+    recent = pred_history[-10:]
     tai_preds = recent.count("Tài")
-    if tai_preds >= 12: return "Xỉu"
-    if tai_preds <= 3: return "Tài"
+    if tai_preds >= 8: return "Xỉu"
+    if tai_preds <= 2: return "Tài"
     return None
 
 
@@ -596,37 +598,34 @@ def adaptive_ensemble_predict(results, pred_history, algo_performance):
     groups = get_groups(results)
     
     raw_votes = {
-        "pattern": algo_pattern_matrix(results, groups),
-        "markov": algo_markov_chain(results),
-        "bayes": algo_bayesian(results),
-        "oscillator": algo_oscillator(results),
-        "mean_rev": algo_mean_reversion(results),
-        "streak": algo_streak_exhaustion(results, groups),
-        "fairness": algo_fairness_balancer(pred_history)
+        "pattern": algo_pattern_matrix_v16(results, groups),
+        "markov": algo_markov_chain_v16(results),
+        "bayes": algo_bayesian_v16(results),
+        "oscillator": algo_oscillator_v16(results),
+        "mean_rev": algo_mean_reversion_v16(results),
+        "streak": algo_streak_reversal_v16(groups, results),
+        "fairness": algo_fairness_balancer_v16(pred_history)
     }
 
     score_tai = 0.0
     score_xiu = 0.0
-    active_votes = 0
 
     base_weights = {
-        "pattern": 14.0,
-        "markov": 11.0,
-        "bayes": 12.0,
-        "oscillator": 9.0,
-        "mean_rev": 9.0,
-        "streak": 11.0,
-        "fairness": 7.0
+        "pattern": 15.0,
+        "markov": 12.0,
+        "bayes": 13.0,
+        "oscillator": 10.0,
+        "mean_rev": 10.0,
+        "streak": 12.0,
+        "fairness": 8.0
     }
 
     for algo_name, pred in raw_votes.items():
         if pred:
-            active_votes += 1
             perf = algo_performance.get(algo_name, {"correct": 0, "total": 0})
-            
-            if perf["total"] >= 4:
+            if perf["total"] >= 3:
                 accuracy = perf["correct"] / perf["total"]
-                dynamic_factor = max(0.1, min(2.5, accuracy * 2.2))
+                dynamic_factor = max(0.2, min(3.0, accuracy * 2.5))
             else:
                 dynamic_factor = 1.0
                 
@@ -635,23 +634,23 @@ def adaptive_ensemble_predict(results, pred_history, algo_performance):
             if pred == "Tài": score_tai += final_weight
             elif pred == "Xỉu": score_xiu += final_weight
 
-    if score_tai == 0 and score_xiu == 0:
+    total_score = score_tai + score_xiu
+    if total_score == 0:
         return results[0], 50
 
-    total_score = score_tai + score_xiu
     if score_tai > score_xiu:
-        # Tự động scale tỉ lệ từ 50 đến 100%
-        ratio = score_tai / total_score if total_score > 0 else 0.5
-        confidence = int(round(50 + ratio * 50))
+        ratio = score_tai / total_score
+        # Tự động scale độ tự tin từ 50% đến 100% cực kỳ chuẩn xác
+        confidence = int(round(50 + (ratio - 0.5) * 100))
         confidence = max(50, min(100, confidence))
         return "Tài", confidence
     elif score_xiu > score_tai:
-        ratio = score_xiu / total_score if total_score > 0 else 0.5
-        confidence = int(round(50 + ratio * 50))
+        ratio = score_xiu / total_score
+        confidence = int(round(50 + (ratio - 0.5) * 100))
         confidence = max(50, min(100, confidence))
         return "Xỉu", confidence
     else:
-        return ("Xỉu" if results[0] == "Tài" else "Tài"), 50
+        return ("Xỉu" if results[0] == "Tài" else "Tài"), 55
 
 
 # =====================================================================
@@ -727,13 +726,13 @@ def history():
             if history and pred != "-":
                 groups = get_groups(history)
                 raw_votes = {
-                    "pattern": algo_pattern_matrix(history, groups),
-                    "markov": algo_markov_chain(history),
-                    "bayes": algo_bayesian(history),
-                    "oscillator": algo_oscillator(history),
-                    "mean_rev": algo_mean_reversion(history),
-                    "streak": algo_streak_exhaustion(history, groups),
-                    "fairness": algo_fairness_balancer(pred_history)
+                    "pattern": algo_pattern_matrix_v16(history, groups),
+                    "markov": algo_markov_chain_v16(history),
+                    "bayes": algo_bayesian_v16(history),
+                    "oscillator": algo_oscillator_v16(history),
+                    "mean_rev": algo_mean_reversion_v16(history),
+                    "streak": algo_streak_reversal_v16(groups, history),
+                    "fairness": algo_fairness_balancer_v16(pred_history)
                 }
                 for algo_name, v in raw_votes.items():
                     if v:
