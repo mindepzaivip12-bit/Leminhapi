@@ -489,7 +489,7 @@ def fetch_sessions(api_type='md5'):
     return [], False
 
 # =====================================================================
-# HỆ THỐNG ĐẢO CẦU & ENSEMBLE NÂNG CẤP (v16.0)
+# FULL CẦU ANALYZER v17.0 — Tổng hợp TOÀN BỘ cầu phổ biến
 # =====================================================================
 
 def get_groups(results):
@@ -507,150 +507,161 @@ def get_groups(results):
     groups.append(count)
     return groups
 
-def algo_pattern_matrix_v16(results, groups):
-    if not groups: return None
-    # Bắt bẻ cầu bệt khi dài >= 4
-    if groups[0] >= 4:
-        return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    # Bắt cầu 1-1 hoặc cầu đảo nhịp
-    if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]:
-        return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 3 and groups[:3] == [2, 2, 2]:
-        return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 3 and groups[:3] == [1, 2, 1]:
-        return results[0]
+def _opp(v):
+    return "Xỉu" if v == "Tài" else "Tài"
+
+def _count_alternations(results, max_len=15):
+    count = 0
+    for i in range(min(len(results) - 1, max_len)):
+        if results[i] != results[i+1]:
+            count += 1
+        else:
+            break
+    return count
+
+def _detect_group_pattern(groups, results):
+    """Tìm pattern groups giống trong lịch sử (vd current=[2,3,1,2] → tìm trong quá khứ)."""
+    if len(groups) < 3 or len(results) < 20:
+        return None
+    for plen in range(min(5, len(groups) - 1), 1, -1):
+        current = tuple(groups[:plen])
+        if sum(current) > len(results): continue
+        matches = []
+        for i in range(1, len(groups) - plen):
+            if tuple(groups[i:i+plen]) == current:
+                pos = sum(groups[:i])
+                if pos < len(results):
+                    matches.append(results[pos])
+        if len(matches) >= 2:
+            total = len(matches)
+            t = matches.count("Tài"); x = total - t
+            if t / total >= 0.7: return ("Tài", 14 if total >= 3 else 10, f"hist_{plen}")
+            if x / total >= 0.7: return ("Xỉu", 14 if total >= 3 else 10, f"hist_{plen}")
     return None
 
-def algo_markov_chain_v16(results):
-    if len(results) < 15: return None
-    sample_space = results[:40]
-    last = sample_space[0]
-    transitions = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
-    for i in range(len(sample_space) - 1):
-        transitions[sample_space[i+1]][sample_space[i]] += 1
-    total = sum(transitions[last].values())
-    if total >= 4:
-        prob_tai = transitions[last]["Tài"] / total
-        if prob_tai > 0.60: return "Tài"
-        if prob_tai < 0.40: return "Xỉu"
-    return None
-
-def algo_bayesian_v16(results):
-    if len(results) < 20: return None
-    sample_space = results[:30]
-    if len(sample_space) < 3: return None
-    target_seq = tuple(sample_space[:3])
-    count_target = 0
-    count_next_tai = 0
-    count_next_xiu = 0
-    for i in range(len(sample_space) - 3):
-        seq = tuple(sample_space[i+1:i+4])
-        if seq == target_seq:
-            count_target += 1
-            if sample_space[i] == "Tài": count_next_tai += 1
-            else: count_next_xiu += 1
-    if count_target >= 1:
-        total_matched = count_next_tai + count_next_xiu
-        if total_matched > 0:
-            if (count_next_tai / total_matched) >= 0.65: return "Tài"
-            if (count_next_xiu / total_matched) >= 0.65: return "Xỉu"
-    return None
-
-def algo_oscillator_v16(results):
-    if len(results) < 15: return None
-    recent = results[:25]
-    tai_count = recent.count("Tài")
-    ratio = tai_count / len(recent)
-    if ratio >= 0.75: return "Xỉu"
-    if ratio <= 0.25: return "Tài"
-    return None
-
-def algo_mean_reversion_v16(results):
-    if len(results) < 30: return None
-    recent = results[:40]
-    tai_ratio = recent.count("Tài") / len(recent)
-    if tai_ratio > 0.70: return "Xỉu"
-    if tai_ratio < 0.30: return "Tài"
-    return None
-
-def algo_streak_reversal_v16(groups, results):
-    if not groups: return None
-    # Nếu nhịp cầu ngắn liên tục (1,1,1,...) hoặc bệt vừa gãy
-    if groups[0] >= 3:
-        return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    return None
-
-def algo_fairness_balancer_v16(pred_history):
-    if len(pred_history) < 10: return None
-    recent = pred_history[-10:]
-    tai_preds = recent.count("Tài")
-    if tai_preds >= 8: return "Xỉu"
-    if tai_preds <= 2: return "Tài"
-    return None
-
-
-def adaptive_ensemble_predict(results, pred_history, algo_performance):
-    if not results:
-        return "Tài", 50
-    if len(results) < 3:
-        return results[0], 50
-
+def analyze_full_bridge(results):
+    """Trả về list (pred, weight, name) từ TẤT CẢ loại cầu."""
+    if len(results) < 3: return []
+    signals = []
     groups = get_groups(results)
-    
-    raw_votes = {
-        "pattern": algo_pattern_matrix_v16(results, groups),
-        "markov": algo_markov_chain_v16(results),
-        "bayes": algo_bayesian_v16(results),
-        "oscillator": algo_oscillator_v16(results),
-        "mean_rev": algo_mean_reversion_v16(results),
-        "streak": algo_streak_reversal_v16(groups, results),
-        "fairness": algo_fairness_balancer_v16(pred_history)
-    }
+    n = len(results)
+    r0 = results[0]
 
-    score_tai = 0.0
-    score_xiu = 0.0
+    # ─── 1. CẦU BỆT (streak) ────────────────────────
+    if   groups[0] >= 6: signals.append((_opp(r0), 28, "bet_6+"))
+    elif groups[0] == 5: signals.append((_opp(r0), 22, "bet_5"))
+    elif groups[0] == 4: signals.append((_opp(r0), 16, "bet_4"))
+    elif groups[0] == 3: signals.append((_opp(r0), 8,  "bet_3"))
 
-    base_weights = {
-        "pattern": 15.0,
-        "markov": 12.0,
-        "bayes": 13.0,
-        "oscillator": 10.0,
-        "mean_rev": 10.0,
-        "streak": 12.0,
-        "fairness": 8.0
-    }
+    # ─── 2. CẦU 1-1 (đảo nhịp) ──────────────────────
+    alt = _count_alternations(results)
+    if   alt >= 6: signals.append((_opp(r0), 20, "1_1_strong"))
+    elif alt >= 4: signals.append((_opp(r0), 15, "1_1"))
+    elif alt >= 3: signals.append((_opp(r0), 10, "1_1_weak"))
 
-    for algo_name, pred in raw_votes.items():
-        if pred:
-            perf = algo_performance.get(algo_name, {"correct": 0, "total": 0})
-            if perf["total"] >= 3:
-                accuracy = perf["correct"] / perf["total"]
-                dynamic_factor = max(0.2, min(3.0, accuracy * 2.5))
-            else:
-                dynamic_factor = 1.0
-                
-            final_weight = base_weights[algo_name] * dynamic_factor
-            
-            if pred == "Tài": score_tai += final_weight
-            elif pred == "Xỉu": score_xiu += final_weight
+    # ─── 3. CẦU 2-2 (cặp) ───────────────────────────
+    if len(groups) >= 5 and all(g == 2 for g in groups[:5]): signals.append((_opp(r0), 18, "2_2_strong"))
+    elif len(groups) >= 4 and all(g == 2 for g in groups[:4]): signals.append((_opp(r0), 14, "2_2"))
+    elif len(groups) >= 3 and all(g == 2 for g in groups[:3]): signals.append((_opp(r0), 9,  "2_2_weak"))
 
-    total_score = score_tai + score_xiu
-    if total_score == 0:
+    # ─── 4. CẦU 3-3 (bộ 3) ──────────────────────────
+    if len(groups) >= 4 and all(g == 3 for g in groups[:4]): signals.append((_opp(r0), 15, "3_3_strong"))
+    elif len(groups) >= 3 and all(g == 3 for g in groups[:3]): signals.append((_opp(r0), 10, "3_3"))
+
+    # ─── 5. CẦU 4-4 ─────────────────────────────────
+    if len(groups) >= 3 and all(g == 4 for g in groups[:3]): signals.append((_opp(r0), 12, "4_4"))
+
+    # ─── 6. CẦU 1-2-1 ───────────────────────────────
+    if len(groups) >= 3 and groups[:3] == [1, 2, 1] and n >= 4:
+        signals.append((results[1], 13, "1_2_1"))
+
+    # ─── 7. CẦU 2-1-2 ───────────────────────────────
+    if len(groups) >= 3 and groups[:3] == [2, 1, 2] and n >= 5:
+        signals.append((results[2], 13, "2_1_2"))
+
+    # ─── 8. CẦU 1-3-1 / tăng-giảm ───────────────────
+    if len(groups) >= 3 and groups[:3] == [1, 3, 1] and n >= 5:
+        signals.append((results[1], 11, "1_3_1"))
+    if len(groups) >= 3 and groups[:3] == [1, 2, 3]: signals.append((r0, 8, "1_2_3"))
+    if len(groups) >= 3 and groups[:3] == [3, 2, 1]: signals.append((r0, 8, "3_2_1"))
+
+    # ─── 9. CẦU NGHIÊNG (mean-reversion) ────────────
+    if n >= 15:
+        sample = results[:25]
+        tr = sample.count("Tài") / len(sample)
+        if   tr >= 0.72: signals.append(("Xỉu", 9, "nghieng_tai"))
+        elif tr <= 0.28: signals.append(("Tài", 9, "nghieng_xiu"))
+
+    # ─── 10. CẦU LẶP (đoạn con lặp lại) ─────────────
+    for win in range(3, min(n // 2, 12) + 1):
+        if len(results) >= win * 2 and results[:win] == results[win:win*2]:
+            if len(results) > win * 2:
+                signals.append((results[win*2], 11, f"lap_{win}"))
+                break
+
+    # ─── 11. MARKOV chain (1st order) ───────────────
+    if n >= 15:
+        tr = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
+        sample = results[:45]
+        for i in range(len(sample) - 1):
+            tr[sample[i+1]][sample[i]] += 1
+        last = sample[0]
+        tot = sum(tr[last].values())
+        if tot >= 5:
+            p = tr[last]["Tài"] / tot
+            if   p >= 0.65: signals.append(("Tài", 10, "markov"))
+            elif p <= 0.35: signals.append(("Xỉu", 10, "markov"))
+
+    # ─── 12. BAYESIAN sequence (order 2-4) ──────────
+    if n >= 20:
+        for slen in (4, 3, 2):
+            if n < slen + 3: continue
+            target = tuple(results[:slen])
+            nt = nx = 0
+            for i in range(slen, min(n, 55)):
+                if tuple(results[i:i+slen]) == target:
+                    if results[i-1] == "Tài": nt += 1
+                    else:                     nx += 1
+            tot = nt + nx
+            if tot >= 2:
+                if nt / tot >= 0.7:
+                    signals.append(("Tài", 12, f"bayes_{slen}")); break
+                if nx / tot >= 0.7:
+                    signals.append(("Xỉu", 12, f"bayes_{slen}")); break
+
+    # ─── 13. HISTORICAL GROUP PATTERN ───────────────
+    h = _detect_group_pattern(groups, results)
+    if h: signals.append(h)
+
+    return signals
+
+
+def full_bridge_predict(results):
+    """Ensemble có WEIGHTED EVIDENCE - không để tín hiệu yếu đè tín hiệu mạnh."""
+    if not results: return "Tài", 50
+    if len(results) < 3: return results[0], 50
+
+    signals = analyze_full_bridge(results)
+    if not signals:
+        return results[0], 52
+
+    score_tai = sum(w for p, w, _ in signals if p == "Tài")
+    score_xiu = sum(w for p, w, _ in signals if p == "Xỉu")
+    total = score_tai + score_xiu
+    if total == 0:
         return results[0], 50
+
+    def _calc(ratio):
+        base = 50 + (ratio - 0.5) * 100
+        evidence = min(1.0, total / 30.0)     # < 30 → giảm conf
+        return int(max(50, min(90, 50 + (base - 50) * evidence)))
 
     if score_tai > score_xiu:
-        ratio = score_tai / total_score
-        # Tự động scale độ tự tin từ 50% đến 100% cực kỳ chuẩn xác
-        confidence = int(round(50 + (ratio - 0.5) * 100))
-        confidence = max(50, min(100, confidence))
-        return "Tài", confidence
+        return "Tài", _calc(score_tai / total)
     elif score_xiu > score_tai:
-        ratio = score_xiu / total_score
-        confidence = int(round(50 + (ratio - 0.5) * 100))
-        confidence = max(50, min(100, confidence))
-        return "Xỉu", confidence
+        return "Xỉu", _calc(score_xiu / total)
     else:
-        return ("Xỉu" if results[0] == "Tài" else "Tài"), 55
+        return _opp(results[0]), 50
 
 
 # =====================================================================
@@ -690,11 +701,8 @@ def history():
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
-        
-        pred_history = []
-        algo_performance = {k: {"correct": 0, "total": 0} for k in ["pattern", "markov", "bayes", "oscillator", "mean_rev", "streak", "fairness"]}
-        
-        next_pred, next_conf = adaptive_ensemble_predict(history_for_next, pred_history, algo_performance)
+
+        next_pred, next_conf = full_bridge_predict(history_for_next)
 
         out.append({
             'phien': next_phien,
@@ -714,7 +722,7 @@ def history():
             history = [v['result'] for v in valid[:i]][::-1]
             
             if history:
-                pred, conf = adaptive_ensemble_predict(history, pred_history, algo_performance)
+                pred, conf = full_bridge_predict(history)
                 is_correct = (pred == current_session['result'])
                 total_past += 1
                 if is_correct:
@@ -722,25 +730,6 @@ def history():
             else:
                 pred, conf = "-", 50
                 is_correct = None
-
-            if history and pred != "-":
-                groups = get_groups(history)
-                raw_votes = {
-                    "pattern": algo_pattern_matrix_v16(history, groups),
-                    "markov": algo_markov_chain_v16(history),
-                    "bayes": algo_bayesian_v16(history),
-                    "oscillator": algo_oscillator_v16(history),
-                    "mean_rev": algo_mean_reversion_v16(history),
-                    "streak": algo_streak_reversal_v16(groups, history),
-                    "fairness": algo_fairness_balancer_v16(pred_history)
-                }
-                for algo_name, v in raw_votes.items():
-                    if v:
-                        algo_performance[algo_name]["total"] += 1
-                        if v == current_session['result']:
-                            algo_performance[algo_name]["correct"] += 1
-                            
-                pred_history.append(pred)
 
             out.append({
                 'phien': current_session['phien'],
