@@ -22,43 +22,44 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH </title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<title>LE MINH</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
     :root {
-        --bg-page: #f0f4f8;
-        --bg-card: #ffffff;
-        --text-main: #1e293b;
-        --text-muted: #64748b;
-        --border-color: #e2e8f0;
+        --bg-page: #0f172a;
+        --bg-card: #1e293b;
+        --text-main: #f8fafc;
+        --text-muted: #94a3b8;
+        --border-color: #334155;
         
-        --tai-color: #0ea5e9;
-        --tai-bg: #e0f2fe;
-        --xiu-color: #ec4899;
-        --xiu-bg: #fce7f3;
+        --tai-color: #38bdf8;
+        --tai-bg: rgba(56, 189, 248, 0.15);
+        --xiu-color: #f472b6;
+        --xiu-bg: rgba(244, 114, 182, 0.15);
         
-        --win-color: #10b981;
-        --win-bg: #d1fae5;
-        --lose-color: #ef4444;
-        --lose-bg: #fee2e2;
-        --wait-color: #f59e0b;
-        --wait-bg: #fef3c7;
+        --win-color: #34d399;
+        --win-bg: rgba(52, 211, 153, 0.15);
+        --lose-color: #f87171;
+        --lose-bg: rgba(248, 113, 113, 0.15);
+        --wait-color: #fbbf24;
+        --wait-bg: rgba(251, 191, 36, 0.15);
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
 
     body {
-        background-color: var(--bg-page);
+        background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
         color: var(--text-main);
         min-height: 100vh;
         padding-bottom: 40px;
     }
 
     .header {
-        background: var(--bg-card);
-        padding: 15px 20px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        background: rgba(30, 41, 59, 0.85);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--border-color);
+        padding: 16px 24px;
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -69,105 +70,112 @@ HTML_TEMPLATE = """
     .header-title {
         font-size: 22px;
         font-weight: 800;
-        color: var(--tai-color);
+        color: #38bdf8;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
+        text-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
     }
     .header-title span {
         font-size: 11px;
-        background: linear-gradient(135deg, #0ea5e9, #ec4899);
+        background: linear-gradient(135deg, #38bdf8, #ec4899);
         color: #fff;
-        padding: 3px 10px;
-        border-radius: 12px;
+        padding: 4px 12px;
+        border-radius: 20px;
         font-weight: 800;
-        letter-spacing: 0.5px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        letter-spacing: 1px;
+        box-shadow: 0 0 15px rgba(236, 72, 153, 0.4);
     }
-    .header-actions { display: flex; gap: 10px; align-items: center; }
+    .header-actions { display: flex; gap: 12px; align-items: center; }
     
-    .time-update { font-size: 11px; color: var(--text-muted); font-weight: 600; }
+    .time-update { font-size: 12px; color: var(--text-muted); font-weight: 600; }
     
     .btn-refresh {
-        background: var(--bg-page);
+        background: var(--bg-card);
         color: var(--text-main);
         border: 1px solid var(--border-color);
-        padding: 8px 12px;
-        border-radius: 8px;
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
         font-weight: 700;
-        font-size: 13px;
+        font-size: 16px;
         cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         transition: 0.2s;
     }
-    .btn-refresh:hover { background: var(--border-color); }
+    .btn-refresh:hover { background: var(--border-color); transform: rotate(180deg); }
     
     .btn-reset {
-        background: var(--lose-bg);
+        background: rgba(248, 113, 113, 0.2);
         color: var(--lose-color);
         border: 1px solid var(--lose-color);
         padding: 8px 16px;
-        border-radius: 8px;
+        border-radius: 10px;
         font-weight: 700;
         font-size: 13px;
         cursor: pointer;
         transition: 0.2s;
     }
-    .btn-reset:hover { background: var(--lose-color); color: #fff; }
+    .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
 
     .tabs-container {
         max-width: 800px;
-        margin: 20px auto 0;
-        padding: 0 15px;
+        margin: 24px auto 0;
+        padding: 0 16px;
         display: flex;
-        gap: 10px;
+        gap: 12px;
     }
     .tab-btn {
         flex: 1;
-        padding: 12px;
-        border: none;
+        padding: 14px;
+        border: 1px solid var(--border-color);
         background: var(--bg-card);
         color: var(--text-muted);
         font-weight: 700;
         font-size: 14px;
-        border-radius: 10px;
+        border-radius: 12px;
         cursor: pointer;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         transition: 0.3s;
     }
     .tab-btn.active {
-        background: var(--tai-color);
+        background: linear-gradient(135deg, #0ea5e9, #2563eb);
+        border-color: transparent;
         color: #fff;
-        box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+        box-shadow: 0 8px 25px rgba(14, 165, 233, 0.4);
     }
 
     .stats-bar {
         max-width: 800px;
-        margin: 15px auto;
-        padding: 0 15px;
+        margin: 16px auto;
+        padding: 0 16px;
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 10px;
+        gap: 12px;
     }
     .stat-item {
         background: var(--bg-card);
-        border-radius: 10px;
-        padding: 12px;
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        padding: 16px;
         text-align: center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
     }
-    .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 5px; }
-    .stat-value { font-size: 22px; font-weight: 800; color: var(--text-main); }
-    .stat-value.win { color: var(--tai-color); }
+    .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.5px; }
+    .stat-value { font-size: 24px; font-weight: 800; color: var(--text-main); }
+    .stat-value.win { color: var(--tai-color); text-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
 
     .table-wrapper {
         max-width: 800px;
         margin: 0 auto;
-        padding: 0 15px;
+        padding: 0 16px;
     }
     .table-container {
         background: var(--bg-card);
-        border-radius: 12px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
         max-height: 65vh;
         overflow-y: auto;
     }
@@ -178,12 +186,13 @@ HTML_TEMPLATE = """
         border-spacing: 0;
     }
     .data-table th {
-        background: #f8fafc;
+        background: #111827;
         color: var(--text-muted);
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 700;
         text-transform: uppercase;
-        padding: 15px 12px;
+        letter-spacing: 0.5px;
+        padding: 16px 12px;
         text-align: center;
         border-bottom: 1px solid var(--border-color);
         position: sticky;
@@ -198,36 +207,41 @@ HTML_TEMPLATE = """
         font-weight: 600;
     }
     .data-table tr:last-child td { border-bottom: none; }
-    .data-table tr:hover { background: #f8fafc; }
+    .data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
     
-    .row-next { background: #f0f9ff; border-left: 3px solid var(--tai-color); }
+    .row-next { background: rgba(14, 165, 233, 0.08); border-left: 4px solid var(--tai-color); }
 
     .badge {
         display: inline-block;
-        padding: 6px 12px;
+        padding: 6px 14px;
         border-radius: 20px;
         font-size: 12px;
         font-weight: 700;
-        min-width: 60px;
+        min-width: 70px;
         text-align: center;
     }
-    .badge-tai { background: var(--tai-bg); color: var(--tai-color); }
-    .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); }
-    .badge-empty { background: #f1f5f9; color: var(--text-muted); }
+    .badge-tai { background: var(--tai-bg); color: var(--tai-color); border: 1px solid rgba(56, 189, 248, 0.3); box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); }
+    .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); border: 1px solid rgba(244, 114, 182, 0.3); box-shadow: 0 0 10px rgba(244, 114, 182, 0.2); }
+    .badge-empty { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
     
-    .status { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 20px; }
-    .st-win { background: var(--win-bg); color: var(--win-color); }
-    .st-lose { background: var(--lose-bg); color: var(--lose-color); }
-    .st-wait { background: var(--wait-bg); color: var(--wait-color); }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; }
+    .st-win { background: var(--win-bg); color: var(--win-color); border: 1px solid rgba(52, 211, 153, 0.3); }
+    .st-lose { background: var(--lose-bg); color: var(--lose-color); border: 1px solid rgba(248, 113, 113, 0.3); }
+    .st-wait { background: var(--wait-bg); color: var(--wait-color); border: 1px solid rgba(251, 191, 36, 0.3); animation: pulse 1.5s infinite; }
 
-    .dice-text { font-size: 12px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
-    .algo-vote { font-size: 9px; color: var(--tai-color); background: var(--tai-bg); padding: 2px 6px; border-radius: 8px; margin-top: 4px; display: inline-block; font-weight: 700; }
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+
+    .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
+    .algo-vote { font-size: 10px; color: var(--tai-color); background: var(--tai-bg); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
 
     @media (max-width: 500px) {
-        .data-table th, .data-table td { padding: 10px 5px; font-size: 12px; }
-        .badge { padding: 4px 8px; font-size: 11px; }
-        .dice-text { font-size: 10px; }
+        .data-table th, .data-table td { padding: 10px 6px; font-size: 12px; }
+        .badge { padding: 4px 8px; font-size: 11px; min-width: 50px; }
         .header-title { font-size: 18px; }
         .time-update { display: none; }
     }
@@ -237,7 +251,7 @@ HTML_TEMPLATE = """
 
 <div class="header">
     <div class="header-title">
-        LE MINH  <span>CTEWW</span>
+        LE MINH <span>CTEWW</span>
     </div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
@@ -376,7 +390,7 @@ function renderTable(rows, stats) {
 
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = `<span class="status st-wait"> Chờ </span>`;
+            statusHtml = `<span class="status st-wait">⏳ Chờ kết quả</span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -402,6 +416,8 @@ async function confirmReset() {
         title: 'Xác nhận Reset?',
         text: "Toàn bộ lịch sử hiển thị của bảng này sẽ bị xoá và bắt đầu lại từ đầu!",
         icon: 'warning',
+        background: '#1e293b',
+        color: '#f8fafc',
         showCancelButton: true,
         confirmButtonColor: '#0ea5e9',
         cancelButtonColor: '#64748b',
@@ -410,7 +426,7 @@ async function confirmReset() {
     }).then(async (result) => {
         if (result.isConfirmed) {
             isResetting = true;
-            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, didOpen: () => { Swal.showLoading() } });
+            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, background: '#1e293b', color: '#f8fafc', didOpen: () => { Swal.showLoading() } });
             try {
                 const res = await fetch('/api/reset', { 
                     method: 'POST',
@@ -423,6 +439,8 @@ async function confirmReset() {
                         title: 'Thành công!',
                         text: 'Đã xoá lịch sử và bắt đầu lại.',
                         icon: 'success',
+                        background: '#1e293b',
+                        color: '#f8fafc',
                         confirmButtonColor: '#0ea5e9'
                     });
                     isResetting = false;
@@ -431,7 +449,7 @@ async function confirmReset() {
                     throw new Error(data.message);
                 }
             } catch (error) {
-                Swal.fire('Lỗi!', 'Không thể reset: ' + error.message, 'error');
+                Swal.fire({title: 'Lỗi!', text: 'Không thể reset: ' + error.message, icon: 'error', background: '#1e293b', color: '#f8fafc'});
                 isResetting = false;
             }
         }
@@ -471,7 +489,7 @@ def fetch_sessions(api_type='md5'):
     return [], False
 
 # =====================================================================
-# HỆ THỐNG TỰ THÍCH NGHI & ĐÀO SÂU MẪU (DEEP ENSEMBLE 50+ MẪU) - V14.0
+# HỆ THỐNG TỰ THÍCH NGHI & ĐÀO SÂU MẪU (DEEP ENSEMBLE v15.0)
 # =====================================================================
 
 def get_groups(results):
@@ -489,122 +507,87 @@ def get_groups(results):
     groups.append(count)
     return groups
 
-# --- CÁC THUẬT TOÁN THÀNH PHẦN (NÂNG CẤP ĐỘ SÂU 50 MẪU) ---
-
 def algo_pattern_matrix(results, groups):
-    """Thuật toán 1: Ma trận cầu nâng cao (Đã quét sâu 50 mẫu gần nhất)"""
-    # Cầu 1-1, 1-2, 2-2, 3-3 cơ bản
     if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     if len(groups) >= 3 and groups[:3] == [2, 2, 2]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     if len(groups) >= 3 and groups[:3] == [3, 3, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     if len(groups) >= 2 and groups[:2] == [4, 4]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    
-    # Cầu nhịp tiến/lùi mở rộng
     if len(groups) >= 4 and groups[:4] == [1, 2, 3, 4]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     if len(groups) >= 3 and groups[:3] == [1, 2, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     if len(groups) >= 3 and groups[:3] == [3, 2, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    
-    # Cầu phức tạp 3-5 nhịp
     if len(groups) >= 4 and groups[:4] == [1, 1, 2, 2]: return results[0]
     if len(groups) >= 3 and groups[:3] == [1, 2, 2]: return results[0]
     if len(groups) >= 3 and groups[:3] == [2, 2, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 3 and groups[:3] == [1, 1, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 2 and groups[:2] == [3, 1]: return results[0]
-    if len(groups) >= 2 and groups[:2] == [1, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 2 and groups[:2] == [5, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    
-    # Bẻ bệt dài (Quét tới 50 mẫu)
     if groups[0] >= 5: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     return None
 
 def algo_markov_chain(results):
-    """Thuật toán 2: Chuỗi Markov bậc cao (Phân tích ma trận chuyển đổi 50 mẫu)"""
     if len(results) < 20: return None
-    # Lấy tối đa 50 mẫu gần nhất để tính xác suất Markov thực chiến
     sample_space = results[:50]
     last = sample_space[0]
     transitions = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
     for i in range(len(sample_space) - 1):
         transitions[sample_space[i+1]][sample_space[i]] += 1
-    
     total = sum(transitions[last].values())
     if total > 5:
         prob_tai = transitions[last]["Tài"] / total
-        if prob_tai > 0.60: return "Tài"
-        if prob_tai < 0.40: return "Xỉu"
+        if prob_tai > 0.58: return "Tài"
+        if prob_tai < 0.42: return "Xỉu"
     return None
 
 def algo_bayesian(results):
-    """Thuật toán 3: Suy luận Bayes sâu (Khớp mẫu cụm 4 phiên trong 50 mẫu)"""
     if len(results) < 25: return None
     sample_space = results[:50]
     if len(sample_space) < 4: return None
-    
     target_seq = tuple(sample_space[:4])
     count_target = 0
     count_next_tai = 0
     count_next_xiu = 0
-    
     for i in range(len(sample_space) - 4):
         seq = tuple(sample_space[i+1:i+5])
         if seq == target_seq:
             count_target += 1
             if sample_space[i] == "Tài": count_next_tai += 1
             else: count_next_xiu += 1
-            
     if count_target >= 1:
         total_matched = count_next_tai + count_next_xiu
         if total_matched > 0:
-            if (count_next_tai / total_matched) > 0.65: return "Tài"
-            if (count_next_xiu / total_matched) > 0.65: return "Xỉu"
+            if (count_next_tai / total_matched) > 0.62: return "Tài"
+            if (count_next_xiu / total_matched) > 0.62: return "Xỉu"
     return None
 
 def algo_oscillator(results):
-    """Thuật toán 4: Động lượng dao động (Quá mua / Quá bán trên 30-50 mẫu)"""
     if len(results) < 20: return None
     recent = results[:35]
     tai_count = recent.count("Tài")
     ratio = tai_count / len(recent)
-    
-    if ratio >= 0.70: return "Xỉu" # Quá mua nặng -> Bẻ
-    if ratio <= 0.30: return "Tài"  # Quá bán nặng -> Bẻ
+    if ratio >= 0.72: return "Xỉu"
+    if ratio <= 0.28: return "Tài"
     return None
 
 def algo_mean_reversion(results):
-    """Thuật toán 5: Hồi quy trung bình động (Moving Average Reversion)"""
     if len(results) < 40: return None
     recent = results[:50]
     tai_ratio = recent.count("Tài") / len(recent)
-    
-    if tai_ratio > 0.62: return "Xỉu"
-    if tai_ratio < 0.38: return "Tài"
+    if tai_ratio > 0.65: return "Xỉu"
+    if tai_ratio < 0.35: return "Tài"
     return None
 
 def algo_streak_exhaustion(results, groups):
-    """Thuật toán 6: Điểm cạn kiệt chuỗi liên tục (Streak Exhaustion)"""
     if groups[0] >= 5: 
         return "Tài" if results[0] == "Xỉu" else "Xỉu"
     return None
 
 def algo_fairness_balancer(pred_history):
-    """Thuật toán 7: Bộ cân bằng xác suất dự đoán hệ thống"""
     if len(pred_history) < 15: return None
     recent = pred_history[-15:]
     tai_preds = recent.count("Tài")
-    
     if tai_preds >= 12: return "Xỉu"
     if tai_preds <= 3: return "Tài"
     return None
 
 
-# --- HÀM TỔNG HỢP TỰ THÍCH NGHI NÂNG CAO ---
-
 def adaptive_ensemble_predict(results, pred_history, algo_performance):
-    """
-    results: Lịch sử kết quả
-    pred_history: Lịch sử dự đoán của hệ thống
-    algo_performance: Dict lưu trữ phong độ của từng thuật toán
-    """
     if not results:
         return "Tài", 50.0, 0
     if len(results) < 3:
@@ -626,15 +609,14 @@ def adaptive_ensemble_predict(results, pred_history, algo_performance):
     score_xiu = 0.0
     active_votes = 0
 
-    # Tăng cường trọng số gốc cho các thuật toán phân tích mẫu sâu
     base_weights = {
-        "pattern": 12.0,
-        "markov": 10.0,
-        "bayes": 11.0,
-        "oscillator": 8.0,
-        "mean_rev": 8.0,
-        "streak": 10.0,
-        "fairness": 6.0
+        "pattern": 14.0,
+        "markov": 11.0,
+        "bayes": 12.0,
+        "oscillator": 9.0,
+        "mean_rev": 9.0,
+        "streak": 11.0,
+        "fairness": 7.0
     }
 
     for algo_name, pred in raw_votes.items():
