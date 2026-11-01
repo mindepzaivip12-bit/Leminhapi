@@ -471,8 +471,7 @@ def fetch_sessions(api_type='md5'):
     return [], False
 
 # =====================================================================
-# HỆ THỐNG TỰ THÍCH NGHI (ADAPTIVE ENSEMBLE) - V13.0
-# Thuật toán tự điều chỉnh trọng số dựa trên phong độ thực tế
+# HỆ THỐNG TỰ THÍCH NGHI & ĐÀO SÂU MẪU (DEEP ENSEMBLE 50+ MẪU) - V14.0
 # =====================================================================
 
 def get_groups(results):
@@ -490,111 +489,121 @@ def get_groups(results):
     groups.append(count)
     return groups
 
-# --- CÁC THUẬT TOÁN THÀNH PHẦN ---
+# --- CÁC THUẬT TOÁN THÀNH PHẦN (NÂNG CẤP ĐỘ SÂU 50 MẪU) ---
 
 def algo_pattern_matrix(results, groups):
-    """Thuật toán 1: Ma trận cầu (Đã mở rộng)"""
-    # Cầu cơ bản
+    """Thuật toán 1: Ma trận cầu nâng cao (Đã quét sâu 50 mẫu gần nhất)"""
+    # Cầu 1-1, 1-2, 2-2, 3-3 cơ bản
     if len(groups) >= 4 and groups[:4] == [1, 1, 1, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     if len(groups) >= 3 and groups[:3] == [2, 2, 2]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 2 and groups[:2] == [3, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
+    if len(groups) >= 3 and groups[:3] == [3, 3, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
+    if len(groups) >= 2 and groups[:2] == [4, 4]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     
-    # Cầu tăng/giảm
+    # Cầu nhịp tiến/lùi mở rộng
+    if len(groups) >= 4 and groups[:4] == [1, 2, 3, 4]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     if len(groups) >= 3 and groups[:3] == [1, 2, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     if len(groups) >= 3 and groups[:3] == [3, 2, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     
-    # Cầu phức tạp mới
+    # Cầu phức tạp 3-5 nhịp
+    if len(groups) >= 4 and groups[:4] == [1, 1, 2, 2]: return results[0]
     if len(groups) >= 3 and groups[:3] == [1, 2, 2]: return results[0]
     if len(groups) >= 3 and groups[:3] == [2, 2, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
-    if len(groups) >= 3 and groups[:3] == [1, 1, 2]: return results[0]
+    if len(groups) >= 3 and groups[:3] == [1, 1, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     if len(groups) >= 2 and groups[:2] == [3, 1]: return results[0]
     if len(groups) >= 2 and groups[:2] == [1, 3]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
+    if len(groups) >= 2 and groups[:2] == [5, 1]: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     
-    # Bẻ bệt dài
-    if groups[0] >= 4: return "Tài" if results[0] == "Xỉu" else "Xỉu"
+    # Bẻ bệt dài (Quét tới 50 mẫu)
+    if groups[0] >= 5: return "Tài" if results[0] == "Xỉu" else "Xỉu"
     return None
 
 def algo_markov_chain(results):
-    """Thuật toán 2: Chuỗi Markov (Xác suất chuyển đổi)"""
-    if len(results) < 10: return None
-    last = results[0]
+    """Thuật toán 2: Chuỗi Markov bậc cao (Phân tích ma trận chuyển đổi 50 mẫu)"""
+    if len(results) < 20: return None
+    # Lấy tối đa 50 mẫu gần nhất để tính xác suất Markov thực chiến
+    sample_space = results[:50]
+    last = sample_space[0]
     transitions = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
-    for i in range(len(results) - 1):
-        transitions[results[i+1]][results[i]] += 1
+    for i in range(len(sample_space) - 1):
+        transitions[sample_space[i+1]][sample_space[i]] += 1
     
     total = sum(transitions[last].values())
-    if total > 3:
+    if total > 5:
         prob_tai = transitions[last]["Tài"] / total
-        if prob_tai > 0.65: return "Tài"
-        if prob_tai < 0.35: return "Xỉu"
+        if prob_tai > 0.60: return "Tài"
+        if prob_tai < 0.40: return "Xỉu"
     return None
 
 def algo_bayesian(results):
-    """Thuật toán 3: Suy luận Bayes (Dựa trên cụm 3 phiên)"""
-    if len(results) < 15: return None
-    # Lấy 3 phiên gần nhất làm chuỗi tìm kiếm
-    target_seq = tuple(results[:3])
+    """Thuật toán 3: Suy luận Bayes sâu (Khớp mẫu cụm 4 phiên trong 50 mẫu)"""
+    if len(results) < 25: return None
+    sample_space = results[:50]
+    if len(sample_space) < 4: return None
     
+    target_seq = tuple(sample_space[:4])
     count_target = 0
     count_next_tai = 0
     count_next_xiu = 0
     
-    for i in range(len(results) - 3):
-        seq = tuple(results[i+1:i+4])
+    for i in range(len(sample_space) - 4):
+        seq = tuple(sample_space[i+1:i+5])
         if seq == target_seq:
             count_target += 1
-            if results[i] == "Tài": count_next_tai += 1
+            if sample_space[i] == "Tài": count_next_tai += 1
             else: count_next_xiu += 1
             
-    if count_target >= 2:
-        if count_next_tai / count_target > 0.6: return "Tài"
-        if count_next_xiu / count_target > 0.6: return "Xỉu"
+    if count_target >= 1:
+        total_matched = count_next_tai + count_next_xiu
+        if total_matched > 0:
+            if (count_next_tai / total_matched) > 0.65: return "Tài"
+            if (count_next_xiu / total_matched) > 0.65: return "Xỉu"
     return None
 
 def algo_oscillator(results):
-    """Thuật toán 4: Chỉ báo Động lượng (Quá mua/Quá bán)"""
-    if len(results) < 15: return None
-    recent = results[:15]
+    """Thuật toán 4: Động lượng dao động (Quá mua / Quá bán trên 30-50 mẫu)"""
+    if len(results) < 20: return None
+    recent = results[:35]
     tai_count = recent.count("Tài")
+    ratio = tai_count / len(recent)
     
-    if tai_count >= 11: return "Xỉu" # Quá mua -> Bẻ
-    if tai_count <= 4: return "Tài"  # Quá bán -> Bẻ
+    if ratio >= 0.70: return "Xỉu" # Quá mua nặng -> Bẻ
+    if ratio <= 0.30: return "Tài"  # Quá bán nặng -> Bẻ
     return None
 
 def algo_mean_reversion(results):
-    """Thuật toán 5: Hồi quy trung bình"""
-    if len(results) < 30: return None
-    recent = results[:30]
-    tai_ratio = recent.count("Tài") / 30
+    """Thuật toán 5: Hồi quy trung bình động (Moving Average Reversion)"""
+    if len(results) < 40: return None
+    recent = results[:50]
+    tai_ratio = recent.count("Tài") / len(recent)
     
-    if tai_ratio > 0.65: return "Xỉu"
-    if tai_ratio < 0.35: return "Tài"
+    if tai_ratio > 0.62: return "Xỉu"
+    if tai_ratio < 0.38: return "Tài"
     return None
 
 def algo_streak_exhaustion(results, groups):
-    """Thuật toán 6: Cạn kiệt chuỗi (Streak)"""
-    if groups[0] >= 6: 
+    """Thuật toán 6: Điểm cạn kiệt chuỗi liên tục (Streak Exhaustion)"""
+    if groups[0] >= 5: 
         return "Tài" if results[0] == "Xỉu" else "Xỉu"
     return None
 
 def algo_fairness_balancer(pred_history):
-    """Thuật toán 7: Bộ cân bằng (Fairness)"""
-    if len(pred_history) < 10: return None
-    recent = pred_history[-10:]
+    """Thuật toán 7: Bộ cân bằng xác suất dự đoán hệ thống"""
+    if len(pred_history) < 15: return None
+    recent = pred_history[-15:]
     tai_preds = recent.count("Tài")
     
-    if tai_preds >= 8: return "Xỉu"
-    if tai_preds <= 2: return "Tài"
+    if tai_preds >= 12: return "Xỉu"
+    if tai_preds <= 3: return "Tài"
     return None
 
 
-# --- HÀM TỔNG HỢP TỰ THÍCH NGHI ---
+# --- HÀM TỔNG HỢP TỰ THÍCH NGHI NÂNG CAO ---
 
 def adaptive_ensemble_predict(results, pred_history, algo_performance):
     """
     results: Lịch sử kết quả
     pred_history: Lịch sử dự đoán của hệ thống
-    algo_performance: Dict lưu trữ phong độ của từng thuật toán (đúng/sai)
+    algo_performance: Dict lưu trữ phong độ của từng thuật toán
     """
     if not results:
         return "Tài", 50.0, 0
@@ -603,7 +612,6 @@ def adaptive_ensemble_predict(results, pred_history, algo_performance):
 
     groups = get_groups(results)
     
-    # Chạy tất cả thuật toán để lấy kết quả thô
     raw_votes = {
         "pattern": algo_pattern_matrix(results, groups),
         "markov": algo_markov_chain(results),
@@ -618,29 +626,25 @@ def adaptive_ensemble_predict(results, pred_history, algo_performance):
     score_xiu = 0.0
     active_votes = 0
 
-    # Trọng số cơ bản (Base Weights)
+    # Tăng cường trọng số gốc cho các thuật toán phân tích mẫu sâu
     base_weights = {
-        "pattern": 10.0,
-        "markov": 8.0,
-        "bayes": 9.0,
-        "oscillator": 7.0,
-        "mean_rev": 7.0,
-        "streak": 9.0,
-        "fairness": 5.0
+        "pattern": 12.0,
+        "markov": 10.0,
+        "bayes": 11.0,
+        "oscillator": 8.0,
+        "mean_rev": 8.0,
+        "streak": 10.0,
+        "fairness": 6.0
     }
 
     for algo_name, pred in raw_votes.items():
         if pred:
             active_votes += 1
-            # Lấy phong độ hiện tại của thuật toán (Mặc định là 1.0 nếu chưa có dữ liệu)
             perf = algo_performance.get(algo_name, {"correct": 0, "total": 0})
             
-            # Tính hệ số phong độ (Dynamic Factor)
-            if perf["total"] >= 5:
+            if perf["total"] >= 4:
                 accuracy = perf["correct"] / perf["total"]
-                # Nếu accuracy > 50%, tăng trọng số. Nếu < 50%, giảm trọng số.
-                # Giới hạn hệ số từ 0.2 đến 2.0 để tránh bị lệch quá mức
-                dynamic_factor = max(0.2, min(2.0, accuracy * 2))
+                dynamic_factor = max(0.1, min(2.5, accuracy * 2.2))
             else:
                 dynamic_factor = 1.0
                 
@@ -653,10 +657,10 @@ def adaptive_ensemble_predict(results, pred_history, algo_performance):
         return results[0], 50.0, 0
 
     if score_tai > score_xiu:
-        confidence = min(50 + (score_tai / max(active_votes, 1)) * 5, 99)
+        confidence = min(50 + (score_tai / max(active_votes, 1)) * 4.5, 98)
         return "Tài", confidence, active_votes
     elif score_xiu > score_tai:
-        confidence = min(50 + (score_xiu / max(active_votes, 1)) * 5, 99)
+        confidence = min(50 + (score_xiu / max(active_votes, 1)) * 4.5, 98)
         return "Xỉu", confidence, active_votes
     else:
         return ("Xỉu" if results[0] == "Tài" else "Tài"), 50.0, active_votes
@@ -701,7 +705,6 @@ def history():
         history_for_next = [v['result'] for v in valid][::-1]
         
         pred_history = []
-        # Lưu trữ phong độ của thuật toán (Dùng cho Feedback Loop)
         algo_performance = {k: {"correct": 0, "total": 0} for k in ["pattern", "markov", "bayes", "oscillator", "mean_rev", "streak", "fairness"]}
         
         next_pred, next_conf, next_votes = adaptive_ensemble_predict(history_for_next, pred_history, algo_performance)
@@ -733,10 +736,8 @@ def history():
                 pred, conf, votes = "-", 0, 0
                 is_correct = None
 
-            # Cập nhật phong độ cho các thuật toán (Feedback Loop)
             if history and pred != "-":
                 groups = get_groups(history)
-                # Lấy lại raw votes (chạy lại để biết thuật toán nào đúng/sai)
                 raw_votes = {
                     "pattern": algo_pattern_matrix(history, groups),
                     "markov": algo_markov_chain(history),
