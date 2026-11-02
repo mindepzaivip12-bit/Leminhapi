@@ -1,4 +1,5 @@
 import os
+import math
 import time
 from datetime import datetime
 import requests
@@ -390,7 +391,7 @@ function renderTable(rows, stats) {
 
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = `<span class="status st-wait">⏳ Chờ kết quả</span>`;
+            statusHtml = `<span class="status st-wait"> Chờ kết quả</span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -489,7 +490,7 @@ def fetch_sessions(api_type='md5'):
     return [], False
 
 # =====================================================================
-# FULL CẦU ANALYZER v17.0 — Tổng hợp TOÀN BỘ cầu phổ biến
+# FULL CẦU ANALYZER v18.0 — Tổng hợp TOÀN BỘ cầu phổ biến + 20 tín hiệu
 # =====================================================================
 
 def get_groups(results):
@@ -633,35 +634,87 @@ def analyze_full_bridge(results):
     h = _detect_group_pattern(groups, results)
     if h: signals.append(h)
 
+    # ─── 14. CẦU 1-1-2 ──────────────────────────────
+    if len(groups) >= 3 and groups[:3] == [1, 1, 2] and n >= 5:
+        signals.append((_opp(results[0]), 12, "1_1_2"))
+
+    # ─── 15. CẦU 2-2-1 ──────────────────────────────
+    if len(groups) >= 3 and groups[:3] == [2, 2, 1] and n >= 6:
+        signals.append((_opp(results[0]), 11, "2_2_1"))
+
+    # ─── 16. CẦU ZIGZAG (1-2-3-2-1) ─────────────────
+    if len(groups) >= 5 and tuple(groups[:5]) in ((1,2,3,2,1), (1,2,3,2)):
+        signals.append((results[1], 10, "zigzag_12321"))
+
+    # ─── 17. CẦU TAM GIÁC (3-2-1-1-2-3) ─────────────
+    if len(groups) >= 6 and groups[:6] == [3,2,1,1,2,3]:
+        signals.append((results[0], 11, "triangle"))
+
+    # ─── 18. ENTROPY thấp = xu hướng mạnh ───────────
+    if n >= 20:
+        sample = results[:20]
+        p_tai = sample.count("Tài") / len(sample)
+        if p_tai in (0, 1):
+            entropy = 0
+        else:
+            entropy = -(p_tai * math.log2(p_tai) + (1 - p_tai) * math.log2(1 - p_tai))
+        if entropy < 0.6:
+            signals.append(("Tài" if p_tai > 0.5 else "Xỉu", 9, "low_entropy"))
+
+    # ─── 19. HOT/COLD streak counter ────────────────
+    if n >= 12:
+        last8 = results[:8]
+        tai8 = last8.count("Tài")
+        if tai8 >= 7:   signals.append(("Xỉu", 13, "hot_tai_8"))
+        if tai8 <= 1:   signals.append(("Tài", 13, "hot_xiu_8"))
+
+    # ─── 20. RANGE-bound oscillation ────────────────
+    if n >= 10:
+        window = results[:10]
+        trans = sum(1 for i in range(9) if window[i] != window[i+1])
+        if 4 <= trans <= 6:
+            signals.append((_opp(results[0]), 7, "balanced_osc"))
+
     return signals
 
 
-def full_bridge_predict(results):
-    """Ensemble có WEIGHTED EVIDENCE - không để tín hiệu yếu đè tín hiệu mạnh."""
-    if not results: return "Tài", 50
-    if len(results) < 3: return results[0], 50
+def full_bridge_predict_verbose(results):
+    """Trả (pred, conf, detail_signals)."""
+    if not results: return "Tài", 50, []
+    if len(results) < 3: return results[0], 50, []
 
     signals = analyze_full_bridge(results)
     if not signals:
-        return results[0], 52
+        return results[0], 52, []
 
     score_tai = sum(w for p, w, _ in signals if p == "Tài")
     score_xiu = sum(w for p, w, _ in signals if p == "Xỉu")
     total = score_tai + score_xiu
     if total == 0:
-        return results[0], 50
+        return results[0], 50, []
 
     def _calc(ratio):
         base = 50 + (ratio - 0.5) * 100
-        evidence = min(1.0, total / 30.0)     # < 30 → giảm conf
-        return int(max(50, min(90, 50 + (base - 50) * evidence)))
+        evidence = min(1.0, total / 30.0)
+        return int(max(50, min(92, 50 + (base - 50) * evidence)))
+
+    detail = [
+        {'name': name, 'pred': p, 'weight': w}
+        for p, w, name in signals
+    ]
 
     if score_tai > score_xiu:
-        return "Tài", _calc(score_tai / total)
+        return "Tài", _calc(score_tai / total), detail
     elif score_xiu > score_tai:
-        return "Xỉu", _calc(score_xiu / total)
+        return "Xỉu", _calc(score_xiu / total), detail
     else:
-        return _opp(results[0]), 50
+        return _opp(results[0]), 50, detail
+
+
+def full_bridge_predict(results):
+    """Wrapper tương thích ngược — dùng trong /api/history."""
+    pred, conf, _ = full_bridge_predict_verbose(results)
+    return pred, conf
 
 
 # =====================================================================
@@ -748,6 +801,54 @@ def history():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/predict')
+def predict():
+    """Dự đoán nhanh phiên kế tiếp kèm chi tiết tín hiệu."""
+    api_type = request.args.get('type', 'md5')
+    reset_id = RESET_IDS.get(api_type, 0)
+
+    try:
+        raw_rows, success = fetch_sessions(api_type)
+
+        if not success and not HISTORY_CACHE[api_type]:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+
+        for row in raw_rows:
+            HISTORY_CACHE[api_type][row['phien']] = row
+
+        keys_to_remove = [k for k in HISTORY_CACHE[api_type] if k <= reset_id]
+        for k in keys_to_remove:
+            del HISTORY_CACHE[api_type][k]
+
+        valid = sorted(HISTORY_CACHE[api_type].values(), key=lambda x: x['phien'])
+        if not valid:
+            return jsonify({'error': 'Chưa có dữ liệu lịch sử'}), 400
+
+        results = [v['result'] for v in valid][::-1]
+        pred, conf, detail = full_bridge_predict_verbose(results)
+
+        return jsonify({
+            'type': api_type,
+            'last_phien': valid[-1]['phien'],
+            'next_phien': valid[-1]['phien'] + 1,
+            'last_result': valid[-1]['result'],
+            'last_dice': valid[-1]['dice'],
+            'prediction': pred,
+            'confidence': conf,
+            'total_sessions': len(valid),
+            'signals': detail,
+            'signal_summary': {
+                'tai_score': sum(s['weight'] for s in detail if s['pred'] == 'Tài'),
+                'xiu_score': sum(s['weight'] for s in detail if s['pred'] == 'Xỉu'),
+                'signal_count': len(detail),
+            },
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
     data = request.json or {}
@@ -765,6 +866,7 @@ def reset_api():
         return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
