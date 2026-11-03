@@ -583,8 +583,6 @@ def analyze_full_bridge(results):
         if 4 <= trans <= 6:
             signals.append((_opp(results[0]), 7, "balanced_osc"))
 
-    # ── NEW v19 SIGNALS ──────────────────────────────────
-
     # 21. MARKOV order 2
     if n >= 20:
         target = tuple(results[:2])
@@ -857,6 +855,65 @@ def predict():
             'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
             'signal_count': len(detail),
             'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+# =====================================================================
+# LC79 — Endpoint trả kết quả gọn cho tool ngoài
+# =====================================================================
+@app.route('/lc79')
+def lc79():
+    global RESET_ID
+    try:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+
+        for row in raw_rows:
+            HISTORY_CACHE[row['phien']] = row
+
+        keys_to_remove = [k for k in HISTORY_CACHE if k <= RESET_ID]
+        for k in keys_to_remove:
+            del HISTORY_CACHE[k]
+
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid:
+            return jsonify({'error': 'Chưa có dữ liệu'}), 400
+
+        results = [v['result'] for v in valid][::-1]  # newest first
+        pred, conf, detail = full_bridge_predict_adaptive(results)
+
+        # Confidence dạng float để format "xx,x%"
+        tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
+        xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
+        total_sig = tai_score + xiu_score
+        if total_sig > 0:
+            ratio = max(tai_score, xiu_score) / total_sig
+            base_conf = 50 + (ratio - 0.5) * 100
+            evidence = min(1.0, total_sig / 40.0)
+            conf_float = max(50.0, min(94.0, 50 + (base_conf - 50) * evidence))
+        else:
+            conf_float = 50.0
+        conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
+
+        # Lich_su: độ dài các cầu gần nhất (newest first) — vd "-1-2-4"
+        groups = get_groups(results)
+        recent_groups = groups[:4]
+        lich_su = "-" + "-".join(str(g) for g in recent_groups)
+
+        last = valid[-1]
+        next_phien = last['phien'] + 1
+
+        return jsonify({
+            'Id':         'le minh ',
+            'Phien':      str(next_phien),
+            'Ket_qua':    last['result'].lower(),
+            'Lich_su':    lich_su,
+            'Du_doan':    pred,
+            'Do_tin_cay': conf_str,
         })
     except Exception as e:
         traceback.print_exc()
