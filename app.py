@@ -23,7 +23,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE  MD5 </title>
+<title>LE MINH MD5 </title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -203,7 +203,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>MD5</span></div>
+    <div class="header-title">LE MINH <span>MD5 v21</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -455,20 +455,13 @@ def _stable_hash(s):
 
 
 # =====================================================================
-# ★ THUẬT TOÁN MỚI #1 — RANDOM CÓ TRỌNG SỐ (deterministic seed)
+# THUẬT TOÁN PHỤ #1 — RANDOM CÓ TRỌNG SỐ
 # =====================================================================
 def algo_random_weighted(results):
-    """
-    Random có bias theo tendency gần nhất, seed cố định từ history
-    → tái lập được giữa các lần gọi, nhưng vẫn 'random-like'.
-    """
     if len(results) < 3:
         return None
-
     window = results[:12]
     p_tai = window.count("Tài") / len(window)
-
-    # Seed ổn định từ 20 phiên gần nhất
     seed = _stable_hash(",".join(results[:20]))
     rng = random.Random(seed)
     r = rng.random()
@@ -480,7 +473,6 @@ def algo_random_weighted(results):
         pred = "Xỉu" if r < 0.70 else "Tài"
         weight = 9
     else:
-        # Vùng cân bằng → random thật sự 50/50
         pred = "Tài" if r < 0.50 else "Xỉu"
         weight = 6
 
@@ -488,20 +480,14 @@ def algo_random_weighted(results):
 
 
 # =====================================================================
-# ★ THUẬT TOÁN MỚI #2 — KHÔNG RANDOM (TẤT ĐỊNH: CHU KỲ + STREAK)
+# THUẬT TOÁN PHỤ #2 — TẤT ĐỊNH (CHU KỲ + STREAK)
 # =====================================================================
 def algo_non_random_deterministic(results):
-    """
-    Tất định: phân tích chu kỳ nhóm phổ biến + so sánh streak hiện tại
-    với trung bình → dự đoán tiếp tục/break.
-    """
     if len(results) < 5:
         return None
-
     groups = get_groups(results)
     r0 = results[0]
 
-    # 2A. Chu kỳ nhóm phổ biến (cyclic)
     if len(groups) >= 5:
         cnt = Counter(groups[:10])
         common_len, common_freq = cnt.most_common(1)[0]
@@ -511,7 +497,6 @@ def algo_non_random_deterministic(results):
             elif groups[0] >= common_len:
                 return (_opp(r0), 12, "nonrand_cycle_break")
 
-    # 2B. Streak so với trung bình các nhóm gần
     if len(groups) >= 4:
         sample = groups[:6]
         avg = sum(sample) / len(sample)
@@ -520,22 +505,16 @@ def algo_non_random_deterministic(results):
             return (_opp(r0), 10, "nonrand_streak_break")
         if cur < avg - 0.3:
             return (r0, 9, "nonrand_streak_continue")
-
     return None
 
 
 # =====================================================================
-# ★ THUẬT TOÁN MỚI #3 — ĐƠN GIẢN NÂNG CẤP (RULE NGẮN HẠN)
+# THUẬT TOÁN PHỤ #3 — RULE NGẮN HẠN
 # =====================================================================
 def algo_simple_enhanced(results):
-    """
-    Rule cứng theo streak ngắn (1/2/3/4+) kết hợp cặp liền trước.
-    """
     if len(results) < 3:
         return None
-
     r0 = results[0]
-
     streak = 1
     for r in results[1:]:
         if r == r0:
@@ -543,88 +522,208 @@ def algo_simple_enhanced(results):
         else:
             break
 
-    # streak = 1: xem 2 phiên trước có trùng nhau không
     if streak == 1:
         if len(results) >= 3 and results[1] == results[2]:
             return (_opp(r0), 8, "simple_break_after_pair")
         return (r0, 8, "simple_continue")
-
     if streak == 2:
         return (r0, 9, "simple_momentum")
-
     if streak == 3:
         return (_opp(r0), 10, "simple_break_3")
-
     if streak >= 4:
         return (_opp(r0), 11, "simple_break_4plus")
-
     return None
 
 
 # =====================================================================
-# FULL CẦU ANALYZER v20 — Adaptive Signal Weighting + 3 thuật toán mới
+# ★ HELPER v21 #1 — PHÂN TÍCH BỆT ĐA TẦNG
+# =====================================================================
+def analyze_bet_advanced(results, groups):
+    signals = []
+    if not groups or len(results) < 3:
+        return signals
+    r0 = results[0]
+    g0 = groups[0]
+    n = len(results)
+
+    # LAYER 1: Bệt theo độ dài
+    if   g0 >= 10: signals.append((_opp(r0), 38, "bet_10plus_break"))
+    elif g0 >= 8:  signals.append((_opp(r0), 32, "bet_8_9_break"))
+    elif g0 >= 6:  signals.append((_opp(r0), 25, "bet_6_7_break"))
+    elif g0 == 5:  signals.append((_opp(r0), 18, "bet_5_break"))
+    elif g0 == 4:  signals.append((_opp(r0), 12, "bet_4_break"))
+    elif g0 == 3:
+        if len(groups) >= 5:
+            sample = groups[1:min(12, len(groups))]
+            avg_g = sum(sample) / len(sample)
+            if   avg_g < 2.3: signals.append((_opp(r0), 13, "bet_3_break_adaptive"))
+            elif avg_g >= 3.5: signals.append((r0, 11, "bet_3_continue_adaptive"))
+            else:             signals.append((_opp(r0), 9, "bet_3_break_default"))
+        else:
+            signals.append((_opp(r0), 9, "bet_3_break_default"))
+
+    # LAYER 2: Bệt "nóng" — continuation khi bệt ngắn nhưng dày
+    if n >= 15:
+        last15 = results[:15]
+        tai15 = last15.count("Tài")
+        if tai15 >= 12 and r0 == "Tài" and g0 <= 5:
+            signals.append(("Tài", 9, "bet_hot_continue_tai"))
+        elif tai15 <= 3 and r0 == "Xỉu" and g0 <= 5:
+            signals.append(("Xỉu", 9, "bet_hot_continue_xiu"))
+
+    return signals
+
+
+# =====================================================================
+# ★ HELPER v21 #2 — CẦU KẸP (SANDWICH)
+# =====================================================================
+def analyze_sandwich(groups, results):
+    signals = []
+    if len(groups) < 3 or len(results) < 5:
+        return signals
+    r0 = results[0]
+
+    if groups[0] == 1 and groups[2] == 1 and 1 <= groups[1] <= 6:
+        w = 10 + min(groups[1], 5)
+        signals.append((_opp(r0), w, f"sandwich_1_{groups[1]}_1"))
+
+    if len(groups) >= 3 and groups[0] == 2 and groups[2] == 2 and 1 <= groups[1] <= 5:
+        signals.append((_opp(r0), 13, f"sandwich_2_{groups[1]}_2"))
+
+    if len(groups) >= 3 and groups[0] == 3 and groups[2] == 3 and 1 <= groups[1] <= 4:
+        signals.append((_opp(r0), 14, f"sandwich_3_{groups[1]}_3"))
+
+    if len(groups) >= 4 and groups[0] == 1 and groups[2] == 1 and groups[3] >= 2:
+        signals.append((r0, 8, "sandwich_chain"))
+
+    return signals
+
+
+# =====================================================================
+# ★ HELPER v21 #3 — CẦU CHU KỲ (CYCLE DETECTION)
+# =====================================================================
+def analyze_cycle(results):
+    signals = []
+    n = len(results)
+    if n < 10:
+        return signals
+
+    for cycle_len in range(2, 6):
+        if n < cycle_len * 3:
+            continue
+        seq = results[:cycle_len]
+        matches = 0
+        for i in range(cycle_len, min(n, cycle_len * 5)):
+            if results[i] == seq[matches % cycle_len]:
+                matches += 1
+            else:
+                break
+        if matches >= cycle_len * 2.5:
+            next_pred = seq[matches % cycle_len]
+            w = 8 + min(int(matches * 0.8), 12)
+            signals.append((next_pred, w, f"cycle_{cycle_len}"))
+            break
+
+    return signals
+
+
+# =====================================================================
+# ★★★ FULL BRIDGE ANALYZER v21 — 35+ SIGNALS ★★★
 # =====================================================================
 def analyze_full_bridge(results):
-    """Returns list of (pred, weight, signal_name)."""
     if len(results) < 3: return []
     signals = []
     groups = get_groups(results)
     n = len(results)
     r0 = results[0]
 
-    # 1. CẦU BỆT
-    if   groups[0] >= 6: signals.append((_opp(r0), 28, "bet_6+"))
-    elif groups[0] == 5: signals.append((_opp(r0), 22, "bet_5"))
-    elif groups[0] == 4: signals.append((_opp(r0), 16, "bet_4"))
-    elif groups[0] == 3: signals.append((_opp(r0), 8,  "bet_3"))
+    # 1. BỆT (nâng cấp)
+    signals.extend(analyze_bet_advanced(results, groups))
 
-    # 2. CẦU 1-1
+    # 2. CẦU 1-1 (alternation)
     alt = _count_alternations(results)
-    if   alt >= 6: signals.append((_opp(r0), 20, "1_1_strong"))
-    elif alt >= 4: signals.append((_opp(r0), 15, "1_1"))
+    if   alt >= 8: signals.append((_opp(r0), 26, "1_1_extreme"))
+    elif alt >= 6: signals.append((_opp(r0), 22, "1_1_strong"))
+    elif alt >= 4: signals.append((_opp(r0), 16, "1_1"))
     elif alt >= 3: signals.append((_opp(r0), 10, "1_1_weak"))
 
     # 3. CẦU 2-2
-    if len(groups) >= 5 and all(g == 2 for g in groups[:5]): signals.append((_opp(r0), 18, "2_2_strong"))
-    elif len(groups) >= 4 and all(g == 2 for g in groups[:4]): signals.append((_opp(r0), 14, "2_2"))
-    elif len(groups) >= 3 and all(g == 2 for g in groups[:3]): signals.append((_opp(r0), 9,  "2_2_weak"))
+    if   len(groups) >= 6 and all(g == 2 for g in groups[:6]):
+        signals.append((_opp(r0), 22, "2_2_extreme"))
+    elif len(groups) >= 5 and all(g == 2 for g in groups[:5]):
+        signals.append((_opp(r0), 18, "2_2_strong"))
+    elif len(groups) >= 4 and all(g == 2 for g in groups[:4]):
+        signals.append((_opp(r0), 14, "2_2"))
+    elif len(groups) >= 3 and all(g == 2 for g in groups[:3]):
+        signals.append((_opp(r0), 9, "2_2_weak"))
 
     # 4. CẦU 3-3
-    if len(groups) >= 4 and all(g == 3 for g in groups[:4]): signals.append((_opp(r0), 15, "3_3_strong"))
-    elif len(groups) >= 3 and all(g == 3 for g in groups[:3]): signals.append((_opp(r0), 10, "3_3"))
+    if   len(groups) >= 5 and all(g == 3 for g in groups[:5]):
+        signals.append((_opp(r0), 18, "3_3_strong"))
+    elif len(groups) >= 4 and all(g == 3 for g in groups[:4]):
+        signals.append((_opp(r0), 15, "3_3"))
+    elif len(groups) >= 3 and all(g == 3 for g in groups[:3]):
+        signals.append((_opp(r0), 10, "3_3_weak"))
 
-    # 5. CẦU 4-4
-    if len(groups) >= 3 and all(g == 4 for g in groups[:3]): signals.append((_opp(r0), 12, "4_4"))
+    # 5. CẦU 4-4 / 5-5 / 6-6
+    for length in (6, 5, 4):
+        if len(groups) >= 3 and all(g == length for g in groups[:3]):
+            signals.append((_opp(r0), max(8, 15 - length), f"{length}_{length}"))
+            break
 
-    # 6. CẦU 1-2-1
+    # 6. CẦU KẸP (sandwich)
+    signals.extend(analyze_sandwich(groups, results))
+
+    # 7. CẦU PYRAMID
+    if len(groups) >= 5:
+        if groups[:5] == [1, 2, 3, 2, 1]:
+            signals.append((results[1], 13, "pyramid_12321"))
+        elif groups[:5] == [2, 3, 4, 3, 2]:
+            signals.append((results[1], 12, "pyramid_23432"))
+        elif groups[:5] == [1, 2, 1, 2, 1]:
+            signals.append((results[0], 11, "zigzag_12121"))
+
+    # 8. CẦU TĂNG/GIẢM
+    if len(groups) >= 3:
+        if groups[:3] == [1, 2, 3]: signals.append((r0, 10, "inc_123"))
+        if groups[:3] == [3, 2, 1]: signals.append((r0, 10, "dec_321"))
+        if groups[:3] == [1, 3, 5]: signals.append((r0, 9,  "inc_135"))
+        if groups[:3] == [2, 4, 6]: signals.append((r0, 9,  "inc_246"))
+
+    # 9. CẦU 1-2-1 / 2-1-2
     if len(groups) >= 3 and groups[:3] == [1, 2, 1] and n >= 4:
         signals.append((results[1], 13, "1_2_1"))
-
-    # 7. CẦU 2-1-2
     if len(groups) >= 3 and groups[:3] == [2, 1, 2] and n >= 5:
         signals.append((results[2], 13, "2_1_2"))
 
-    # 8. CẦU 1-3-1 / tăng-giảm
+    # 10. CẦU 1-3-1 / 1-1-2 / 2-2-1
     if len(groups) >= 3 and groups[:3] == [1, 3, 1] and n >= 5:
         signals.append((results[1], 11, "1_3_1"))
-    if len(groups) >= 3 and groups[:3] == [1, 2, 3]: signals.append((r0, 8, "1_2_3"))
-    if len(groups) >= 3 and groups[:3] == [3, 2, 1]: signals.append((r0, 8, "3_2_1"))
+    if len(groups) >= 3 and groups[:3] == [1, 1, 2] and n >= 5:
+        signals.append((_opp(results[0]), 12, "1_1_2"))
+    if len(groups) >= 3 and groups[:3] == [2, 2, 1] and n >= 6:
+        signals.append((_opp(results[0]), 11, "2_2_1"))
 
-    # 9. CẦU NGHIÊNG
+    # 11. CẦU CHU KỲ (cycle)
+    signals.extend(analyze_cycle(results))
+
+    # 12. CẦU NGHIÊNG (tilt, multi-window)
     if n >= 15:
-        sample = results[:25]
-        tr = sample.count("Tài") / len(sample)
-        if   tr >= 0.72: signals.append(("Xỉu", 9, "nghieng_tai"))
-        elif tr <= 0.28: signals.append(("Tài", 9, "nghieng_xiu"))
+        for window in (15, 20, 30):
+            if n < window: continue
+            sample = results[:window]
+            tr = sample.count("Tài") / len(sample)
+            if   tr >= 0.73: signals.append(("Xỉu", 10, f"tilt_tai_{window}")); break
+            elif tr <= 0.27: signals.append(("Tài", 10, f"tilt_xiu_{window}")); break
 
-    # 10. CẦU LẶP
+    # 13. CẦU LẶP (repetition)
     for win in range(3, min(n // 2, 12) + 1):
         if len(results) >= win * 2 and results[:win] == results[win:win*2]:
             if len(results) > win * 2:
-                signals.append((results[win*2], 11, f"lap_{win}"))
+                signals.append((results[win*2], 12, f"lap_{win}"))
                 break
 
-    # 11. MARKOV order 1
+    # 14. MARKOV order 1
     if n >= 15:
         tr = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
         sample = results[:45]
@@ -637,16 +736,29 @@ def analyze_full_bridge(results):
             if   p >= 0.65: signals.append(("Tài", 10, "markov1"))
             elif p <= 0.35: signals.append(("Xỉu", 10, "markov1"))
 
-    # 12. BAYESIAN sequence
+    # 15. MARKOV order 2
     if n >= 20:
-        for slen in (4, 3, 2):
+        target = tuple(results[:2])
+        nt = nx = 0
+        for i in range(2, min(n, 50)):
+            if tuple(results[i:i+2]) == target:
+                if results[i-1] == "Tài": nt += 1
+                else: nx += 1
+        tot = nt + nx
+        if tot >= 3:
+            if   nt / tot >= 0.68: signals.append(("Tài", 11, "markov2"))
+            elif nx / tot >= 0.68: signals.append(("Xỉu", 11, "markov2"))
+
+    # 16. BAYESIAN sequence
+    if n >= 20:
+        for slen in (5, 4, 3, 2):
             if n < slen + 3: continue
             target = tuple(results[:slen])
             nt = nx = 0
-            for i in range(slen, min(n, 55)):
+            for i in range(slen, min(n, 60)):
                 if tuple(results[i:i+slen]) == target:
                     if results[i-1] == "Tài": nt += 1
-                    else:                     nx += 1
+                    else: nx += 1
             tot = nt + nx
             if tot >= 2:
                 if nt / tot >= 0.7:
@@ -654,27 +766,37 @@ def analyze_full_bridge(results):
                 if nx / tot >= 0.7:
                     signals.append(("Xỉu", 12, f"bayes_{slen}")); break
 
-    # 13. HISTORICAL GROUP PATTERN
+    # 17. HISTORICAL GROUP PATTERN
     h = _detect_group_pattern(groups, results)
     if h: signals.append(h)
 
-    # 14. CẦU 1-1-2
-    if len(groups) >= 3 and groups[:3] == [1, 1, 2] and n >= 5:
-        signals.append((_opp(results[0]), 12, "1_1_2"))
+    # 18. HOT/COLD (multi-window)
+    if n >= 12:
+        for w, hi, lo in ((8, 7, 1), (12, 10, 2)):
+            if n < w: continue
+            sample = results[:w]
+            tc = sample.count("Tài")
+            if tc >= hi: signals.append(("Xỉu", 14 if w == 8 else 12, f"hot_tai_{w}"))
+            elif tc <= lo: signals.append(("Tài", 14 if w == 8 else 12, f"hot_xiu_{w}"))
 
-    # 15. CẦU 2-2-1
-    if len(groups) >= 3 and groups[:3] == [2, 2, 1] and n >= 6:
-        signals.append((_opp(results[0]), 11, "2_2_1"))
+    # 19. MULTI-WINDOW CONSENSUS
+    if n >= 15:
+        w5  = results[:5].count("Tài")
+        w10 = results[:10].count("Tài")
+        w15 = results[:15].count("Tài")
+        vt = sum([w5 >= 4, w10 >= 7, w15 >= 10])
+        vx = sum([w5 <= 1, w10 <= 3, w15 <= 5])
+        if   vt >= 2: signals.append(("Tài", 11, "multi_window"))
+        elif vx >= 2: signals.append(("Xỉu", 11, "multi_window"))
 
-    # 16. ZIGZAG
-    if len(groups) >= 5 and tuple(groups[:5]) in ((1,2,3,2,1), (1,2,3,2)):
-        signals.append((results[1], 10, "zigzag"))
+    # 20. CHAOS ALTERNATION
+    if n >= 15:
+        sample = results[:15]
+        trans = sum(1 for i in range(14) if sample[i] != sample[i+1])
+        if trans >= 12:
+            signals.append((_opp(results[0]), 13, "chaos_alt"))
 
-    # 17. TAM GIÁC
-    if len(groups) >= 6 and groups[:6] == [3,2,1,1,2,3]:
-        signals.append((results[0], 11, "triangle"))
-
-    # 18. ENTROPY
+    # 21. LOW ENTROPY
     if n >= 20:
         sample = results[:20]
         p_tai = sample.count("Tài") / len(sample)
@@ -685,65 +807,30 @@ def analyze_full_bridge(results):
         if entropy < 0.6:
             signals.append(("Tài" if p_tai > 0.5 else "Xỉu", 9, "low_entropy"))
 
-    # 19. HOT/COLD
-    if n >= 12:
-        last8 = results[:8]
-        tai8 = last8.count("Tài")
-        if tai8 >= 7:   signals.append(("Xỉu", 13, "hot_tai"))
-        if tai8 <= 1:   signals.append(("Tài", 13, "hot_xiu"))
-
-    # 20. OSCILLATION
+    # 22. OSCILLATION
     if n >= 10:
         window = results[:10]
         trans = sum(1 for i in range(9) if window[i] != window[i+1])
         if 4 <= trans <= 6:
             signals.append((_opp(results[0]), 7, "balanced_osc"))
 
-    # 21. MARKOV order 2
-    if n >= 20:
-        target = tuple(results[:2])
-        nt = nx = 0
-        for i in range(2, min(n, 50)):
-            if tuple(results[i:i+2]) == target:
-                if results[i-1] == "Tài": nt += 1
-                else:                     nx += 1
-        tot = nt + nx
-        if tot >= 3:
-            if   nt / tot >= 0.68: signals.append(("Tài", 11, "markov2"))
-            elif nx / tot >= 0.68: signals.append(("Xỉu", 11, "markov2"))
-
-    # 22. MULTI-WINDOW CONSENSUS
-    if n >= 15:
-        w5  = results[:5].count("Tài")
-        w10 = results[:10].count("Tài")
-        w15 = results[:15].count("Tài")
-        votes_tai = sum([w5 >= 4, w10 >= 7, w15 >= 10])
-        votes_xiu = sum([w5 <= 1, w10 <= 3, w15 <= 5])
-        if votes_tai >= 2:   signals.append(("Tài", 10, "multi_window"))
-        elif votes_xiu >= 2: signals.append(("Xỉu", 10, "multi_window"))
-
-    # 23. MOMENTUM (cùng chiều + cầu chưa dài)
+    # 23. MOMENTUM
     if n >= 8 and groups[0] >= 2:
         w8 = results[:8].count("Tài")
-        if w8 >= 6:   signals.append(("Tài", 8, "momentum"))
+        if   w8 >= 6: signals.append(("Tài", 8, "momentum"))
         elif w8 <= 2: signals.append(("Xỉu", 8, "momentum"))
 
-    # 24. CHAOS ALTERNATION (đảo liên tục mạnh)
-    if n >= 15:
-        sample = results[:15]
-        trans = sum(1 for i in range(14) if sample[i] != sample[i+1])
-        if trans >= 12:
-            signals.append((_opp(results[0]), 12, "chaos_alt"))
+    # 24. ZIGZAG mở rộng
+    if len(groups) >= 5 and tuple(groups[:5]) in (
+        (1,2,3,2,1), (1,2,3,2), (1,1,2,1,1), (2,1,1,2,2)
+    ):
+        signals.append((results[1], 10, "zigzag_ext"))
 
-    # ═══════════════════════════════════════════════════════════════
-    # ★ 25-27. BA THUẬT TOÁN MỚI (RANDOM + NON-RANDOM + SIMPLE)
-    # ═══════════════════════════════════════════════════════════════
+    # 25-27. BA THUẬT TOÁN PHỤ
     rnd = algo_random_weighted(results)
     if rnd: signals.append(rnd)
-
     nrnd = algo_non_random_deterministic(results)
     if nrnd: signals.append(nrnd)
-
     simple = algo_simple_enhanced(results)
     if simple: signals.append(simple)
 
@@ -781,25 +868,26 @@ def full_bridge_predict(results):
 
 
 # =====================================================================
-# ADAPTIVE PREDICTOR (v20 — 3 thuật toán mới tự động được đánh giá)
+# ★★★ ADAPTIVE PREDICTOR v21 — TIME-DECAY + CONSENSUS BOOST ★★★
 # =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=60):
     n = len(results)
     if n < 3:
         return (results[0] if results else "Tài"), 50, []
 
-    # Replay để đo performance từng signal (bao gồm 3 thuật toán mới)
-    signal_stats = defaultdict(lambda: {'wins': 0, 'total': 0})
+    # Replay có TIME-DECAY
+    signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
     replay_count = min(replay_n, n - 3)
 
     for j in range(replay_count):
         history = results[j+1:]
         actual = results[j]
+        decay = 1.0 - (j / max(replay_count, 1)) * 0.5
         sigs = analyze_full_bridge(history)
         for pred_sig, weight, name in sigs:
-            signal_stats[name]['total'] += 1
+            signal_stats[name]['total'] += decay
             if pred_sig == actual:
-                signal_stats[name]['wins'] += 1
+                signal_stats[name]['wins'] += decay
 
     signals = analyze_full_bridge(results)
     if not signals:
@@ -811,7 +899,7 @@ def full_bridge_predict_adaptive(results, replay_n=60):
 
     for pred_sig, weight, name in signals:
         stats = signal_stats[name]
-        if stats['total'] >= 5:
+        if stats['total'] >= 3:
             acc = stats['wins'] / stats['total']
             multiplier = 0.3 + acc * 1.4
         else:
@@ -819,17 +907,15 @@ def full_bridge_predict_adaptive(results, replay_n=60):
             multiplier = 1.0
 
         adjusted = weight * multiplier
-        if pred_sig == "Tài":
-            score_tai += adjusted
-        else:
-            score_xiu += adjusted
+        if pred_sig == "Tài": score_tai += adjusted
+        else:                 score_xiu += adjusted
 
         detail.append({
             'name': name,
             'pred': pred_sig,
             'base_weight': weight,
             'accuracy': round(acc, 3) if acc is not None else None,
-            'samples': stats['total'],
+            'samples': int(stats['total']),
             'adjusted_weight': round(adjusted, 2),
         })
 
@@ -838,18 +924,23 @@ def full_bridge_predict_adaptive(results, replay_n=60):
         return results[0], 50, detail
 
     if score_tai > score_xiu:
-        ratio = score_tai / total
-        pred = "Tài"
+        pred, ratio = "Tài", score_tai / total
     elif score_xiu > score_tai:
-        ratio = score_xiu / total
-        pred = "Xỉu"
+        pred, ratio = "Xỉu", score_xiu / total
     else:
         return _opp(results[0]), 50, detail
 
     base_conf = 50 + (ratio - 0.5) * 100
     evidence = min(1.0, total / 40.0)
-    conf = int(max(50, min(94, 50 + (base_conf - 50) * evidence)))
+    conf = 50 + (base_conf - 50) * evidence
 
+    # CONSENSUS BOOST
+    if ratio >= 0.70:                        conf += 5
+    if ratio >= 0.78 and len(signals) >= 6:  conf += 5
+    if len(signals) >= 10 and ratio >= 0.65: conf += 3
+    if len(signals) < 4:                     conf -= 5
+
+    conf = int(max(50, min(96, conf)))
     return pred, conf, detail
 
 
@@ -1008,7 +1099,7 @@ def lc79():
             ratio = max(tai_score, xiu_score) / total_sig
             base_conf = 50 + (ratio - 0.5) * 100
             evidence = min(1.0, total_sig / 40.0)
-            conf_float = max(50.0, min(94.0, 50 + (base_conf - 50) * evidence))
+            conf_float = max(50.0, min(96.0, 50 + (base_conf - 50) * evidence))
         else:
             conf_float = 50.0
         conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
@@ -1021,7 +1112,7 @@ def lc79():
         next_phien = last['phien'] + 1
 
         return jsonify({
-            'Id':         'le minh ',
+            'Id':         'le minh v21',
             'Phien':      str(next_phien),
             'Ket_qua':    last['result'].lower(),
             'Lich_su':    lich_su,
