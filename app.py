@@ -1,8 +1,10 @@
 import os
 import math
 import traceback
+import random
+import hashlib
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, Counter
 import requests
 from flask import Flask, render_template_string, jsonify, request
 from flask_cors import CORS
@@ -396,7 +398,7 @@ def fetch_sessions():
 
 
 # =====================================================================
-# FULL CẦU ANALYZER v19 — Adaptive Signal Weighting
+# UTILS
 # =====================================================================
 def get_groups(results):
     if not results: return []
@@ -448,6 +450,120 @@ def _detect_group_pattern(groups, results):
     return None
 
 
+def _stable_hash(s):
+    return int(hashlib.md5(s.encode('utf-8')).hexdigest()[:8], 16)
+
+
+# =====================================================================
+# ★ THUẬT TOÁN MỚI #1 — RANDOM CÓ TRỌNG SỐ (deterministic seed)
+# =====================================================================
+def algo_random_weighted(results):
+    """
+    Random có bias theo tendency gần nhất, seed cố định từ history
+    → tái lập được giữa các lần gọi, nhưng vẫn 'random-like'.
+    """
+    if len(results) < 3:
+        return None
+
+    window = results[:12]
+    p_tai = window.count("Tài") / len(window)
+
+    # Seed ổn định từ 20 phiên gần nhất
+    seed = _stable_hash(",".join(results[:20]))
+    rng = random.Random(seed)
+    r = rng.random()
+
+    if p_tai >= 0.65:
+        pred = "Tài" if r < 0.70 else "Xỉu"
+        weight = 9
+    elif p_tai <= 0.35:
+        pred = "Xỉu" if r < 0.70 else "Tài"
+        weight = 9
+    else:
+        # Vùng cân bằng → random thật sự 50/50
+        pred = "Tài" if r < 0.50 else "Xỉu"
+        weight = 6
+
+    return (pred, weight, "random_weighted")
+
+
+# =====================================================================
+# ★ THUẬT TOÁN MỚI #2 — KHÔNG RANDOM (TẤT ĐỊNH: CHU KỲ + STREAK)
+# =====================================================================
+def algo_non_random_deterministic(results):
+    """
+    Tất định: phân tích chu kỳ nhóm phổ biến + so sánh streak hiện tại
+    với trung bình → dự đoán tiếp tục/break.
+    """
+    if len(results) < 5:
+        return None
+
+    groups = get_groups(results)
+    r0 = results[0]
+
+    # 2A. Chu kỳ nhóm phổ biến (cyclic)
+    if len(groups) >= 5:
+        cnt = Counter(groups[:10])
+        common_len, common_freq = cnt.most_common(1)[0]
+        if common_freq >= 3:
+            if groups[0] < common_len:
+                return (r0, 11, "nonrand_cycle_continue")
+            elif groups[0] >= common_len:
+                return (_opp(r0), 12, "nonrand_cycle_break")
+
+    # 2B. Streak so với trung bình các nhóm gần
+    if len(groups) >= 4:
+        sample = groups[:6]
+        avg = sum(sample) / len(sample)
+        cur = groups[0]
+        if cur > avg + 0.5:
+            return (_opp(r0), 10, "nonrand_streak_break")
+        if cur < avg - 0.3:
+            return (r0, 9, "nonrand_streak_continue")
+
+    return None
+
+
+# =====================================================================
+# ★ THUẬT TOÁN MỚI #3 — ĐƠN GIẢN NÂNG CẤP (RULE NGẮN HẠN)
+# =====================================================================
+def algo_simple_enhanced(results):
+    """
+    Rule cứng theo streak ngắn (1/2/3/4+) kết hợp cặp liền trước.
+    """
+    if len(results) < 3:
+        return None
+
+    r0 = results[0]
+
+    streak = 1
+    for r in results[1:]:
+        if r == r0:
+            streak += 1
+        else:
+            break
+
+    # streak = 1: xem 2 phiên trước có trùng nhau không
+    if streak == 1:
+        if len(results) >= 3 and results[1] == results[2]:
+            return (_opp(r0), 8, "simple_break_after_pair")
+        return (r0, 8, "simple_continue")
+
+    if streak == 2:
+        return (r0, 9, "simple_momentum")
+
+    if streak == 3:
+        return (_opp(r0), 10, "simple_break_3")
+
+    if streak >= 4:
+        return (_opp(r0), 11, "simple_break_4plus")
+
+    return None
+
+
+# =====================================================================
+# FULL CẦU ANALYZER v20 — Adaptive Signal Weighting + 3 thuật toán mới
+# =====================================================================
 def analyze_full_bridge(results):
     """Returns list of (pred, weight, signal_name)."""
     if len(results) < 3: return []
@@ -619,6 +735,18 @@ def analyze_full_bridge(results):
         if trans >= 12:
             signals.append((_opp(results[0]), 12, "chaos_alt"))
 
+    # ═══════════════════════════════════════════════════════════════
+    # ★ 25-27. BA THUẬT TOÁN MỚI (RANDOM + NON-RANDOM + SIMPLE)
+    # ═══════════════════════════════════════════════════════════════
+    rnd = algo_random_weighted(results)
+    if rnd: signals.append(rnd)
+
+    nrnd = algo_non_random_deterministic(results)
+    if nrnd: signals.append(nrnd)
+
+    simple = algo_simple_enhanced(results)
+    if simple: signals.append(simple)
+
     return signals
 
 
@@ -653,20 +781,14 @@ def full_bridge_predict(results):
 
 
 # =====================================================================
-# ADAPTIVE PREDICTOR (dùng cho phiên kế tiếp — v19 UPGRADE)
+# ADAPTIVE PREDICTOR (v20 — 3 thuật toán mới tự động được đánh giá)
 # =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=60):
-    """
-    results: list kết quả newest-first
-    Replay N phiên gần nhất → đo độ chính xác từng loại tín hiệu
-    → điều chỉnh trọng số động cho phiên kế tiếp.
-    Returns: (pred, conf, detail_signals)
-    """
     n = len(results)
     if n < 3:
         return (results[0] if results else "Tài"), 50, []
 
-    # ── Replay để đo performance từng signal ──
+    # Replay để đo performance từng signal (bao gồm 3 thuật toán mới)
     signal_stats = defaultdict(lambda: {'wins': 0, 'total': 0})
     replay_count = min(replay_n, n - 3)
 
@@ -679,12 +801,10 @@ def full_bridge_predict_adaptive(results, replay_n=60):
             if pred_sig == actual:
                 signal_stats[name]['wins'] += 1
 
-    # ── Lấy signal cho phiên kế tiếp ──
     signals = analyze_full_bridge(results)
     if not signals:
         return results[0], 52, []
 
-    # ── Áp dụng trọng số động ──
     score_tai = 0.0
     score_xiu = 0.0
     detail = []
@@ -693,7 +813,6 @@ def full_bridge_predict_adaptive(results, replay_n=60):
         stats = signal_stats[name]
         if stats['total'] >= 5:
             acc = stats['wins'] / stats['total']
-            # 0.3x (acc=0) → 1.0x (acc=0.5) → 1.7x (acc=1)
             multiplier = 0.3 + acc * 1.4
         else:
             acc = None
@@ -771,7 +890,6 @@ def history():
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
 
-        # Adaptive prediction cho phiên kế tiếp
         next_pred, next_conf, _ = full_bridge_predict_adaptive(history_for_next)
 
         out.append({
@@ -861,9 +979,6 @@ def predict():
         return jsonify({'error': str(e)}), 500
 
 
-# =====================================================================
-# LC79 — Endpoint trả kết quả gọn cho tool ngoài
-# =====================================================================
 @app.route('/lc79')
 def lc79():
     global RESET_ID
@@ -883,10 +998,9 @@ def lc79():
         if not valid:
             return jsonify({'error': 'Chưa có dữ liệu'}), 400
 
-        results = [v['result'] for v in valid][::-1]  # newest first
+        results = [v['result'] for v in valid][::-1]
         pred, conf, detail = full_bridge_predict_adaptive(results)
 
-        # Confidence dạng float để format "xx,x%"
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
         xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
         total_sig = tai_score + xiu_score
@@ -899,7 +1013,6 @@ def lc79():
             conf_float = 50.0
         conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
 
-        # Lich_su: độ dài các cầu gần nhất (newest first) — vd "-1-2-4"
         groups = get_groups(results)
         recent_groups = groups[:4]
         lich_su = "-" + "-".join(str(g) for g in recent_groups)
