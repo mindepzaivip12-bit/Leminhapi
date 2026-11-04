@@ -18,7 +18,232 @@ LAST_PREDICTIONS = {}          # phien -> (pred, conf) — dự đoán ĐÃ HI�
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 
-HTML_TEMPLATE = """..."""  # ← GIỮ NGUYÊN template HTML gốc
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LE MINH MD5 </title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+    :root {
+        --bg-page: #0f172a; --bg-card: #1e293b; --text-main: #f8fafc;
+        --text-muted: #94a3b8; --border-color: #334155;
+        --tai-color: #38bdf8; --tai-bg: rgba(56, 189, 248, 0.15);
+        --xiu-color: #f472b6; --xiu-bg: rgba(244, 114, 182, 0.15);
+        --win-color: #34d399; --win-bg: rgba(52, 211, 153, 0.15);
+        --lose-color: #f87171; --lose-bg: rgba(248, 113, 113, 0.15);
+        --wait-color: #fbbf24; --wait-bg: rgba(251, 191, 36, 0.15);
+        --recovery-color: #fb923c; --recovery-bg: rgba(251, 146, 60, 0.15);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+    body { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); color: var(--text-main); min-height: 100vh; padding-bottom: 40px; }
+    .header { background: rgba(30, 41, 59, 0.85); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border-color); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
+    .header-title { font-size: 22px; font-weight: 800; color: #38bdf8; display: flex; align-items: center; gap: 10px; text-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
+    .header-title span { font-size: 11px; background: linear-gradient(135deg, #38bdf8, #ec4899); color: #fff; padding: 4px 12px; border-radius: 20px; font-weight: 800; letter-spacing: 1px; box-shadow: 0 0 15px rgba(236, 72, 153, 0.4); }
+    .header-actions { display: flex; gap: 12px; align-items: center; }
+    .time-update { font-size: 12px; color: var(--text-muted); font-weight: 600; }
+    .btn-refresh { background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); width: 38px; height: 38px; border-radius: 10px; font-weight: 700; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+    .btn-refresh:hover { background: var(--border-color); transform: rotate(180deg); }
+    .btn-reset { background: rgba(248, 113, 113, 0.2); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer; transition: 0.2s; }
+    .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
+    .stats-bar { max-width: 800px; margin: 24px auto 16px; padding: 0 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .stat-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 16px 10px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+    .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.3px; }
+    .stat-value { font-size: 22px; font-weight: 800; color: var(--text-main); }
+    .stat-value.win { color: var(--win-color); text-shadow: 0 0 15px rgba(52, 211, 153, 0.4); }
+    .stat-value.loss { color: var(--lose-color); text-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
+    .stat-value.rate { color: var(--tai-color); text-shadow: 0 0 15px rgba(56, 189, 248, 0.4); }
+    .table-wrapper { max-width: 800px; margin: 0 auto; padding: 0 16px; }
+    .table-container { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-height: 70vh; overflow-y: auto; }
+    .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    .data-table th { background: #111827; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 16px 12px; text-align: center; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 10; }
+    .data-table td { padding: 14px 12px; text-align: center; border-bottom: 1px solid var(--border-color); font-size: 14px; font-weight: 600; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
+    .row-next { background: rgba(14, 165, 233, 0.08); border-left: 4px solid var(--tai-color); }
+    .row-next.recovery { background: rgba(251, 146, 60, 0.1); border-left: 4px solid var(--recovery-color); }
+    .badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; min-width: 70px; text-align: center; }
+    .badge-tai { background: var(--tai-bg); color: var(--tai-color); border: 1px solid rgba(56, 189, 248, 0.3); box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); }
+    .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); border: 1px solid rgba(244, 114, 182, 0.3); box-shadow: 0 0 10px rgba(244, 114, 182, 0.2); }
+    .badge-empty { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
+    .recovery-badge { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 800; background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); box-shadow: 0 0 10px rgba(251, 146, 60, 0.3); animation: pulse 1.5s infinite; letter-spacing: 0.5px; }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; }
+    .st-win { background: var(--win-bg); color: var(--win-color); border: 1px solid rgba(52, 211, 153, 0.3); }
+    .st-lose { background: var(--lose-bg); color: var(--lose-color); border: 1px solid rgba(248, 113, 113, 0.3); }
+    .st-wait { background: var(--wait-bg); color: var(--wait-color); border: 1px solid rgba(251, 191, 36, 0.3); animation: pulse 1.5s infinite; }
+    .st-recover { background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
+    .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
+    .conf-badge.high { color: #34d399; background: rgba(52, 211, 153, 0.15); box-shadow: 0 0 10px rgba(52, 211, 153, 0.2); }
+    .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
+    @media (max-width: 500px) {
+        .data-table th, .data-table td { padding: 10px 6px; font-size: 12px; }
+        .badge { padding: 4px 8px; font-size: 11px; min-width: 50px; }
+        .header-title { font-size: 18px; }
+        .time-update { display: none; }
+        .stats-bar { grid-template-columns: repeat(2, 1fr); }
+        .stat-value { font-size: 18px; }
+    }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-title">LE MINH <span>CTEWHEHE</span></div>
+    <div class="header-actions">
+        <div class="time-update" id="time-update">--:--:--</div>
+        <button class="btn-refresh" onclick="fetchData()">↻</button>
+        <button class="btn-reset" onclick="confirmReset()">Reset</button>
+    </div>
+</div>
+
+<div class="stats-bar">
+    <div class="stat-item"><div class="stat-label">Tổng</div><div class="stat-value" id="stat-total">0</div></div>
+    <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
+    <div class="stat-item"><div class="stat-label">Thua</div><div class="stat-value loss" id="stat-lose">0</div></div>
+    <div class="stat-item"><div class="stat-label">Tỷ lệ thắng</div><div class="stat-value rate" id="stat-rate">0%</div></div>
+</div>
+
+<div class="table-wrapper">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Phiên</th>
+                    <th>Dự đoán</th>
+                    <th>Kết quả</th>
+                    <th>Trạng thái</th>
+                </tr>
+            </thead>
+            <tbody id="table-body">
+                <tr><td colspan="4" class="loading">Đang kết nối Server...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+let isResetting = false;
+
+function animateNumber(el, target, suffix = '') {
+    const start = parseInt(el.innerText.replace(/[^0-9]/g, '')) || 0;
+    if (start === target) { el.innerText = target + suffix; return; }
+    const duration = 500;
+    const startTime = performance.now();
+    function update(t) {
+        const p = Math.min((t - startTime) / duration, 1);
+        const ease = 1 - Math.pow(1 - p, 3);
+        el.innerText = Math.floor(start + (target - start) * ease) + suffix;
+        if (p < 1) requestAnimationFrame(update);
+    }
+    requestAnimationFrame(update);
+}
+
+async function fetchData() {
+    if (isResetting) return;
+    try {
+        const r = await fetch('/api/history', { cache: 'no-store' });
+        const data = await r.json();
+        const now = new Date();
+        document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
+        renderTable(data.rows || [], data.stats || {});
+    } catch (e) { console.error("Lỗi tải dữ liệu:", e); }
+}
+
+function renderTable(rows, stats) {
+    const tbody = document.getElementById('table-body');
+    const total = stats.total || 0;
+    const correct = stats.correct || 0;
+    const wrong = total - correct;
+    animateNumber(document.getElementById('stat-total'), total);
+    animateNumber(document.getElementById('stat-win'), correct);
+    animateNumber(document.getElementById('stat-lose'), wrong);
+    const rate = total > 0 ? (correct / total) * 100 : 0;
+    animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
+
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>';
+        return;
+    }
+    let html = '';
+    rows.forEach((row) => {
+        let trClass = '';
+        if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
+        let predHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let recBadge = "";
+        if (row.recovery_flipped) {
+            recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡ RECOVERY</span>`;
+        }
+        let confHtml = "";
+        if (row.conf && row.prediction !== "-") {
+            const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
+            confHtml = `<div class="${cls}">${row.conf}%</div>`;
+        }
+        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}${recBadge}</div>`;
+        let resultHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let diceDisplay = "";
+        if (row.dice !== "? + ? + ?") {
+            const p = row.dice.split(" + ");
+            const sum = parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]);
+            diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
+        }
+        let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
+        let statusHtml = '';
+        if (row.is_next) {
+            statusHtml = row.recovery_flipped
+                ? `<span class="status st-recover">⚡ Đảo chiều</span>`
+                : `<span class="status st-wait">Chờ kết quả</span>`;
+        } else if (row.is_correct === true) {
+            statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
+        } else if (row.is_correct === false) {
+            statusHtml = `<span class="status st-lose">✖ THUA</span>`;
+        } else {
+            statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
+        }
+        html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
+    });
+    tbody.innerHTML = html;
+}
+
+async function confirmReset() {
+    Swal.fire({
+        title: 'Xác nhận Reset?', text: "Toàn bộ lịch sử hiển thị sẽ bị xoá và bắt đầu lại từ đầu!",
+        icon: 'warning', background: '#1e293b', color: '#f8fafc',
+        showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
+        confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
+    }).then(async (result) => {
+        if (result.isConfirmed) {
+            isResetting = true;
+            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, background: '#1e293b', color: '#f8fafc', didOpen: () => { Swal.showLoading() } });
+            try {
+                const res = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    Swal.fire({ title: 'Thành công!', text: 'Đã xoá lịch sử và bắt đầu lại.', icon: 'success', background: '#1e293b', color: '#f8fafc', confirmButtonColor: '#0ea5e9' });
+                    isResetting = false; fetchData();
+                } else { throw new Error(data.message); }
+            } catch (error) {
+                Swal.fire({title: 'Lỗi!', text: 'Không thể reset: ' + error.message, icon: 'error', background: '#1e293b', color: '#f8fafc'});
+                isResetting = false;
+            }
+        }
+    });
+}
+
+fetchData();
+setInterval(fetchData, 5000);
+</script>
+</body>
+</html>
+"""
 
 
 # =====================================================================
@@ -73,7 +298,7 @@ def _count_alternations(results, max_len=15):
 
 
 # =====================================================================
-# CORE STATISTICAL ALGORITHMS (không đổi)
+# CORE STATISTICAL ALGORITHMS
 # =====================================================================
 def algo_bet_break(results, groups):
     if not groups or len(results) < 3: return []
@@ -259,7 +484,7 @@ def full_bridge_predict(results):
 
 
 # =====================================================================
-# ADAPTIVE PREDICTOR (deterministic, tự học trọng số tín hiệu)
+# ADAPTIVE PREDICTOR
 # =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=80):
     n = len(results)
@@ -318,21 +543,18 @@ def full_bridge_predict_adaptive(results, replay_n=80):
 
 
 # =====================================================================
-# PREDICTION CACHE — DỰ ĐOÁN NGAY TỪ PHIÊN ĐẦU (bỏ điều kiện <3)
-# Ưu tiên dùng LAST_PREDICTIONS (đánh giá trung thực, không hindsight)
+# PREDICTION CACHE — DỰ ĐOÁN NGAY, KHÔNG ĐỢI 3 PHIÊN
 # =====================================================================
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
     if key in PREDICTION_CACHE:
         return PREDICTION_CACHE[key]
 
-    # Anchor session sau reset → dùng làm history, KHÔNG đánh giá
     if key <= RESET_ID:
         result = ("-", 50, None)
         PREDICTION_CACHE[key] = result
         return result
 
-    # Ưu tiên prediction đã thực sự hiển thị cho user
     if key in LAST_PREDICTIONS:
         pred, conf = LAST_PREDICTIONS[key]
     else:
@@ -349,16 +571,13 @@ def get_prediction_for(valid, i):
 
 
 # =====================================================================
-# PERFORMANCE: loss_streak + recent_accuracy (1 lượt quét)
+# PERFORMANCE: loss_streak + recent_accuracy
 # =====================================================================
 def compute_performance(valid, window=30):
-    """Trả về: (loss_streak, recent_acc, recent_total)"""
     if not valid:
         return 0, 0.5, 0
-
     end = len(valid) - 1
 
-    # Chuỗi thua
     loss_streak = 0
     for i in range(end, max(-1, end - 20) - 1, -1):
         _, _, ok = get_prediction_for(valid, i)
@@ -366,7 +585,6 @@ def compute_performance(valid, window=30):
         if ok: break
         loss_streak += 1
 
-    # Accuracy 30 phiên gần nhất
     correct = 0; total = 0
     start = max(0, end - window)
     for i in range(end, start - 1, -1):
@@ -379,20 +597,15 @@ def compute_performance(valid, window=30):
 
 
 # =====================================================================
-# AUTO-ADJUST — Tự điều chỉnh khi thấy sai nhiều
-# Ưu tiên 1: accuracy tổng thể < 42% → lật
-# Ưu tiên 2: chuỗi thua >= 2 → lật/giảm conf
-# Boost khi accuracy > 60%
+# AUTO-ADJUST — Tự điều chỉnh khi sai nhiều
 # =====================================================================
 def apply_auto_adjust(base_pred, base_conf, valid):
     loss_streak, recent_acc, recent_total = compute_performance(valid)
 
-    # Ưu tiên cao: accuracy 30 phiên < 42% → thuật toán đang sai hướng, lật
     if recent_total >= 15 and recent_acc < 0.42:
         return (_opp(base_pred), min(90, base_conf + 8),
                 True, "flip_low_accuracy", loss_streak, recent_acc)
 
-    # Chuỗi thua
     if loss_streak >= 5:
         return (_opp(base_pred), min(96, base_conf + 18),
                 True, "flip_streak_5plus", loss_streak, recent_acc)
@@ -412,7 +625,6 @@ def apply_auto_adjust(base_pred, base_conf, valid):
         return (base_pred, max(50, base_conf - 5),
                 False, "penalty_streak_1", loss_streak, recent_acc)
 
-    # Tự tin tăng khi accuracy tốt
     if recent_total >= 15 and recent_acc > 0.60:
         return (base_pred, min(95, base_conf + 5),
                 False, "boost_good_acc", loss_streak, recent_acc)
@@ -431,7 +643,6 @@ def _store_last_prediction(phien, pred, conf):
 
 
 def _sync_history():
-    """Fetch, merge vào cache, lọc theo RESET_ID. Trả về (valid, success)."""
     raw_rows, success = fetch_sessions()
     if not success and not HISTORY_CACHE:
         return [], False
@@ -460,7 +671,6 @@ def history():
             return jsonify({'error': 'Không thể kết nối API'}), 500
 
         if not valid:
-            # Sau reset, chưa có phiên nào → vẫn dự đoán ngay
             base_pred, base_conf, _ = full_bridge_predict_adaptive([])
             next_pred, next_conf, flipped, reason, ls, acc = apply_auto_adjust(base_pred, base_conf, [])
             return jsonify({
@@ -507,7 +717,7 @@ def history():
             if i < 0: break
             current_session = valid[i]
             if current_session['phien'] <= RESET_ID:
-                continue  # Anchor session: dùng làm history, không hiển thị
+                continue
             pred, conf, is_correct = get_prediction_for(valid, i)
             if is_correct is not None: total_past += 1
             if is_correct: correct_count += 1
@@ -628,9 +838,8 @@ def reset_api():
         if success and raw_rows:
             valid = sorted(raw_rows, key=lambda x: x['phien'])
             if valid:
-                # Reset về phiên kế tiếp → dự đoán ngay từ phiên +1
                 RESET_ID = valid[-1]['phien']
-                HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}  # Anchor để có history
+                HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
                 PREDICTION_CACHE = {}
                 LAST_PREDICTIONS = {}
                 return jsonify({'status': 'success', 'reset_to': RESET_ID + 1})
