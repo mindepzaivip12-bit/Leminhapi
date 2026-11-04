@@ -14,6 +14,8 @@ CORS(app)
 API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 
 HISTORY_CACHE = {}
+PREDICTION_CACHE = {}
+MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 
 HTML_TEMPLATE = """
@@ -47,14 +49,16 @@ HTML_TEMPLATE = """
     .btn-refresh:hover { background: var(--border-color); transform: rotate(180deg); }
     .btn-reset { background: rgba(248, 113, 113, 0.2); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer; transition: 0.2s; }
     .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
-    .stats-bar { max-width: 800px; margin: 24px auto 16px; padding: 0 16px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
-    .stat-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 14px 10px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
-    .stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.3px; }
-    .stat-value { font-size: 20px; font-weight: 800; color: var(--text-main); }
+    .stats-bar { max-width: 800px; margin: 24px auto 16px; padding: 0 16px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+    .stat-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 14px 8px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+    .stat-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.3px; }
+    .stat-value { font-size: 19px; font-weight: 800; color: var(--text-main); }
     .stat-value.win { color: var(--tai-color); text-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
-    .stat-value.regime { font-size: 12px; color: #fbbf24; text-shadow: 0 0 12px rgba(251, 191, 36, 0.4); letter-spacing: 0.3px; }
+    .stat-value.win.streak { color: var(--win-color); text-shadow: 0 0 15px rgba(52, 211, 153, 0.4); }
     .stat-value.loss { color: var(--lose-color); }
+    .stat-value.win.streak.hot { animation: pulse 1.5s infinite; text-shadow: 0 0 15px rgba(52, 211, 153, 0.6); }
     .stat-value.loss.hot { color: var(--recovery-color); text-shadow: 0 0 15px rgba(251, 146, 60, 0.5); animation: pulse 1.5s infinite; }
+    .stat-value.regime { font-size: 12px; color: #fbbf24; text-shadow: 0 0 12px rgba(251, 191, 36, 0.4); letter-spacing: 0.3px; }
     .table-wrapper { max-width: 800px; margin: 0 auto; padding: 0 16px; }
     .table-container { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-height: 70vh; overflow-y: auto; }
     .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
@@ -85,7 +89,7 @@ HTML_TEMPLATE = """
         .header-title { font-size: 18px; }
         .time-update { display: none; }
         .stats-bar { grid-template-columns: repeat(3, 1fr); }
-        .stat-value { font-size: 16px; }
+        .stat-value { font-size: 15px; }
         .stat-value.regime { font-size: 10px; }
     }
 </style>
@@ -93,7 +97,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>MD5 v24</span></div>
+    <div class="header-title">LE MINH <span>CTEW</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -105,6 +109,7 @@ HTML_TEMPLATE = """
     <div class="stat-item"><div class="stat-label">Tổng</div><div class="stat-value" id="stat-total">0</div></div>
     <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
     <div class="stat-item"><div class="stat-label">Tỷ lệ</div><div class="stat-value win" id="stat-rate">0%</div></div>
+    <div class="stat-item"><div class="stat-label">Chuỗi thắng</div><div class="stat-value win streak" id="stat-wstreak">0</div></div>
     <div class="stat-item"><div class="stat-label">Chuỗi thua</div><div class="stat-value loss" id="stat-streak">0</div></div>
     <div class="stat-item"><div class="stat-label">Regime</div><div class="stat-value regime" id="stat-regime">-</div></div>
 </div>
@@ -151,15 +156,19 @@ async function fetchData() {
         const data = await r.json();
         const now = new Date();
         document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
-        renderTable(data.rows || [], data.stats || {}, data.regime || '-', data.loss_streak || 0);
+        renderTable(data.rows || [], data.stats || {}, data.regime || '-', data.loss_streak || 0, data.win_streak || 0);
     } catch (e) { console.error("Lỗi tải dữ liệu:", e); }
 }
 
-function renderTable(rows, stats, regime, lossStreak) {
+function renderTable(rows, stats, regime, lossStreak, winStreak) {
     document.getElementById('stat-regime').innerText = regime || '-';
     const stkEl = document.getElementById('stat-streak');
     stkEl.innerText = lossStreak;
     if (lossStreak >= 2) { stkEl.classList.add('hot'); } else { stkEl.classList.remove('hot'); }
+    const wstkEl = document.getElementById('stat-wstreak');
+    wstkEl.innerText = winStreak;
+    if (winStreak >= 2) { wstkEl.classList.add('hot'); } else { wstkEl.classList.remove('hot'); }
+
     const tbody = document.getElementById('table-body');
     if (stats.total > 0) {
         animateNumber(document.getElementById('stat-total'), stats.total);
@@ -308,36 +317,9 @@ def _count_alternations(results, max_len=15):
     return count
 
 
-def _detect_group_pattern(groups, results):
-    if len(groups) < 3 or len(results) < 20: return None
-    for plen in range(min(5, len(groups) - 1), 1, -1):
-        current = tuple(groups[:plen])
-        if sum(current) > len(results): continue
-        matches = []
-        for i in range(1, len(groups) - plen):
-            if tuple(groups[i:i+plen]) == current:
-                pos = sum(groups[:i])
-                if pos < len(results): matches.append(results[pos])
-        if len(matches) >= 2:
-            total = len(matches)
-            t = matches.count("Tài")
-            if t / total >= 0.7: return ("Tài", 14 if total >= 3 else 10, f"hist_{plen}")
-            if (total - t) / total >= 0.7: return ("Xỉu", 14 if total >= 3 else 10, f"hist_{plen}")
-    return None
-
-
 # =====================================================================
-# ALGOS
+# ALGOS (deterministic, no randomness, no pattern-matching)
 # =====================================================================
-def algo_sequence_repeat_deterministic(results):
-    n = len(results)
-    if n < 6: return None
-    for plen in range(2, min(6, n // 2) + 1):
-        if results[:plen] == results[plen:plen*2] and n > plen * 2:
-            return (results[plen * 2], 8 + plen * 2, f"seq_rep_{plen}")
-    return None
-
-
 def algo_recency_momentum(results):
     n = len(results)
     if n < 8: return None
@@ -383,33 +365,6 @@ def algo_simple_enhanced(results):
     return None
 
 
-def algo_long_pattern_match(results):
-    n = len(results)
-    if n < 8: return None
-    for slen in range(min(10, n - 2), 4, -1):
-        target = tuple(results[:slen]); mt = mx = 0
-        for i in range(slen, n - 1):
-            if tuple(results[i:i + slen]) == target:
-                if results[i - 1] == "Tài": mt += 1
-                else: mx += 1
-        tot = mt + mx
-        if tot >= 2:
-            if mt / tot >= 0.70: return ("Tài", 13, f"longmatch_{slen}")
-            if mx / tot >= 0.70: return ("Xỉu", 13, f"longmatch_{slen}")
-    return None
-
-
-def algo_stochastic_reversal(results):
-    n = len(results)
-    if n < 20: return None
-    recent = results[:7]; mid = results[7:14]
-    if not mid: return None
-    diff = recent.count("Tài")/len(recent) - mid.count("Tài")/len(mid)
-    if diff >= 0.5: return ("Xỉu", 10, "stoch_reversal_down")
-    if diff <= -0.5: return ("Tài", 10, "stoch_reversal_up")
-    return None
-
-
 def algo_runlength_compare(results):
     n = len(results)
     if n < 20: return None
@@ -423,20 +378,20 @@ def algo_runlength_compare(results):
     return None
 
 
-def algo_markov_order_34(results):
+def algo_weighted_trend(results):
+    """Trend có trọng số giảm dần — tất định, không pattern."""
     n = len(results)
-    if n < 25: return None
-    for order in (4, 3):
-        if n < order + 5: continue
-        target = tuple(results[:order]); mt = mx = 0
-        for i in range(order, min(n, 60)):
-            if tuple(results[i:i + order]) == target:
-                if results[i - 1] == "Tài": mt += 1
-                else: mx += 1
-        tot = mt + mx
-        if tot >= 3:
-            if mt / tot >= 0.70: return ("Tài", 12, f"markov{order}")
-            if mx / tot >= 0.70: return ("Xỉu", 12, f"markov{order}")
+    if n < 10: return None
+    weights = [10.0, 8.0, 6.0, 4.0, 3.0, 2.0, 1.5, 1.0, 0.8, 0.5]
+    tw = sw = 0.0
+    for i, r in enumerate(results[:10]):
+        w = weights[i]
+        tw += w
+        if r == "Tài": sw += w
+    if tw == 0: return None
+    ratio = sw / tw
+    if ratio >= 0.72: return ("Tài", 10, "wt_trend_tai")
+    if ratio <= 0.28: return ("Xỉu", 10, "wt_trend_xiu")
     return None
 
 
@@ -499,7 +454,7 @@ def analyze_cycle(results):
 
 
 # =====================================================================
-# MASTER ANALYZER
+# MASTER ANALYZER — deterministic, no random, no pattern-matching
 # =====================================================================
 def analyze_full_bridge(results):
     if len(results) < 3: return []
@@ -556,10 +511,6 @@ def analyze_full_bridge(results):
             if   tr >= 0.73: signals.append(("Xỉu", 10, f"tilt_tai_{window}")); break
             elif tr <= 0.27: signals.append(("Tài", 10, f"tilt_xiu_{window}")); break
 
-    for win in range(3, min(n // 2, 12) + 1):
-        if len(results) >= win * 2 and results[:win] == results[win:win*2] and len(results) > win * 2:
-            signals.append((results[win*2], 12, f"lap_{win}")); break
-
     if n >= 15:
         tr = {"Tài": {"Tài":0,"Xỉu":0}, "Xỉu": {"Tài":0,"Xỉu":0}}
         for i in range(len(results[:45]) - 1):
@@ -580,22 +531,6 @@ def analyze_full_bridge(results):
         if tot >= 3:
             if   nt/tot >= 0.68: signals.append(("Tài", 11, "markov2"))
             elif nx/tot >= 0.68: signals.append(("Xỉu", 11, "markov2"))
-
-    if n >= 20:
-        for slen in (6, 5, 4, 3, 2):
-            if n < slen + 3: continue
-            target = tuple(results[:slen]); nt = nx = 0
-            for i in range(slen, min(n, 60)):
-                if tuple(results[i:i+slen]) == target:
-                    if results[i-1] == "Tài": nt += 1
-                    else: nx += 1
-            tot = nt + nx
-            if tot >= 2:
-                if nt/tot >= 0.7: signals.append(("Tài", 12, f"bayes_{slen}")); break
-                if nx/tot >= 0.7: signals.append(("Xỉu", 12, f"bayes_{slen}")); break
-
-    h = _detect_group_pattern(groups, results)
-    if h: signals.append(h)
 
     if n >= 12:
         for w, hi, lo in ((8, 7, 1), (12, 10, 2)):
@@ -631,10 +566,11 @@ def analyze_full_bridge(results):
     if len(groups) >= 5 and tuple(groups[:5]) in ((1,2,3,2,1),(1,2,3,2),(1,1,2,1,1),(2,1,1,2,2)):
         signals.append((results[1], 10, "zigzag_ext"))
 
-    seq_rep = algo_sequence_repeat_deterministic(results)
-    if seq_rep: signals.append(seq_rep)
     recency = algo_recency_momentum(results)
     if recency: signals.append(recency)
+
+    weighted = algo_weighted_trend(results)
+    if weighted: signals.append(weighted)
 
     if len(groups) >= 4:
         if groups[:4] in ([1,1,2,2],[2,2,1,1]): signals.append((_opp(r0), 14, "double_bridge_1122"))
@@ -664,30 +600,29 @@ def analyze_full_bridge(results):
     simple = algo_simple_enhanced(results)
     if simple: signals.append(simple)
 
-    for fn in (algo_long_pattern_match, algo_stochastic_reversal,
-               algo_runlength_compare, algo_markov_order_34):
-        s = fn(results)
-        if s: signals.append(s)
+    runlen = algo_runlength_compare(results)
+    if runlen: signals.append(runlen)
 
     return signals
 
 
 # =====================================================================
-# REGIME DETECTION
+# REGIME DETECTION (NEUTRAL removed)
 # =====================================================================
 def detect_regime(results):
     n = len(results)
-    if n < 8: return {"regime": "NEUTRAL", "trans_rate": 0.5, "max_streak": 1}
+    if n < 8: return {"regime": "TREND", "trans_rate": 0.5, "max_streak": 1}
     sample = results[:min(n, 20)]
     trans = sum(1 for i in range(len(sample) - 1) if sample[i] != sample[i + 1])
     trans_rate = trans / (len(sample) - 1) if len(sample) > 1 else 0.5
     max_streak = max(get_groups(sample)) if sample else 1
     if   trans_rate >= 0.80: regime = "STRONG_ALT"
-    elif trans_rate >= 0.68: regime = "ALT"
+    elif trans_rate >= 0.65: regime = "ALT"
     elif max_streak >= 5:    regime = "STRONG_TREND"
     elif max_streak >= 3:    regime = "TREND"
-    elif 0.45 <= trans_rate <= 0.55: regime = "NEUTRAL"
-    else: regime = "CHAOS"
+    elif trans_rate >= 0.55: regime = "ALT"
+    elif max_streak >= 2:    regime = "TREND"
+    else:                    regime = "CHAOS"
     return {"regime": regime, "trans_rate": round(trans_rate, 3), "max_streak": max_streak}
 
 
@@ -696,7 +631,6 @@ REGIME_PREFERENCES = {
     "ALT":          {"1_1": 1.3, "cycle": 1.2, "seq": 1.1, "bet": 0.7, "simple": 0.8},
     "TREND":        {"bet": 1.4, "simple": 1.3, "momentum": 1.2, "nonrand": 1.2, "1_1": 0.6},
     "STRONG_TREND": {"bet": 1.5, "simple": 1.4, "momentum": 1.3, "nonrand": 1.3, "1_1": 0.4},
-    "NEUTRAL":      {},
     "CHAOS":        {"1_1": 1.2, "2_2": 1.1, "sandwich": 1.1, "simple": 0.8, "bet": 0.9},
 }
 
@@ -710,10 +644,13 @@ def get_signal_multiplier(name, regime):
 # BASE PREDICTOR
 # =====================================================================
 def full_bridge_predict(results):
-    if not results:      return "Tài", 50
-    if len(results) < 3: return results[0], 50
+    if not results: return "Tài", 50
+    if len(results) == 1: return _opp(results[0]), 52
+    if len(results) == 2:
+        if results[0] == results[1]: return _opp(results[0]), 55
+        return results[1], 52
     signals = analyze_full_bridge(results)
-    if not signals:      return results[0], 52
+    if not signals: return results[0], 52
     regime = detect_regime(results)["regime"]
     st = sx = 0.0
     for p, w, name in signals:
@@ -731,12 +668,19 @@ def full_bridge_predict(results):
 
 
 # =====================================================================
-# ADAPTIVE PREDICTOR (v24)
+# ADAPTIVE PREDICTOR (deterministic)
 # =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=80):
     n = len(results)
-    if n < 3:
-        return (results[0] if results else "Tài"), 50, [], {"regime": "NEUTRAL", "trans_rate": 0.5, "max_streak": 1}
+    default_regime = {"regime": "TREND", "trans_rate": 0.5, "max_streak": 1}
+    if n == 0:
+        return "Tài", 50, [], default_regime
+    if n == 1:
+        return _opp(results[0]), 52, [], default_regime
+    if n == 2:
+        if results[0] == results[1]:
+            return _opp(results[0]), 55, [], default_regime
+        return results[1], 52, [], default_regime
 
     regime_info = detect_regime(results)
     regime = regime_info["regime"]
@@ -804,45 +748,60 @@ def full_bridge_predict_adaptive(results, replay_n=80):
 
 
 # =====================================================================
-# ⚡ AUTO-RECOVERY (v24) — TỰ ĐỘNG ĐẢO CHIỀU KHI THUA
+# PREDICTION CACHE
 # =====================================================================
-def compute_loss_streak(valid, max_scan=15):
-    """Đếm số lần thua liên tiếp của BASE algorithm trên các phiên gần nhất."""
-    if len(valid) < 5: return 0
-    streak = 0
+def get_prediction_for(valid, i):
+    key = valid[i]['phien']
+    if key in PREDICTION_CACHE:
+        return PREDICTION_CACHE[key]
+    hist = [v['result'] for v in valid[:i]][::-1]
+    if len(hist) < 3:
+        result = ("-", 50, None)
+    else:
+        pred, conf = full_bridge_predict(hist)
+        is_correct = (pred == valid[i]['result'])
+        result = (pred, conf, is_correct)
+    if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE:
+        PREDICTION_CACHE.clear()
+    PREDICTION_CACHE[key] = result
+    return result
+
+
+# =====================================================================
+# STREAKS (both win & loss)
+# =====================================================================
+def compute_streaks(valid, max_scan=20):
+    if len(valid) < 5: return 0, 0
+    win_streak = loss_streak = 0
+    current_type = None
     end = len(valid) - 1
-    start = max(3, end - max_scan)
+    start = max(0, end - max_scan)
     for i in range(end, start - 1, -1):
-        hist = [v['result'] for v in valid[:i]][::-1]
-        if len(hist) < 3: break
-        pred, _ = full_bridge_predict(hist)
-        if pred != valid[i]['result']:
-            streak += 1
+        pred, conf, is_correct = get_prediction_for(valid, i)
+        if is_correct is None: break
+        if current_type is None:
+            current_type = 'win' if is_correct else 'loss'
+        if current_type == 'win' and is_correct:
+            win_streak += 1
+        elif current_type == 'loss' and not is_correct:
+            loss_streak += 1
         else:
             break
-    return streak
+    return win_streak, loss_streak
 
 
+# =====================================================================
+# AUTO-RECOVERY (deterministic)
+# =====================================================================
 def apply_recovery(base_pred, conf, loss_streak):
-    """
-    Trả về: (final_pred, final_conf, flipped, reason)
-    - loss_streak >= 5 → FLIP mạnh (+15 conf)
-    - loss_streak == 4 → FLIP (+12 conf)
-    - loss_streak == 3 → FLIP (+10 conf)
-    - loss_streak == 2 + conf thấp → FLIP (+6 conf)
-    - loss_streak == 2 + conf cao → KHÔNG flip nhưng giảm conf (overconfident)
-    - loss_streak <= 1 → bình thường
-    """
     if loss_streak < 2:
         return base_pred, conf, False, None
-
     if loss_streak >= 5:
         return _opp(base_pred), min(96, conf + 15), True, "flip_5plus"
     if loss_streak == 4:
         return _opp(base_pred), min(95, conf + 12), True, "flip_4"
     if loss_streak == 3:
         return _opp(base_pred), min(94, conf + 10), True, "flip_3"
-    # loss_streak == 2
     if conf < 75:
         return _opp(base_pred), min(93, conf + 6), True, "flip_2"
     return base_pred, max(50, conf - 12), False, "penalty_2"
@@ -864,14 +823,13 @@ def history():
         if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         for row in raw_rows: HISTORY_CACHE[row['phien']] = row
-        for k in [k for k in HISTORY_CACHE if k <= RESET_ID]: del HISTORY_CACHE[k]
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0},
-                            'regime': '-', 'loss_streak': 0})
+                            'regime': '-', 'loss_streak': 0, 'win_streak': 0})
 
-        # ⚡ loss streak trước khi dự đoán phiên tiếp
-        loss_streak = compute_loss_streak(valid)
+        win_streak, loss_streak = compute_streaks(valid)
 
         out = []; correct_count = 0; total_past = 0
         latest_session = valid[-1]
@@ -889,6 +847,7 @@ def history():
             'recovery_flipped': flipped,
             'recovery_reason': reason,
             'loss_streak': loss_streak,
+            'win_streak': win_streak,
             'base_prediction': base_pred if flipped else None,
         })
 
@@ -896,14 +855,9 @@ def history():
         for i in range(len(valid) - 1, len(valid) - scan_limit - 1, -1):
             if i < 0: break
             current_session = valid[i]
-            hist = [v['result'] for v in valid[:i]][::-1]
-            if hist and len(hist) >= 3:
-                pred, conf = full_bridge_predict(hist)
-                is_correct = (pred == current_session['result'])
-                total_past += 1
-                if is_correct: correct_count += 1
-            else:
-                pred, conf = "-", 50; is_correct = None
+            pred, conf, is_correct = get_prediction_for(valid, i)
+            if is_correct is not None: total_past += 1
+            if is_correct: correct_count += 1
             out.append({'phien': current_session['phien'], 'is_next': False,
                         'prediction': pred, 'result': current_session['result'],
                         'dice': current_session['dice'], 'is_correct': is_correct,
@@ -914,6 +868,7 @@ def history():
             'stats': {'total': total_past, 'correct': correct_count},
             'regime': next_regime['regime'],
             'loss_streak': loss_streak,
+            'win_streak': win_streak,
             'recovery_active': flipped,
             'recovery_reason': reason,
             'base_prediction': base_pred,
@@ -931,12 +886,12 @@ def predict():
         if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         for row in raw_rows: HISTORY_CACHE[row['phien']] = row
-        for k in [k for k in HISTORY_CACHE if k <= RESET_ID]: del HISTORY_CACHE[k]
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         results = [v['result'] for v in valid][::-1]
 
-        loss_streak = compute_loss_streak(valid)
+        win_streak, loss_streak = compute_streaks(valid)
         base_pred, base_conf, detail, regime_info = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
 
@@ -946,7 +901,7 @@ def predict():
             'prediction': pred, 'confidence': conf,
             'base_prediction': base_pred, 'base_confidence': base_conf,
             'recovery_flipped': flipped, 'recovery_reason': reason,
-            'loss_streak': loss_streak,
+            'loss_streak': loss_streak, 'win_streak': win_streak,
             'total_sessions': len(valid),
             'signals': detail,
             'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
@@ -970,12 +925,12 @@ def lc79():
         if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         for row in raw_rows: HISTORY_CACHE[row['phien']] = row
-        for k in [k for k in HISTORY_CACHE if k <= RESET_ID]: del HISTORY_CACHE[k]
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         results = [v['result'] for v in valid][::-1]
 
-        loss_streak = compute_loss_streak(valid)
+        win_streak, loss_streak = compute_streaks(valid)
         base_pred, base_conf, detail, regime_info = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
 
@@ -1002,6 +957,7 @@ def lc79():
             'Base_du_doan': base_pred if flipped else None,
             'Auto_flip': flipped,
             'Chuoi_thua': loss_streak,
+            'Chuoi_thang': win_streak,
         })
     except Exception as e:
         traceback.print_exc()
@@ -1010,14 +966,15 @@ def lc79():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    global RESET_ID, HISTORY_CACHE
+    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE
     try:
         raw_rows, success = fetch_sessions()
         if success and raw_rows:
             valid = sorted(raw_rows, key=lambda x: x['phien'])
             if valid:
                 RESET_ID = valid[-1]['phien']
-                HISTORY_CACHE = {}
+                HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
+                PREDICTION_CACHE = {}
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
     except Exception as e:
