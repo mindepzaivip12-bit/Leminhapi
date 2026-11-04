@@ -1,7 +1,6 @@
 import os
 import math
 import traceback
-import random
 import hashlib
 from datetime import datetime
 from collections import defaultdict, Counter
@@ -23,175 +22,56 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 </title>
+<title>LE MINH MD5 v22</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
     :root {
-        --bg-page: #0f172a;
-        --bg-card: #1e293b;
-        --text-main: #f8fafc;
-        --text-muted: #94a3b8;
-        --border-color: #334155;
-        --tai-color: #38bdf8;
-        --tai-bg: rgba(56, 189, 248, 0.15);
-        --xiu-color: #f472b6;
-        --xiu-bg: rgba(244, 114, 182, 0.15);
-        --win-color: #34d399;
-        --win-bg: rgba(52, 211, 153, 0.15);
-        --lose-color: #f87171;
-        --lose-bg: rgba(248, 113, 113, 0.15);
-        --wait-color: #fbbf24;
-        --wait-bg: rgba(251, 191, 36, 0.15);
+        --bg-page: #0f172a; --bg-card: #1e293b; --text-main: #f8fafc;
+        --text-muted: #94a3b8; --border-color: #334155;
+        --tai-color: #38bdf8; --tai-bg: rgba(56, 189, 248, 0.15);
+        --xiu-color: #f472b6; --xiu-bg: rgba(244, 114, 182, 0.15);
+        --win-color: #34d399; --win-bg: rgba(52, 211, 153, 0.15);
+        --lose-color: #f87171; --lose-bg: rgba(248, 113, 113, 0.15);
+        --wait-color: #fbbf24; --wait-bg: rgba(251, 191, 36, 0.15);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
-    body {
-        background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
-        color: var(--text-main);
-        min-height: 100vh;
-        padding-bottom: 40px;
-    }
-    .header {
-        background: rgba(30, 41, 59, 0.85);
-        backdrop-filter: blur(12px);
-        border-bottom: 1px solid var(--border-color);
-        padding: 16px 24px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        position: sticky;
-        top: 0;
-        z-index: 100;
-    }
-    .header-title {
-        font-size: 22px;
-        font-weight: 800;
-        color: #38bdf8;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        text-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
-    }
-    .header-title span {
-        font-size: 11px;
-        background: linear-gradient(135deg, #38bdf8, #ec4899);
-        color: #fff;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-weight: 800;
-        letter-spacing: 1px;
-        box-shadow: 0 0 15px rgba(236, 72, 153, 0.4);
-    }
+    body { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); color: var(--text-main); min-height: 100vh; padding-bottom: 40px; }
+    .header { background: rgba(30, 41, 59, 0.85); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border-color); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
+    .header-title { font-size: 22px; font-weight: 800; color: #38bdf8; display: flex; align-items: center; gap: 10px; text-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
+    .header-title span { font-size: 11px; background: linear-gradient(135deg, #38bdf8, #ec4899); color: #fff; padding: 4px 12px; border-radius: 20px; font-weight: 800; letter-spacing: 1px; box-shadow: 0 0 15px rgba(236, 72, 153, 0.4); }
     .header-actions { display: flex; gap: 12px; align-items: center; }
     .time-update { font-size: 12px; color: var(--text-muted); font-weight: 600; }
-    .btn-refresh {
-        background: var(--bg-card);
-        color: var(--text-main);
-        border: 1px solid var(--border-color);
-        width: 38px;
-        height: 38px;
-        border-radius: 10px;
-        font-weight: 700;
-        font-size: 16px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: 0.2s;
-    }
+    .btn-refresh { background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); width: 38px; height: 38px; border-radius: 10px; font-weight: 700; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
     .btn-refresh:hover { background: var(--border-color); transform: rotate(180deg); }
-    .btn-reset {
-        background: rgba(248, 113, 113, 0.2);
-        color: var(--lose-color);
-        border: 1px solid var(--lose-color);
-        padding: 8px 16px;
-        border-radius: 10px;
-        font-weight: 700;
-        font-size: 13px;
-        cursor: pointer;
-        transition: 0.2s;
-    }
+    .btn-reset { background: rgba(248, 113, 113, 0.2); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer; transition: 0.2s; }
     .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
-
-    .stats-bar {
-        max-width: 800px;
-        margin: 24px auto 16px;
-        padding: 0 16px;
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 12px;
-    }
-    .stat-item {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 14px;
-        padding: 16px;
-        text-align: center;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-    }
+    .stats-bar { max-width: 800px; margin: 24px auto 16px; padding: 0 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .stat-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 16px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
     .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.5px; }
     .stat-value { font-size: 24px; font-weight: 800; color: var(--text-main); }
     .stat-value.win { color: var(--tai-color); text-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
-
     .table-wrapper { max-width: 800px; margin: 0 auto; padding: 0 16px; }
-    .table-container {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 16px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-        max-height: 70vh;
-        overflow-y: auto;
-    }
+    .table-container { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-height: 70vh; overflow-y: auto; }
     .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
-    .data-table th {
-        background: #111827;
-        color: var(--text-muted);
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        padding: 16px 12px;
-        text-align: center;
-        border-bottom: 1px solid var(--border-color);
-        position: sticky;
-        top: 0;
-        z-index: 10;
-    }
-    .data-table td {
-        padding: 14px 12px;
-        text-align: center;
-        border-bottom: 1px solid var(--border-color);
-        font-size: 14px;
-        font-weight: 600;
-    }
+    .data-table th { background: #111827; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 16px 12px; text-align: center; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 10; }
+    .data-table td { padding: 14px 12px; text-align: center; border-bottom: 1px solid var(--border-color); font-size: 14px; font-weight: 600; }
     .data-table tr:last-child td { border-bottom: none; }
     .data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
     .row-next { background: rgba(14, 165, 233, 0.08); border-left: 4px solid var(--tai-color); }
-
-    .badge {
-        display: inline-block;
-        padding: 6px 14px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 700;
-        min-width: 70px;
-        text-align: center;
-    }
+    .badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; min-width: 70px; text-align: center; }
     .badge-tai { background: var(--tai-bg); color: var(--tai-color); border: 1px solid rgba(56, 189, 248, 0.3); box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); }
     .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); border: 1px solid rgba(244, 114, 182, 0.3); box-shadow: 0 0 10px rgba(244, 114, 182, 0.2); }
     .badge-empty { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
-
     .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; }
     .st-win { background: var(--win-bg); color: var(--win-color); border: 1px solid rgba(52, 211, 153, 0.3); }
     .st-lose { background: var(--lose-bg); color: var(--lose-color); border: 1px solid rgba(248, 113, 113, 0.3); }
     .st-wait { background: var(--wait-bg); color: var(--wait-color); border: 1px solid rgba(251, 191, 36, 0.3); animation: pulse 1.5s infinite; }
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-
     .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
     .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
     .conf-badge.high { color: #34d399; background: rgba(52, 211, 153, 0.15); box-shadow: 0 0 10px rgba(52, 211, 153, 0.2); }
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
-
     @media (max-width: 500px) {
         .data-table th, .data-table td { padding: 10px 6px; font-size: 12px; }
         .badge { padding: 4px 8px; font-size: 11px; min-width: 50px; }
@@ -203,7 +83,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>MD5 v21</span></div>
+    <div class="header-title">LE MINH <span>MD5 v22</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -260,14 +140,11 @@ async function fetchData() {
         const now = new Date();
         document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
         renderTable(data.rows || [], data.stats || {});
-    } catch (e) {
-        console.error("Lỗi tải dữ liệu:", e);
-    }
+    } catch (e) { console.error("Lỗi tải dữ liệu:", e); }
 }
 
 function renderTable(rows, stats) {
     const tbody = document.getElementById('table-body');
-
     if (stats.total > 0) {
         animateNumber(document.getElementById('stat-total'), stats.total);
         animateNumber(document.getElementById('stat-win'), stats.correct);
@@ -278,31 +155,25 @@ function renderTable(rows, stats) {
         document.getElementById('stat-win').innerText = '0';
         document.getElementById('stat-rate').innerText = '0%';
     }
-
     if (!rows.length) {
         tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>';
         return;
     }
-
     let html = '';
     rows.forEach((row) => {
         const trClass = row.is_next ? 'class="row-next"' : '';
-
         let predHtml = `<span class="badge badge-empty">-</span>`;
         if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
-
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
             const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
             confHtml = `<div class="${cls}">${row.conf}%</div>`;
         }
         let predFull = `<div style="display:flex; flex-direction:column; align-items:center;">${predHtml}${confHtml}</div>`;
-
         let resultHtml = `<span class="badge badge-empty">-</span>`;
         if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
-
         let diceDisplay = "";
         if (row.dice !== "? + ? + ?") {
             const p = row.dice.split(" + ");
@@ -310,7 +181,6 @@ function renderTable(rows, stats) {
             diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
         }
         let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
-
         let statusHtml = '';
         if (row.is_next) {
             statusHtml = `<span class="status st-wait">Chờ kết quả</span>`;
@@ -321,7 +191,6 @@ function renderTable(rows, stats) {
         } else {
             statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
         }
-
         html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
     });
     tbody.innerHTML = html;
@@ -329,16 +198,10 @@ function renderTable(rows, stats) {
 
 async function confirmReset() {
     Swal.fire({
-        title: 'Xác nhận Reset?',
-        text: "Toàn bộ lịch sử hiển thị sẽ bị xoá và bắt đầu lại từ đầu!",
-        icon: 'warning',
-        background: '#1e293b',
-        color: '#f8fafc',
-        showCancelButton: true,
-        confirmButtonColor: '#0ea5e9',
-        cancelButtonColor: '#64748b',
-        confirmButtonText: 'Đồng ý',
-        cancelButtonText: 'Hủy'
+        title: 'Xác nhận Reset?', text: "Toàn bộ lịch sử hiển thị sẽ bị xoá và bắt đầu lại từ đầu!",
+        icon: 'warning', background: '#1e293b', color: '#f8fafc',
+        showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
+        confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
     }).then(async (result) => {
         if (result.isConfirmed) {
             isResetting = true;
@@ -348,11 +211,8 @@ async function confirmReset() {
                 const data = await res.json();
                 if (data.status === 'success') {
                     Swal.fire({ title: 'Thành công!', text: 'Đã xoá lịch sử và bắt đầu lại.', icon: 'success', background: '#1e293b', color: '#f8fafc', confirmButtonColor: '#0ea5e9' });
-                    isResetting = false;
-                    fetchData();
-                } else {
-                    throw new Error(data.message);
-                }
+                    isResetting = false; fetchData();
+                } else { throw new Error(data.message); }
             } catch (error) {
                 Swal.fire({title: 'Lỗi!', text: 'Không thể reset: ' + error.message, icon: 'error', background: '#1e293b', color: '#f8fafc'});
                 isResetting = false;
@@ -385,12 +245,7 @@ def fetch_sessions():
                     dices = item.get('dices', [0, 0, 0])
                     dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
                     total = item.get('point', sum(dices))
-                    rows.append({
-                        'phien': int(item['id']),
-                        'result': res,
-                        'dice': dice_str,
-                        'total': total
-                    })
+                    rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
                 return rows, True
     except Exception as e:
         print(f"[API ERROR]: {e}")
@@ -455,39 +310,60 @@ def _stable_hash(s):
 
 
 # =====================================================================
-# THUẬT TOÁN PHỤ #1 — RANDOM CÓ TRỌNG SỐ
+# ✅ v22 — DETERMINISTIC ALGORITHMS (thay thế algo_random_weighted)
 # =====================================================================
-def algo_random_weighted(results):
-    if len(results) < 3:
+def algo_sequence_repeat_deterministic(results):
+    """
+    Phát hiện chuỗi lặp lại hoàn toàn tất định (100% no random).
+    VD: T-X-T-X-T → T-X-T-X-T-X... → dự đoán X.
+    """
+    n = len(results)
+    if n < 6:
         return None
-    window = results[:12]
-    p_tai = window.count("Tài") / len(window)
-    seed = _stable_hash(",".join(results[:20]))
-    rng = random.Random(seed)
-    r = rng.random()
+    for plen in range(2, min(6, n // 2) + 1):
+        if results[:plen] == results[plen:plen*2]:
+            if n > plen * 2:
+                next_pred = results[plen * 2]
+                weight = 8 + plen * 2
+                return (next_pred, weight, f"seq_rep_{plen}")
+    return None
 
-    if p_tai >= 0.65:
-        pred = "Tài" if r < 0.70 else "Xỉu"
-        weight = 9
-    elif p_tai <= 0.35:
-        pred = "Xỉu" if r < 0.70 else "Tài"
-        weight = 9
-    else:
-        pred = "Tài" if r < 0.50 else "Xỉu"
-        weight = 6
 
-    return (pred, weight, "random_weighted")
+def algo_recency_momentum(results):
+    """
+    Bỏ phiếu có trọng số thời gian — phiên càng gần càng nặng.
+    Tất định, không random.
+    """
+    n = len(results)
+    if n < 8:
+        return None
+    score_tai = 0
+    score_xiu = 0
+    for i in range(min(n, 20)):
+        weight = 20 - i
+        if results[i] == "Tài":
+            score_tai += weight
+        else:
+            score_xiu += weight
+    total = score_tai + score_xiu
+    if total == 0:
+        return None
+    ratio = max(score_tai, score_xiu) / total
+    if ratio >= 0.68:
+        if score_tai > score_xiu:
+            return ("Tài", 9, "recency_tai")
+        return ("Xỉu", 9, "recency_xiu")
+    return None
 
 
 # =====================================================================
-# THUẬT TOÁN PHỤ #2 — TẤT ĐỊNH (CHU KỲ + STREAK)
+# THUẬT TOÁN PHỤ — TẤT ĐỊNH (CHU KỲ + STREAK)
 # =====================================================================
 def algo_non_random_deterministic(results):
     if len(results) < 5:
         return None
     groups = get_groups(results)
     r0 = results[0]
-
     if len(groups) >= 5:
         cnt = Counter(groups[:10])
         common_len, common_freq = cnt.most_common(1)[0]
@@ -496,7 +372,6 @@ def algo_non_random_deterministic(results):
                 return (r0, 11, "nonrand_cycle_continue")
             elif groups[0] >= common_len:
                 return (_opp(r0), 12, "nonrand_cycle_break")
-
     if len(groups) >= 4:
         sample = groups[:6]
         avg = sum(sample) / len(sample)
@@ -509,7 +384,7 @@ def algo_non_random_deterministic(results):
 
 
 # =====================================================================
-# THUẬT TOÁN PHỤ #3 — RULE NGẮN HẠN
+# THUẬT TOÁN PHỤ — RULE NGẮN HẠN
 # =====================================================================
 def algo_simple_enhanced(results):
     if len(results) < 3:
@@ -517,37 +392,28 @@ def algo_simple_enhanced(results):
     r0 = results[0]
     streak = 1
     for r in results[1:]:
-        if r == r0:
-            streak += 1
-        else:
-            break
-
+        if r == r0: streak += 1
+        else: break
     if streak == 1:
         if len(results) >= 3 and results[1] == results[2]:
             return (_opp(r0), 8, "simple_break_after_pair")
         return (r0, 8, "simple_continue")
-    if streak == 2:
-        return (r0, 9, "simple_momentum")
-    if streak == 3:
-        return (_opp(r0), 10, "simple_break_3")
-    if streak >= 4:
-        return (_opp(r0), 11, "simple_break_4plus")
+    if streak == 2: return (r0, 9, "simple_momentum")
+    if streak == 3: return (_opp(r0), 10, "simple_break_3")
+    if streak >= 4: return (_opp(r0), 11, "simple_break_4plus")
     return None
 
 
 # =====================================================================
-# ★ HELPER v21 #1 — PHÂN TÍCH BỆT ĐA TẦNG
+# ★ HELPER — PHÂN TÍCH BỆT ĐA TẦNG
 # =====================================================================
 def analyze_bet_advanced(results, groups):
     signals = []
-    if not groups or len(results) < 3:
-        return signals
-    r0 = results[0]
-    g0 = groups[0]
-    n = len(results)
+    if not groups or len(results) < 3: return signals
+    r0 = results[0]; g0 = groups[0]; n = len(results)
 
-    # LAYER 1: Bệt theo độ dài
-    if   g0 >= 10: signals.append((_opp(r0), 38, "bet_10plus_break"))
+    if   g0 >= 12: signals.append((_opp(r0), 42, "bet_12plus_break"))
+    elif g0 >= 10: signals.append((_opp(r0), 38, "bet_10plus_break"))
     elif g0 >= 8:  signals.append((_opp(r0), 32, "bet_8_9_break"))
     elif g0 >= 6:  signals.append((_opp(r0), 25, "bet_6_7_break"))
     elif g0 == 5:  signals.append((_opp(r0), 18, "bet_5_break"))
@@ -562,7 +428,6 @@ def analyze_bet_advanced(results, groups):
         else:
             signals.append((_opp(r0), 9, "bet_3_break_default"))
 
-    # LAYER 2: Bệt "nóng" — continuation khi bệt ngắn nhưng dày
     if n >= 15:
         last15 = results[:15]
         tai15 = last15.count("Tài")
@@ -570,65 +435,52 @@ def analyze_bet_advanced(results, groups):
             signals.append(("Tài", 9, "bet_hot_continue_tai"))
         elif tai15 <= 3 and r0 == "Xỉu" and g0 <= 5:
             signals.append(("Xỉu", 9, "bet_hot_continue_xiu"))
-
     return signals
 
 
 # =====================================================================
-# ★ HELPER v21 #2 — CẦU KẸP (SANDWICH)
+# ★ HELPER — CẦU KẸP (SANDWICH)
 # =====================================================================
 def analyze_sandwich(groups, results):
     signals = []
-    if len(groups) < 3 or len(results) < 5:
-        return signals
+    if len(groups) < 3 or len(results) < 5: return signals
     r0 = results[0]
-
     if groups[0] == 1 and groups[2] == 1 and 1 <= groups[1] <= 6:
         w = 10 + min(groups[1], 5)
         signals.append((_opp(r0), w, f"sandwich_1_{groups[1]}_1"))
-
     if len(groups) >= 3 and groups[0] == 2 and groups[2] == 2 and 1 <= groups[1] <= 5:
         signals.append((_opp(r0), 13, f"sandwich_2_{groups[1]}_2"))
-
     if len(groups) >= 3 and groups[0] == 3 and groups[2] == 3 and 1 <= groups[1] <= 4:
         signals.append((_opp(r0), 14, f"sandwich_3_{groups[1]}_3"))
-
     if len(groups) >= 4 and groups[0] == 1 and groups[2] == 1 and groups[3] >= 2:
         signals.append((r0, 8, "sandwich_chain"))
-
     return signals
 
 
 # =====================================================================
-# ★ HELPER v21 #3 — CẦU CHU KỲ (CYCLE DETECTION)
+# ★ HELPER — CẦU CHU KỲ
 # =====================================================================
 def analyze_cycle(results):
     signals = []
     n = len(results)
-    if n < 10:
-        return signals
-
+    if n < 10: return signals
     for cycle_len in range(2, 6):
-        if n < cycle_len * 3:
-            continue
+        if n < cycle_len * 3: continue
         seq = results[:cycle_len]
         matches = 0
         for i in range(cycle_len, min(n, cycle_len * 5)):
-            if results[i] == seq[matches % cycle_len]:
-                matches += 1
-            else:
-                break
+            if results[i] == seq[matches % cycle_len]: matches += 1
+            else: break
         if matches >= cycle_len * 2.5:
             next_pred = seq[matches % cycle_len]
             w = 8 + min(int(matches * 0.8), 12)
             signals.append((next_pred, w, f"cycle_{cycle_len}"))
             break
-
     return signals
 
 
 # =====================================================================
-# ★★★ FULL BRIDGE ANALYZER v21 — 35+ SIGNALS ★★★
+# ★★★ FULL BRIDGE ANALYZER v22 — 35+ SIGNALS, 0% RANDOM ★★★
 # =====================================================================
 def analyze_full_bridge(results):
     if len(results) < 3: return []
@@ -637,10 +489,10 @@ def analyze_full_bridge(results):
     n = len(results)
     r0 = results[0]
 
-    # 1. BỆT (nâng cấp)
+    # 1. BỆT nâng cao
     signals.extend(analyze_bet_advanced(results, groups))
 
-    # 2. CẦU 1-1 (alternation)
+    # 2. CẦU 1-1
     alt = _count_alternations(results)
     if   alt >= 8: signals.append((_opp(r0), 26, "1_1_extreme"))
     elif alt >= 6: signals.append((_opp(r0), 22, "1_1_strong"))
@@ -671,7 +523,7 @@ def analyze_full_bridge(results):
             signals.append((_opp(r0), max(8, 15 - length), f"{length}_{length}"))
             break
 
-    # 6. CẦU KẸP (sandwich)
+    # 6. CẦU KẸP
     signals.extend(analyze_sandwich(groups, results))
 
     # 7. CẦU PYRAMID
@@ -704,10 +556,10 @@ def analyze_full_bridge(results):
     if len(groups) >= 3 and groups[:3] == [2, 2, 1] and n >= 6:
         signals.append((_opp(results[0]), 11, "2_2_1"))
 
-    # 11. CẦU CHU KỲ (cycle)
+    # 11. CẦU CHU KỲ
     signals.extend(analyze_cycle(results))
 
-    # 12. CẦU NGHIÊNG (tilt, multi-window)
+    # 12. CẦU NGHIÊNG
     if n >= 15:
         for window in (15, 20, 30):
             if n < window: continue
@@ -716,7 +568,7 @@ def analyze_full_bridge(results):
             if   tr >= 0.73: signals.append(("Xỉu", 10, f"tilt_tai_{window}")); break
             elif tr <= 0.27: signals.append(("Tài", 10, f"tilt_xiu_{window}")); break
 
-    # 13. CẦU LẶP (repetition)
+    # 13. CẦU LẶP
     for win in range(3, min(n // 2, 12) + 1):
         if len(results) >= win * 2 and results[:win] == results[win:win*2]:
             if len(results) > win * 2:
@@ -751,7 +603,7 @@ def analyze_full_bridge(results):
 
     # 16. BAYESIAN sequence
     if n >= 20:
-        for slen in (5, 4, 3, 2):
+        for slen in (6, 5, 4, 3, 2):
             if n < slen + 3: continue
             target = tuple(results[:slen])
             nt = nx = 0
@@ -770,7 +622,7 @@ def analyze_full_bridge(results):
     h = _detect_group_pattern(groups, results)
     if h: signals.append(h)
 
-    # 18. HOT/COLD (multi-window)
+    # 18. HOT/COLD
     if n >= 12:
         for w, hi, lo in ((8, 7, 1), (12, 10, 2)):
             if n < w: continue
@@ -800,10 +652,8 @@ def analyze_full_bridge(results):
     if n >= 20:
         sample = results[:20]
         p_tai = sample.count("Tài") / len(sample)
-        if p_tai in (0, 1):
-            entropy = 0
-        else:
-            entropy = -(p_tai * math.log2(p_tai) + (1 - p_tai) * math.log2(1 - p_tai))
+        if p_tai in (0, 1): entropy = 0
+        else: entropy = -(p_tai * math.log2(p_tai) + (1 - p_tai) * math.log2(1 - p_tai))
         if entropy < 0.6:
             signals.append(("Tài" if p_tai > 0.5 else "Xỉu", 9, "low_entropy"))
 
@@ -826,9 +676,76 @@ def analyze_full_bridge(results):
     ):
         signals.append((results[1], 10, "zigzag_ext"))
 
-    # 25-27. BA THUẬT TOÁN PHỤ
-    rnd = algo_random_weighted(results)
-    if rnd: signals.append(rnd)
+    # ====================================================
+    # ★★★ v22 — 11 CẦU MỚI, 0% RANDOM ★★★
+    # ====================================================
+
+    # 25. SEQUENCE REPEAT TẤT ĐỊNH (thay random)
+    seq_rep = algo_sequence_repeat_deterministic(results)
+    if seq_rep: signals.append(seq_rep)
+
+    # 26. RECENCY MOMENTUM (thay random)
+    recency = algo_recency_momentum(results)
+    if recency: signals.append(recency)
+
+    # 27. CẦU CHUYỀN ĐÔI (DOUBLE BRIDGE 1-1-2-2)
+    if len(groups) >= 4:
+        if groups[:4] == [1, 1, 2, 2] or groups[:4] == [2, 2, 1, 1]:
+            signals.append((_opp(r0), 14, "double_bridge_1122"))
+        if groups[:4] == [2, 2, 3, 3] or groups[:4] == [3, 3, 2, 2]:
+            signals.append((_opp(r0), 12, "double_bridge_2233"))
+        if groups[:4] == [1, 2, 2, 1] or groups[:4] == [2, 1, 1, 2]:
+            signals.append((_opp(r0), 13, "double_bridge_mirror"))
+
+    # 28. CẦU CHẴN/LẺ NHÓM (PARITY ALTERNATION)
+    if len(groups) >= 4:
+        parities = [g % 2 for g in groups[:4]]
+        if parities in ([0, 1, 0, 1], [1, 0, 1, 0]):
+            signals.append((_opp(r0), 11, "parity_alt"))
+        elif parities == [0, 0, 1, 1] or parities == [1, 1, 0, 0]:
+            signals.append((_opp(r0), 10, "parity_pair"))
+
+    # 29. CẦU NHÓM ỔN ĐỊNH (CONSISTENT GROUPS, variance thấp)
+    if len(groups) >= 4:
+        sample = groups[:4]
+        mean = sum(sample) / len(sample)
+        variance = sum((g - mean) ** 2 for g in sample) / len(sample)
+        if variance <= 0.25 and mean >= 2:
+            signals.append((_opp(r0), 12, "consistent_groups"))
+
+    # 30. CẦU PYRAMID MỞ RỘNG 1-2-3-4-3-2-1
+    if len(groups) >= 7 and groups[:7] == [1, 2, 3, 4, 3, 2, 1]:
+        signals.append((r0, 12, "pyramid_1234321"))
+    if len(groups) >= 6 and groups[:6] == [1, 2, 3, 4, 3, 2]:
+        signals.append((results[0], 11, "pyramid_123432"))
+
+    # 31. CẦU TIẾN TRÌNH TĂNG 1-2-3-4 → dự đoán tiếp 5
+    if len(groups) >= 4 and groups[:4] == [1, 2, 3, 4]:
+        signals.append((r0, 10, "prog_inc_1234"))
+    if len(groups) >= 5 and groups[:5] == [1, 2, 3, 4, 5]:
+        signals.append((r0, 10, "prog_inc_12345"))
+
+    # 32. CẦU TIẾN TRÌNH GIẢM 4-3-2-1 → dự đoán về 0 (break)
+    if len(groups) >= 4 and groups[:4] == [4, 3, 2, 1]:
+        signals.append((_opp(r0), 11, "prog_dec_4321"))
+    if len(groups) >= 5 and groups[:5] == [5, 4, 3, 2, 1]:
+        signals.append((_opp(r0), 11, "prog_dec_54321"))
+
+    # 33. CẦU 2-3-2 (đối xứng)
+    if len(groups) >= 3 and groups[:3] == [2, 3, 2]:
+        signals.append((_opp(r0), 13, "sym_232"))
+
+    # 34. CẦU 1-4-1
+    if len(groups) >= 3 and groups[:3] == [1, 4, 1]:
+        signals.append((_opp(r0), 13, "sym_141"))
+
+    # 35. CẦU 2-4-2, 3-5-3
+    for c in (2, 3, 4):
+        if len(groups) >= 3 and groups[:3] == [c, c+2, c]:
+            signals.append((_opp(r0), 12, f"sym_{c}_{c+2}_{c}"))
+            break
+
+    # 36-37. BA THUẬT TOÁN PHỤ TẤT ĐỊNH
     nrnd = algo_non_random_deterministic(results)
     if nrnd: signals.append(nrnd)
     simple = algo_simple_enhanced(results)
@@ -843,42 +760,30 @@ def analyze_full_bridge(results):
 def full_bridge_predict(results):
     if not results: return "Tài", 50
     if len(results) < 3: return results[0], 50
-
     signals = analyze_full_bridge(results)
-    if not signals:
-        return results[0], 52
-
+    if not signals: return results[0], 52
     score_tai = sum(w for p, w, _ in signals if p == "Tài")
     score_xiu = sum(w for p, w, _ in signals if p == "Xỉu")
     total = score_tai + score_xiu
-    if total == 0:
-        return results[0], 50
-
+    if total == 0: return results[0], 50
     def _calc(ratio):
         base = 50 + (ratio - 0.5) * 100
         evidence = min(1.0, total / 30.0)
         return int(max(50, min(92, 50 + (base - 50) * evidence)))
-
-    if score_tai > score_xiu:
-        return "Tài", _calc(score_tai / total)
-    elif score_xiu > score_tai:
-        return "Xỉu", _calc(score_xiu / total)
-    else:
-        return _opp(results[0]), 50
+    if score_tai > score_xiu: return "Tài", _calc(score_tai / total)
+    elif score_xiu > score_tai: return "Xỉu", _calc(score_xiu / total)
+    else: return _opp(results[0]), 50
 
 
 # =====================================================================
-# ★★★ ADAPTIVE PREDICTOR v21 — TIME-DECAY + CONSENSUS BOOST ★★★
+# ADAPTIVE PREDICTOR — TIME-DECAY + CONSENSUS
 # =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=60):
     n = len(results)
     if n < 3:
         return (results[0] if results else "Tài"), 50, []
-
-    # Replay có TIME-DECAY
     signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
     replay_count = min(replay_n, n - 3)
-
     for j in range(replay_count):
         history = results[j+1:]
         actual = results[j]
@@ -890,56 +795,40 @@ def full_bridge_predict_adaptive(results, replay_n=60):
                 signal_stats[name]['wins'] += decay
 
     signals = analyze_full_bridge(results)
-    if not signals:
-        return results[0], 52, []
+    if not signals: return results[0], 52, []
 
-    score_tai = 0.0
-    score_xiu = 0.0
-    detail = []
-
+    score_tai = 0.0; score_xiu = 0.0; detail = []
     for pred_sig, weight, name in signals:
         stats = signal_stats[name]
         if stats['total'] >= 3:
             acc = stats['wins'] / stats['total']
             multiplier = 0.3 + acc * 1.4
         else:
-            acc = None
-            multiplier = 1.0
-
+            acc = None; multiplier = 1.0
         adjusted = weight * multiplier
         if pred_sig == "Tài": score_tai += adjusted
         else:                 score_xiu += adjusted
-
         detail.append({
-            'name': name,
-            'pred': pred_sig,
-            'base_weight': weight,
+            'name': name, 'pred': pred_sig, 'base_weight': weight,
             'accuracy': round(acc, 3) if acc is not None else None,
             'samples': int(stats['total']),
             'adjusted_weight': round(adjusted, 2),
         })
 
     total = score_tai + score_xiu
-    if total == 0:
-        return results[0], 50, detail
-
-    if score_tai > score_xiu:
-        pred, ratio = "Tài", score_tai / total
-    elif score_xiu > score_tai:
-        pred, ratio = "Xỉu", score_xiu / total
-    else:
-        return _opp(results[0]), 50, detail
+    if total == 0: return results[0], 50, detail
+    if score_tai > score_xiu: pred, ratio = "Tài", score_tai / total
+    elif score_xiu > score_tai: pred, ratio = "Xỉu", score_xiu / total
+    else: return _opp(results[0]), 50, detail
 
     base_conf = 50 + (ratio - 0.5) * 100
     evidence = min(1.0, total / 40.0)
     conf = 50 + (base_conf - 50) * evidence
 
-    # CONSENSUS BOOST
     if ratio >= 0.70:                        conf += 5
     if ratio >= 0.78 and len(signals) >= 6:  conf += 5
     if len(signals) >= 10 and ratio >= 0.65: conf += 3
     if len(signals) < 4:                     conf -= 5
-
     conf = int(max(50, min(96, conf)))
     return pred, conf, detail
 
@@ -957,73 +846,40 @@ def history():
     global RESET_ID
     try:
         raw_rows, success = fetch_sessions()
-
         if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-
-        for row in raw_rows:
-            HISTORY_CACHE[row['phien']] = row
-
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
         keys_to_remove = [k for k in HISTORY_CACHE if k <= RESET_ID]
-        for k in keys_to_remove:
-            del HISTORY_CACHE[k]
-
+        for k in keys_to_remove: del HISTORY_CACHE[k]
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid: return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
-        if not valid:
-            return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
-
-        out = []
-        correct_count = 0
-        total_past = 0
-
+        out = []; correct_count = 0; total_past = 0
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
-
         next_pred, next_conf, _ = full_bridge_predict_adaptive(history_for_next)
 
-        out.append({
-            'phien': next_phien,
-            'is_next': True,
-            'prediction': next_pred,
-            'result': 'Chờ...',
-            'dice': "? + ? + ?",
-            'is_correct': None,
-            'conf': next_conf
-        })
+        out.append({'phien': next_phien, 'is_next': True, 'prediction': next_pred,
+                    'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'conf': next_conf})
 
         scan_limit = min(len(valid), 200)
-
         for i in range(len(valid) - 1, len(valid) - scan_limit - 1, -1):
             if i < 0: break
             current_session = valid[i]
             hist = [v['result'] for v in valid[:i]][::-1]
-
             if hist and len(hist) >= 3:
                 pred, conf = full_bridge_predict(hist)
                 is_correct = (pred == current_session['result'])
                 total_past += 1
-                if is_correct:
-                    correct_count += 1
+                if is_correct: correct_count += 1
             else:
-                pred, conf = "-", 50
-                is_correct = None
+                pred, conf = "-", 50; is_correct = None
+            out.append({'phien': current_session['phien'], 'is_next': False,
+                        'prediction': pred, 'result': current_session['result'],
+                        'dice': current_session['dice'], 'is_correct': is_correct, 'conf': conf})
 
-            out.append({
-                'phien': current_session['phien'],
-                'is_next': False,
-                'prediction': pred,
-                'result': current_session['result'],
-                'dice': current_session['dice'],
-                'is_correct': is_correct,
-                'conf': conf
-            })
-
-        return jsonify({
-            'rows': out,
-            'stats': {'total': total_past, 'correct': correct_count}
-        })
+        return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -1036,34 +892,21 @@ def predict():
         raw_rows, success = fetch_sessions()
         if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-
-        for row in raw_rows:
-            HISTORY_CACHE[row['phien']] = row
-
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
         keys_to_remove = [k for k in HISTORY_CACHE if k <= RESET_ID]
-        for k in keys_to_remove:
-            del HISTORY_CACHE[k]
-
+        for k in keys_to_remove: del HISTORY_CACHE[k]
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
-        if not valid:
-            return jsonify({'error': 'Chưa có dữ liệu'}), 400
-
+        if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         results = [v['result'] for v in valid][::-1]
         pred, conf, detail = full_bridge_predict_adaptive(results)
-
         return jsonify({
-            'last_phien': valid[-1]['phien'],
-            'next_phien': valid[-1]['phien'] + 1,
-            'last_result': valid[-1]['result'],
-            'last_dice': valid[-1]['dice'],
-            'prediction': pred,
-            'confidence': conf,
-            'total_sessions': len(valid),
+            'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
+            'last_result': valid[-1]['result'], 'last_dice': valid[-1]['dice'],
+            'prediction': pred, 'confidence': conf, 'total_sessions': len(valid),
             'signals': detail,
             'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
             'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
-            'signal_count': len(detail),
-            'timestamp': datetime.now().isoformat()
+            'signal_count': len(detail), 'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
         traceback.print_exc()
@@ -1077,21 +920,13 @@ def lc79():
         raw_rows, success = fetch_sessions()
         if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-
-        for row in raw_rows:
-            HISTORY_CACHE[row['phien']] = row
-
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
         keys_to_remove = [k for k in HISTORY_CACHE if k <= RESET_ID]
-        for k in keys_to_remove:
-            del HISTORY_CACHE[k]
-
+        for k in keys_to_remove: del HISTORY_CACHE[k]
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
-        if not valid:
-            return jsonify({'error': 'Chưa có dữ liệu'}), 400
-
+        if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         results = [v['result'] for v in valid][::-1]
         pred, conf, detail = full_bridge_predict_adaptive(results)
-
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
         xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
         total_sig = tai_score + xiu_score
@@ -1103,21 +938,13 @@ def lc79():
         else:
             conf_float = 50.0
         conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
-
         groups = get_groups(results)
-        recent_groups = groups[:4]
-        lich_su = "-" + "-".join(str(g) for g in recent_groups)
-
-        last = valid[-1]
-        next_phien = last['phien'] + 1
-
+        lich_su = "-" + "-".join(str(g) for g in groups[:4])
+        last = valid[-1]; next_phien = last['phien'] + 1
         return jsonify({
-            'Id':         'le minh v21',
-            'Phien':      str(next_phien),
-            'Ket_qua':    last['result'].lower(),
-            'Lich_su':    lich_su,
-            'Du_doan':    pred,
-            'Do_tin_cay': conf_str,
+            'Id': 'le minh v22', 'Phien': str(next_phien),
+            'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
+            'Du_doan': pred, 'Do_tin_cay': conf_str,
         })
     except Exception as e:
         traceback.print_exc()
