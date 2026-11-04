@@ -111,7 +111,7 @@ HTML_TEMPLATE = """
     <div class="stat-item"><div class="stat-label">Tỷ lệ</div><div class="stat-value win" id="stat-rate">0%</div></div>
     <div class="stat-item"><div class="stat-label">Chuỗi thắng</div><div class="stat-value win streak" id="stat-wstreak">0</div></div>
     <div class="stat-item"><div class="stat-label">Chuỗi thua</div><div class="stat-value loss" id="stat-streak">0</div></div>
-    <div class="stat-item"><div class="stat-label">Regime</div><div class="stat-value regime" id="stat-regime">-</div></div>
+    <div class="stat-item"><div class="stat-label">MINHDZ</div><div class="stat-value regime" id="stat-regime">-</div></div>
 </div>
 
 <div class="table-wrapper">
