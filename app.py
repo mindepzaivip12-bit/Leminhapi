@@ -1,11 +1,10 @@
 import os
 import math
 import traceback
-import hashlib
 from datetime import datetime
-from collections import defaultdict, Counter
+from collections import defaultdict
 import requests
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -49,16 +48,13 @@ HTML_TEMPLATE = """
     .btn-refresh:hover { background: var(--border-color); transform: rotate(180deg); }
     .btn-reset { background: rgba(248, 113, 113, 0.2); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer; transition: 0.2s; }
     .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
-    .stats-bar { max-width: 800px; margin: 24px auto 16px; padding: 0 16px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
-    .stat-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 14px 8px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
-    .stat-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.3px; }
-    .stat-value { font-size: 19px; font-weight: 800; color: var(--text-main); }
-    .stat-value.win { color: var(--tai-color); text-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
-    .stat-value.win.streak { color: var(--win-color); text-shadow: 0 0 15px rgba(52, 211, 153, 0.4); }
-    .stat-value.loss { color: var(--lose-color); }
-    .stat-value.win.streak.hot { animation: pulse 1.5s infinite; text-shadow: 0 0 15px rgba(52, 211, 153, 0.6); }
-    .stat-value.loss.hot { color: var(--recovery-color); text-shadow: 0 0 15px rgba(251, 146, 60, 0.5); animation: pulse 1.5s infinite; }
-    .stat-value.regime { font-size: 12px; color: #fbbf24; text-shadow: 0 0 12px rgba(251, 191, 36, 0.4); letter-spacing: 0.3px; }
+    .stats-bar { max-width: 800px; margin: 24px auto 16px; padding: 0 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .stat-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 16px 10px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+    .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.3px; }
+    .stat-value { font-size: 22px; font-weight: 800; color: var(--text-main); }
+    .stat-value.win { color: var(--win-color); text-shadow: 0 0 15px rgba(52, 211, 153, 0.4); }
+    .stat-value.loss { color: var(--lose-color); text-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
+    .stat-value.rate { color: var(--tai-color); text-shadow: 0 0 15px rgba(56, 189, 248, 0.4); }
     .table-wrapper { max-width: 800px; margin: 0 auto; padding: 0 16px; }
     .table-container { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-height: 70vh; overflow-y: auto; }
     .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
@@ -88,16 +84,15 @@ HTML_TEMPLATE = """
         .badge { padding: 4px 8px; font-size: 11px; min-width: 50px; }
         .header-title { font-size: 18px; }
         .time-update { display: none; }
-        .stats-bar { grid-template-columns: repeat(3, 1fr); }
-        .stat-value { font-size: 15px; }
-        .stat-value.regime { font-size: 10px; }
+        .stats-bar { grid-template-columns: repeat(2, 1fr); }
+        .stat-value { font-size: 18px; }
     }
 </style>
 </head>
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>CTEW</span></div>
+    <div class="header-title">LE MINH <span>CTEWHEHE</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -108,10 +103,8 @@ HTML_TEMPLATE = """
 <div class="stats-bar">
     <div class="stat-item"><div class="stat-label">Tổng</div><div class="stat-value" id="stat-total">0</div></div>
     <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
-    <div class="stat-item"><div class="stat-label">Tỷ lệ</div><div class="stat-value win" id="stat-rate">0%</div></div>
-    <div class="stat-item"><div class="stat-label">Chuỗi thắng</div><div class="stat-value win streak" id="stat-wstreak">0</div></div>
-    <div class="stat-item"><div class="stat-label">Chuỗi thua</div><div class="stat-value loss" id="stat-streak">0</div></div>
-    <div class="stat-item"><div class="stat-label">MINHDZ</div><div class="stat-value regime" id="stat-regime">-</div></div>
+    <div class="stat-item"><div class="stat-label">Thua</div><div class="stat-value loss" id="stat-lose">0</div></div>
+    <div class="stat-item"><div class="stat-label">Tỷ lệ thắng</div><div class="stat-value rate" id="stat-rate">0%</div></div>
 </div>
 
 <div class="table-wrapper">
@@ -156,30 +149,21 @@ async function fetchData() {
         const data = await r.json();
         const now = new Date();
         document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
-        renderTable(data.rows || [], data.stats || {}, data.regime || '-', data.loss_streak || 0, data.win_streak || 0);
+        renderTable(data.rows || [], data.stats || {});
     } catch (e) { console.error("Lỗi tải dữ liệu:", e); }
 }
 
-function renderTable(rows, stats, regime, lossStreak, winStreak) {
-    document.getElementById('stat-regime').innerText = regime || '-';
-    const stkEl = document.getElementById('stat-streak');
-    stkEl.innerText = lossStreak;
-    if (lossStreak >= 2) { stkEl.classList.add('hot'); } else { stkEl.classList.remove('hot'); }
-    const wstkEl = document.getElementById('stat-wstreak');
-    wstkEl.innerText = winStreak;
-    if (winStreak >= 2) { wstkEl.classList.add('hot'); } else { wstkEl.classList.remove('hot'); }
-
+function renderTable(rows, stats) {
     const tbody = document.getElementById('table-body');
-    if (stats.total > 0) {
-        animateNumber(document.getElementById('stat-total'), stats.total);
-        animateNumber(document.getElementById('stat-win'), stats.correct);
-        const rate = (stats.correct / stats.total) * 100;
-        animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
-    } else {
-        document.getElementById('stat-total').innerText = '0';
-        document.getElementById('stat-win').innerText = '0';
-        document.getElementById('stat-rate').innerText = '0%';
-    }
+    const total = stats.total || 0;
+    const correct = stats.correct || 0;
+    const wrong = total - correct;
+    animateNumber(document.getElementById('stat-total'), total);
+    animateNumber(document.getElementById('stat-win'), correct);
+    animateNumber(document.getElementById('stat-lose'), wrong);
+    const rate = total > 0 ? (correct / total) * 100 : 0;
+    animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
+
     if (!rows.length) {
         tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>';
         return;
@@ -318,9 +302,43 @@ def _count_alternations(results, max_len=15):
 
 
 # =====================================================================
-# ALGOS (deterministic, no randomness, no pattern-matching)
+# CORE STATISTICAL ALGORITHMS (no patterns, no samples, no randomness)
 # =====================================================================
+def algo_bet_break(results, groups):
+    """Phá chuỗi theo độ dài run-length hiện tại — logic xác suất."""
+    if not groups or len(results) < 3: return []
+    sigs = []
+    r0 = results[0]; g0 = groups[0]; n = len(results)
+    if   g0 >= 12: sigs.append((_opp(r0), 42, "bet_12plus"))
+    elif g0 >= 10: sigs.append((_opp(r0), 38, "bet_10plus"))
+    elif g0 >= 8:  sigs.append((_opp(r0), 32, "bet_8_9"))
+    elif g0 >= 6:  sigs.append((_opp(r0), 25, "bet_6_7"))
+    elif g0 == 5:  sigs.append((_opp(r0), 18, "bet_5"))
+    elif g0 == 4:  sigs.append((_opp(r0), 12, "bet_4"))
+    elif g0 == 3:
+        if len(groups) >= 5:
+            past = groups[1:min(12, len(groups))]
+            avg_g = sum(past) / len(past)
+            if   avg_g < 2.3: sigs.append((_opp(r0), 13, "bet_3_break"))
+            elif avg_g >= 3.5: sigs.append((r0, 11, "bet_3_cont"))
+            else:              sigs.append((_opp(r0), 9, "bet_3_def"))
+        else: sigs.append((_opp(r0), 9, "bet_3_def"))
+    return sigs
+
+
+def algo_alternation(results):
+    """Đo mức đảo liên tiếp — dao động mạnh → đảo tiếp."""
+    if len(results) < 4: return None
+    alt = _count_alternations(results)
+    if   alt >= 8: return (_opp(results[0]), 26, "alt_8plus")
+    elif alt >= 6: return (_opp(results[0]), 22, "alt_6_7")
+    elif alt >= 4: return (_opp(results[0]), 16, "alt_4_5")
+    elif alt >= 3: return (_opp(results[0]), 10, "alt_3")
+    return None
+
+
 def algo_recency_momentum(results):
+    """Trọng số giảm dần 20 phiên — momentum."""
     n = len(results)
     if n < 8: return None
     st = sx = 0
@@ -334,52 +352,8 @@ def algo_recency_momentum(results):
     return ("Tài", 9, "recency_tai") if st > sx else ("Xỉu", 9, "recency_xiu")
 
 
-def algo_non_random_deterministic(results):
-    if len(results) < 5: return None
-    groups = get_groups(results); r0 = results[0]
-    if len(groups) >= 5:
-        common_len, freq = Counter(groups[:10]).most_common(1)[0]
-        if freq >= 3:
-            if groups[0] < common_len: return (r0, 11, "nonrand_cycle_continue")
-            return (_opp(r0), 12, "nonrand_cycle_break")
-    if len(groups) >= 4:
-        avg = sum(groups[:6]) / len(groups[:6]); cur = groups[0]
-        if cur > avg + 0.5: return (_opp(r0), 10, "nonrand_streak_break")
-        if cur < avg - 0.3: return (r0, 9, "nonrand_streak_continue")
-    return None
-
-
-def algo_simple_enhanced(results):
-    if len(results) < 3: return None
-    r0 = results[0]; streak = 1
-    for r in results[1:]:
-        if r == r0: streak += 1
-        else: break
-    if streak == 1:
-        if len(results) >= 3 and results[1] == results[2]:
-            return (_opp(r0), 8, "simple_break_after_pair")
-        return (r0, 8, "simple_continue")
-    if streak == 2: return (r0, 9, "simple_momentum")
-    if streak == 3: return (_opp(r0), 10, "simple_break_3")
-    if streak >= 4: return (_opp(r0), 11, "simple_break_4plus")
-    return None
-
-
-def algo_runlength_compare(results):
-    n = len(results)
-    if n < 20: return None
-    groups = get_groups(results)
-    if len(groups) < 4: return None
-    cur = groups[0]; past = groups[1:min(20, len(groups))]
-    if not past: return None
-    avg = sum(past) / len(past)
-    if cur > avg * 1.6 and cur >= 3: return (_opp(results[0]), 11, "runlength_break")
-    if cur < 1.5 and avg >= 2.5: return (results[0], 8, "runlength_continue")
-    return None
-
-
 def algo_weighted_trend(results):
-    """Trend có trọng số giảm dần — tất định, không pattern."""
+    """Trọng số giảm dần 10 phiên — trend ngắn hạn."""
     n = len(results)
     if n < 10: return None
     weights = [10.0, 8.0, 6.0, 4.0, 3.0, 2.0, 1.5, 1.0, 0.8, 0.5]
@@ -395,249 +369,116 @@ def algo_weighted_trend(results):
     return None
 
 
-# =====================================================================
-# HELPERS
-# =====================================================================
-def analyze_bet_advanced(results, groups):
-    signals = []
-    if not groups or len(results) < 3: return signals
-    r0 = results[0]; g0 = groups[0]; n = len(results)
-    if   g0 >= 12: signals.append((_opp(r0), 42, "bet_12plus_break"))
-    elif g0 >= 10: signals.append((_opp(r0), 38, "bet_10plus_break"))
-    elif g0 >= 8:  signals.append((_opp(r0), 32, "bet_8_9_break"))
-    elif g0 >= 6:  signals.append((_opp(r0), 25, "bet_6_7_break"))
-    elif g0 == 5:  signals.append((_opp(r0), 18, "bet_5_break"))
-    elif g0 == 4:  signals.append((_opp(r0), 12, "bet_4_break"))
-    elif g0 == 3:
-        if len(groups) >= 5:
-            avg_g = sum(groups[1:min(12, len(groups))]) / len(groups[1:min(12, len(groups))])
-            if   avg_g < 2.3: signals.append((_opp(r0), 13, "bet_3_break_adaptive"))
-            elif avg_g >= 3.5: signals.append((r0, 11, "bet_3_continue_adaptive"))
-            else:              signals.append((_opp(r0), 9, "bet_3_break_default"))
-        else: signals.append((_opp(r0), 9, "bet_3_break_default"))
-    if n >= 15:
-        tai15 = results[:15].count("Tài")
-        if tai15 >= 12 and r0 == "Tài" and g0 <= 5: signals.append(("Tài", 9, "bet_hot_continue_tai"))
-        elif tai15 <= 3 and r0 == "Xỉu" and g0 <= 5: signals.append(("Xỉu", 9, "bet_hot_continue_xiu"))
-    return signals
+def algo_markov1(results):
+    """Xác suất chuyển trạng thái bậc 1 — thuần thống kê."""
+    if len(results) < 15: return None
+    tr = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
+    for i in range(len(results[:45]) - 1):
+        tr[results[i+1]][results[i]] += 1
+    last = results[0]; tot = sum(tr[last].values())
+    if tot < 5: return None
+    p = tr[last]["Tài"] / tot
+    if   p >= 0.65: return ("Tài", 10, "markov1")
+    elif p <= 0.35: return ("Xỉu", 10, "markov1")
+    return None
 
 
-def analyze_sandwich(groups, results):
-    signals = []
-    if len(groups) < 3 or len(results) < 5: return signals
-    r0 = results[0]
-    if groups[0] == 1 and groups[2] == 1 and 1 <= groups[1] <= 6:
-        signals.append((_opp(r0), 10 + min(groups[1], 5), f"sandwich_1_{groups[1]}_1"))
-    if groups[0] == 2 and groups[2] == 2 and 1 <= groups[1] <= 5:
-        signals.append((_opp(r0), 13, f"sandwich_2_{groups[1]}_2"))
-    if groups[0] == 3 and groups[2] == 3 and 1 <= groups[1] <= 4:
-        signals.append((_opp(r0), 14, f"sandwich_3_{groups[1]}_3"))
-    if len(groups) >= 4 and groups[0] == 1 and groups[2] == 1 and groups[3] >= 2:
-        signals.append((r0, 8, "sandwich_chain"))
-    return signals
-
-
-def analyze_cycle(results):
-    signals = []
+def algo_multi_window(results):
+    """Đa cửa sổ 5/10/15 — đa số phiếu."""
     n = len(results)
-    if n < 10: return signals
-    for cl in range(2, 6):
-        if n < cl * 3: continue
-        seq = results[:cl]; matches = 0
-        for i in range(cl, min(n, cl * 5)):
-            if results[i] == seq[matches % cl]: matches += 1
-            else: break
-        if matches >= cl * 2.5:
-            signals.append((seq[matches % cl], 8 + min(int(matches * 0.8), 12), f"cycle_{cl}"))
-            break
-    return signals
+    if n < 15: return None
+    w5 = results[:5].count("Tài"); w10 = results[:10].count("Tài"); w15 = results[:15].count("Tài")
+    vt = sum([w5 >= 4, w10 >= 7, w15 >= 10]); vx = sum([w5 <= 1, w10 <= 3, w15 <= 5])
+    if   vt >= 2: return ("Tài", 11, "multi_window")
+    elif vx >= 2: return ("Xỉu", 11, "multi_window")
+    return None
+
+
+def algo_hot_tilt(results):
+    """Nghiêng theo tần suất cửa sổ 8/12 phiên."""
+    n = len(results)
+    if n < 12: return None
+    for w, hi, lo in ((8, 7, 1), (12, 10, 2)):
+        if n < w: continue
+        tc = results[:w].count("Tài")
+        if tc >= hi: return ("Xỉu", 14 if w == 8 else 12, f"hot_tai_{w}")
+        elif tc <= lo: return ("Tài", 14 if w == 8 else 12, f"hot_xiu_{w}")
+    return None
+
+
+def algo_tilt_ratio(results):
+    """Nghiêng tỷ lệ Tài/Xỉu trong 15-30 phiên."""
+    n = len(results)
+    if n < 15: return None
+    for window in (15, 20, 30):
+        if n < window: continue
+        tr = results[:window].count("Tài") / window
+        if   tr >= 0.73: return ("Xỉu", 10, f"tilt_tai_{window}")
+        elif tr <= 0.27: return ("Tài", 10, f"tilt_xiu_{window}")
+    return None
+
+
+def algo_entropy(results):
+    """Entropy thấp → follow xu hướng."""
+    if len(results) < 20: return None
+    p_tai = results[:20].count("Tài") / 20
+    if p_tai in (0, 1): return ("Tài" if p_tai > 0.5 else "Xỉu", 9, "entropy_zero")
+    entropy = -(p_tai * math.log2(p_tai) + (1-p_tai) * math.log2(1-p_tai))
+    if entropy < 0.6: return ("Tài" if p_tai > 0.5 else "Xỉu", 9, "entropy_low")
+    return None
+
+
+def algo_simple_enhanced(results):
+    """Logic run-length cơ bản."""
+    if len(results) < 3: return None
+    r0 = results[0]; streak = 1
+    for r in results[1:]:
+        if r == r0: streak += 1
+        else: break
+    if streak == 1:
+        if len(results) >= 3 and results[1] == results[2]:
+            return (_opp(r0), 8, "simple_break_pair")
+        return (r0, 8, "simple_continue")
+    if streak == 2: return (r0, 9, "simple_momentum")
+    if streak == 3: return (_opp(r0), 10, "simple_break_3")
+    if streak >= 4: return (_opp(r0), 11, "simple_break_4")
+    return None
+
+
+def algo_runlength_compare(results):
+    """So run-length hiện tại vs trung bình quá khứ."""
+    n = len(results)
+    if n < 20: return None
+    groups = get_groups(results)
+    if len(groups) < 4: return None
+    cur = groups[0]; past = groups[1:min(20, len(groups))]
+    if not past: return None
+    avg = sum(past) / len(past)
+    if cur > avg * 1.6 and cur >= 3: return (_opp(results[0]), 11, "rl_break")
+    if cur < 1.5 and avg >= 2.5: return (results[0], 8, "rl_continue")
+    return None
 
 
 # =====================================================================
-# MASTER ANALYZER — deterministic, no random, no pattern-matching
+# MASTER ANALYZER
 # =====================================================================
 def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
     groups = get_groups(results)
-    n = len(results); r0 = results[0]
 
-    signals.extend(analyze_bet_advanced(results, groups))
+    signals.extend(algo_bet_break(results, groups))
 
-    alt = _count_alternations(results)
-    if   alt >= 8: signals.append((_opp(r0), 26, "1_1_extreme"))
-    elif alt >= 6: signals.append((_opp(r0), 22, "1_1_strong"))
-    elif alt >= 4: signals.append((_opp(r0), 16, "1_1"))
-    elif alt >= 3: signals.append((_opp(r0), 10, "1_1_weak"))
+    alt = algo_alternation(results)
+    if alt: signals.append(alt)
 
-    if   len(groups) >= 6 and all(g == 2 for g in groups[:6]): signals.append((_opp(r0), 22, "2_2_extreme"))
-    elif len(groups) >= 5 and all(g == 2 for g in groups[:5]): signals.append((_opp(r0), 18, "2_2_strong"))
-    elif len(groups) >= 4 and all(g == 2 for g in groups[:4]): signals.append((_opp(r0), 14, "2_2"))
-    elif len(groups) >= 3 and all(g == 2 for g in groups[:3]): signals.append((_opp(r0), 9, "2_2_weak"))
-
-    if   len(groups) >= 5 and all(g == 3 for g in groups[:5]): signals.append((_opp(r0), 18, "3_3_strong"))
-    elif len(groups) >= 4 and all(g == 3 for g in groups[:4]): signals.append((_opp(r0), 15, "3_3"))
-    elif len(groups) >= 3 and all(g == 3 for g in groups[:3]): signals.append((_opp(r0), 10, "3_3_weak"))
-
-    for L in (6, 5, 4):
-        if len(groups) >= 3 and all(g == L for g in groups[:3]):
-            signals.append((_opp(r0), max(8, 15 - L), f"{L}_{L}")); break
-
-    signals.extend(analyze_sandwich(groups, results))
-
-    if len(groups) >= 5:
-        if groups[:5] == [1,2,3,2,1]: signals.append((results[1], 13, "pyramid_12321"))
-        elif groups[:5] == [2,3,4,3,2]: signals.append((results[1], 12, "pyramid_23432"))
-        elif groups[:5] == [1,2,1,2,1]: signals.append((results[0], 11, "zigzag_12121"))
-
-    if len(groups) >= 3:
-        if groups[:3] == [1,2,3]: signals.append((r0, 10, "inc_123"))
-        if groups[:3] == [3,2,1]: signals.append((r0, 10, "dec_321"))
-        if groups[:3] == [1,3,5]: signals.append((r0, 9, "inc_135"))
-        if groups[:3] == [2,4,6]: signals.append((r0, 9, "inc_246"))
-
-    if len(groups) >= 3 and groups[:3] == [1,2,1] and n >= 4: signals.append((results[1], 13, "1_2_1"))
-    if len(groups) >= 3 and groups[:3] == [2,1,2] and n >= 5: signals.append((results[2], 13, "2_1_2"))
-    if len(groups) >= 3 and groups[:3] == [1,3,1] and n >= 5: signals.append((results[1], 11, "1_3_1"))
-    if len(groups) >= 3 and groups[:3] == [1,1,2] and n >= 5: signals.append((_opp(results[0]), 12, "1_1_2"))
-    if len(groups) >= 3 and groups[:3] == [2,2,1] and n >= 6: signals.append((_opp(results[0]), 11, "2_2_1"))
-
-    signals.extend(analyze_cycle(results))
-
-    if n >= 15:
-        for window in (15, 20, 30):
-            if n < window: continue
-            tr = results[:window].count("Tài") / window
-            if   tr >= 0.73: signals.append(("Xỉu", 10, f"tilt_tai_{window}")); break
-            elif tr <= 0.27: signals.append(("Tài", 10, f"tilt_xiu_{window}")); break
-
-    if n >= 15:
-        tr = {"Tài": {"Tài":0,"Xỉu":0}, "Xỉu": {"Tài":0,"Xỉu":0}}
-        for i in range(len(results[:45]) - 1):
-            tr[results[i+1]][results[i]] += 1
-        last = results[0]; tot = sum(tr[last].values())
-        if tot >= 5:
-            p = tr[last]["Tài"] / tot
-            if   p >= 0.65: signals.append(("Tài", 10, "markov1"))
-            elif p <= 0.35: signals.append(("Xỉu", 10, "markov1"))
-
-    if n >= 20:
-        target = tuple(results[:2]); nt = nx = 0
-        for i in range(2, min(n, 50)):
-            if tuple(results[i:i+2]) == target:
-                if results[i-1] == "Tài": nt += 1
-                else: nx += 1
-        tot = nt + nx
-        if tot >= 3:
-            if   nt/tot >= 0.68: signals.append(("Tài", 11, "markov2"))
-            elif nx/tot >= 0.68: signals.append(("Xỉu", 11, "markov2"))
-
-    if n >= 12:
-        for w, hi, lo in ((8, 7, 1), (12, 10, 2)):
-            if n < w: continue
-            tc = results[:w].count("Tài")
-            if tc >= hi: signals.append(("Xỉu", 14 if w == 8 else 12, f"hot_tai_{w}"))
-            elif tc <= lo: signals.append(("Tài", 14 if w == 8 else 12, f"hot_xiu_{w}"))
-
-    if n >= 15:
-        w5 = results[:5].count("Tài"); w10 = results[:10].count("Tài"); w15 = results[:15].count("Tài")
-        vt = sum([w5 >= 4, w10 >= 7, w15 >= 10]); vx = sum([w5 <= 1, w10 <= 3, w15 <= 5])
-        if   vt >= 2: signals.append(("Tài", 11, "multi_window"))
-        elif vx >= 2: signals.append(("Xỉu", 11, "multi_window"))
-
-    if n >= 15:
-        trans = sum(1 for i in range(14) if results[i] != results[i+1])
-        if trans >= 12: signals.append((_opp(results[0]), 13, "chaos_alt"))
-
-    if n >= 20:
-        p_tai = results[:20].count("Tài") / 20
-        entropy = 0 if p_tai in (0,1) else -(p_tai * math.log2(p_tai) + (1-p_tai) * math.log2(1-p_tai))
-        if entropy < 0.6: signals.append(("Tài" if p_tai > 0.5 else "Xỉu", 9, "low_entropy"))
-
-    if n >= 10:
-        trans = sum(1 for i in range(9) if results[i] != results[i+1])
-        if 4 <= trans <= 6: signals.append((_opp(results[0]), 7, "balanced_osc"))
-
-    if n >= 8 and groups[0] >= 2:
-        w8 = results[:8].count("Tài")
-        if   w8 >= 6: signals.append(("Tài", 8, "momentum"))
-        elif w8 <= 2: signals.append(("Xỉu", 8, "momentum"))
-
-    if len(groups) >= 5 and tuple(groups[:5]) in ((1,2,3,2,1),(1,2,3,2),(1,1,2,1,1),(2,1,1,2,2)):
-        signals.append((results[1], 10, "zigzag_ext"))
-
-    recency = algo_recency_momentum(results)
-    if recency: signals.append(recency)
-
-    weighted = algo_weighted_trend(results)
-    if weighted: signals.append(weighted)
-
-    if len(groups) >= 4:
-        if groups[:4] in ([1,1,2,2],[2,2,1,1]): signals.append((_opp(r0), 14, "double_bridge_1122"))
-        if groups[:4] in ([2,2,3,3],[3,3,2,2]): signals.append((_opp(r0), 12, "double_bridge_2233"))
-        if groups[:4] in ([1,2,2,1],[2,1,1,2]): signals.append((_opp(r0), 13, "double_bridge_mirror"))
-        par = [g % 2 for g in groups[:4]]
-        if par in ([0,1,0,1],[1,0,1,0]): signals.append((_opp(r0), 11, "parity_alt"))
-        elif par in ([0,0,1,1],[1,1,0,0]): signals.append((_opp(r0), 10, "parity_pair"))
-        sample = groups[:4]; mean = sum(sample)/4
-        var = sum((g-mean)**2 for g in sample)/4
-        if var <= 0.25 and mean >= 2: signals.append((_opp(r0), 12, "consistent_groups"))
-
-    if len(groups) >= 7 and groups[:7] == [1,2,3,4,3,2,1]: signals.append((r0, 12, "pyramid_1234321"))
-    if len(groups) >= 6 and groups[:6] == [1,2,3,4,3,2]: signals.append((results[0], 11, "pyramid_123432"))
-    if len(groups) >= 4 and groups[:4] == [1,2,3,4]: signals.append((r0, 10, "prog_inc_1234"))
-    if len(groups) >= 5 and groups[:5] == [1,2,3,4,5]: signals.append((r0, 10, "prog_inc_12345"))
-    if len(groups) >= 4 and groups[:4] == [4,3,2,1]: signals.append((_opp(r0), 11, "prog_dec_4321"))
-    if len(groups) >= 5 and groups[:5] == [5,4,3,2,1]: signals.append((_opp(r0), 11, "prog_dec_54321"))
-    if len(groups) >= 3 and groups[:3] == [2,3,2]: signals.append((_opp(r0), 13, "sym_232"))
-    if len(groups) >= 3 and groups[:3] == [1,4,1]: signals.append((_opp(r0), 13, "sym_141"))
-    for c in (2, 3, 4):
-        if len(groups) >= 3 and groups[:3] == [c, c+2, c]:
-            signals.append((_opp(r0), 12, f"sym_{c}_{c+2}_{c}")); break
-
-    nrnd = algo_non_random_deterministic(results)
-    if nrnd: signals.append(nrnd)
-    simple = algo_simple_enhanced(results)
-    if simple: signals.append(simple)
-
-    runlen = algo_runlength_compare(results)
-    if runlen: signals.append(runlen)
+    for fn in (algo_recency_momentum, algo_weighted_trend, algo_markov1,
+               algo_multi_window, algo_hot_tilt, algo_tilt_ratio,
+               algo_entropy, algo_simple_enhanced, algo_runlength_compare):
+        s = fn(results)
+        if s: signals.append(s)
 
     return signals
-
-
-# =====================================================================
-# REGIME DETECTION (NEUTRAL removed)
-# =====================================================================
-def detect_regime(results):
-    n = len(results)
-    if n < 8: return {"regime": "TREND", "trans_rate": 0.5, "max_streak": 1}
-    sample = results[:min(n, 20)]
-    trans = sum(1 for i in range(len(sample) - 1) if sample[i] != sample[i + 1])
-    trans_rate = trans / (len(sample) - 1) if len(sample) > 1 else 0.5
-    max_streak = max(get_groups(sample)) if sample else 1
-    if   trans_rate >= 0.80: regime = "STRONG_ALT"
-    elif trans_rate >= 0.65: regime = "ALT"
-    elif max_streak >= 5:    regime = "STRONG_TREND"
-    elif max_streak >= 3:    regime = "TREND"
-    elif trans_rate >= 0.55: regime = "ALT"
-    elif max_streak >= 2:    regime = "TREND"
-    else:                    regime = "CHAOS"
-    return {"regime": regime, "trans_rate": round(trans_rate, 3), "max_streak": max_streak}
-
-
-REGIME_PREFERENCES = {
-    "STRONG_ALT":   {"1_1": 1.5, "cycle": 1.4, "seq": 1.2, "bet": 0.5, "simple": 0.6, "momentum": 0.4},
-    "ALT":          {"1_1": 1.3, "cycle": 1.2, "seq": 1.1, "bet": 0.7, "simple": 0.8},
-    "TREND":        {"bet": 1.4, "simple": 1.3, "momentum": 1.2, "nonrand": 1.2, "1_1": 0.6},
-    "STRONG_TREND": {"bet": 1.5, "simple": 1.4, "momentum": 1.3, "nonrand": 1.3, "1_1": 0.4},
-    "CHAOS":        {"1_1": 1.2, "2_2": 1.1, "sandwich": 1.1, "simple": 0.8, "bet": 0.9},
-}
-
-def get_signal_multiplier(name, regime):
-    for prefix, mult in REGIME_PREFERENCES.get(regime, {}).items():
-        if name.startswith(prefix): return mult
-    return 1.0
 
 
 # =====================================================================
@@ -651,12 +492,10 @@ def full_bridge_predict(results):
         return results[1], 52
     signals = analyze_full_bridge(results)
     if not signals: return results[0], 52
-    regime = detect_regime(results)["regime"]
     st = sx = 0.0
     for p, w, name in signals:
-        w_adj = w * get_signal_multiplier(name, regime)
-        if p == "Tài": st += w_adj
-        else: sx += w_adj
+        if p == "Tài": st += w
+        else: sx += w
     total = st + sx
     if total == 0: return results[0], 50
     ratio = max(st, sx) / total
@@ -668,42 +507,29 @@ def full_bridge_predict(results):
 
 
 # =====================================================================
-# ADAPTIVE PREDICTOR (deterministic)
+# ADAPTIVE PREDICTOR (deterministic, no regime)
 # =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=80):
     n = len(results)
-    default_regime = {"regime": "TREND", "trans_rate": 0.5, "max_streak": 1}
-    if n == 0:
-        return "Tài", 50, [], default_regime
-    if n == 1:
-        return _opp(results[0]), 52, [], default_regime
+    if n == 0: return "Tài", 50, []
+    if n == 1: return _opp(results[0]), 52, []
     if n == 2:
-        if results[0] == results[1]:
-            return _opp(results[0]), 55, [], default_regime
-        return results[1], 52, [], default_regime
+        if results[0] == results[1]: return _opp(results[0]), 55, []
+        return results[1], 52, []
 
-    regime_info = detect_regime(results)
-    regime = regime_info["regime"]
-    signal_stats = defaultdict(lambda: {
-        'wins': 0.0, 'total': 0.0,
-        'regime_wins':  defaultdict(float),
-        'regime_total': defaultdict(float),
-    })
+    signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
     replay_count = min(replay_n, n - 3)
     for j in range(replay_count):
         history = results[j + 1:]; actual = results[j]
         decay = math.exp(-j / max(replay_count / 2.0, 1.0))
-        hist_regime = detect_regime(history)["regime"]
         for pred_sig, weight, name in analyze_full_bridge(history):
             signal_stats[name]['total'] += decay
-            signal_stats[name]['regime_total'][hist_regime] += decay
             if pred_sig == actual:
                 signal_stats[name]['wins'] += decay
-                signal_stats[name]['regime_wins'][hist_regime] += decay
 
     signals = analyze_full_bridge(results)
     if not signals:
-        return results[0], 52, [], regime_info
+        return results[0], 52, []
 
     st = sx = 0.0; detail = []
     for pred_sig, weight, name in signals:
@@ -714,37 +540,29 @@ def full_bridge_predict_adaptive(results, replay_n=80):
             samples = int(s['total'])
         else:
             acc, samples = 0.5, int(s['total'])
-        rt = s['regime_total'][regime]; rw = s['regime_wins'][regime]
-        if rt >= 2:
-            regime_acc = (rw + 1.0) / (rt + 2.0)
-            acc = 0.70 * regime_acc + 0.30 * acc
         accuracy_mult = 0.4 + max(0.0, min(1.8, (acc - 0.3) * 3.0))
-        regime_mult = get_signal_multiplier(name, regime)
-        adjusted = weight * accuracy_mult * regime_mult
+        adjusted = weight * accuracy_mult
         if pred_sig == "Tài": st += adjusted
         else: sx += adjusted
         detail.append({'name': name, 'pred': pred_sig, 'base_weight': weight,
                        'accuracy': round(acc, 3), 'samples': samples,
-                       'regime_mult': round(regime_mult, 2),
                        'adjusted_weight': round(adjusted, 2)})
 
     total = st + sx
     if total == 0:
-        return results[0], 50, detail, regime_info
+        return results[0], 50, detail
     if st > sx: pred, ratio = "Tài", st / total
     elif sx > st: pred, ratio = "Xỉu", sx / total
-    else: return _opp(results[0]), 50, detail, regime_info
+    else: return _opp(results[0]), 50, detail
 
     base_conf = 50 + (ratio - 0.5) * 100
     evidence = min(1.0, total / 50.0)
     conf = 50 + (base_conf - 50) * evidence
     if ratio >= 0.72: conf += 6
     if ratio >= 0.80 and len(signals) >= 5: conf += 6
-    if len(signals) >= 10 and ratio >= 0.65: conf += 3
-    if regime in ("STRONG_ALT", "STRONG_TREND"): conf += 2
+    if len(signals) >= 8 and ratio >= 0.65: conf += 3
     if len(signals) < 4: conf -= 5
-    if regime == "CHAOS": conf -= 3
-    return pred, int(max(50, min(95, conf))), detail, regime_info
+    return pred, int(max(50, min(95, conf))), detail
 
 
 # =====================================================================
@@ -768,30 +586,23 @@ def get_prediction_for(valid, i):
 
 
 # =====================================================================
-# STREAKS (both win & loss)
+# LOSS STREAK (only — to trigger recovery)
 # =====================================================================
-def compute_streaks(valid, max_scan=20):
-    if len(valid) < 5: return 0, 0
-    win_streak = loss_streak = 0
-    current_type = None
+def compute_loss_streak(valid, max_scan=20):
+    if len(valid) < 5: return 0
+    streak = 0
     end = len(valid) - 1
     start = max(0, end - max_scan)
     for i in range(end, start - 1, -1):
         pred, conf, is_correct = get_prediction_for(valid, i)
         if is_correct is None: break
-        if current_type is None:
-            current_type = 'win' if is_correct else 'loss'
-        if current_type == 'win' and is_correct:
-            win_streak += 1
-        elif current_type == 'loss' and not is_correct:
-            loss_streak += 1
-        else:
-            break
-    return win_streak, loss_streak
+        if is_correct: break
+        streak += 1
+    return streak
 
 
 # =====================================================================
-# AUTO-RECOVERY (deterministic)
+# AUTO-RECOVERY
 # =====================================================================
 def apply_recovery(base_pred, conf, loss_streak):
     if loss_streak < 2:
@@ -826,17 +637,16 @@ def history():
         for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
-            return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0},
-                            'regime': '-', 'loss_streak': 0, 'win_streak': 0})
+            return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
-        win_streak, loss_streak = compute_streaks(valid)
+        loss_streak = compute_loss_streak(valid)
 
         out = []; correct_count = 0; total_past = 0
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
 
-        base_pred, base_conf, _, next_regime = full_bridge_predict_adaptive(history_for_next)
+        base_pred, base_conf, _ = full_bridge_predict_adaptive(history_for_next)
         next_pred, next_conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
 
         out.append({
@@ -847,7 +657,6 @@ def history():
             'recovery_flipped': flipped,
             'recovery_reason': reason,
             'loss_streak': loss_streak,
-            'win_streak': win_streak,
             'base_prediction': base_pred if flipped else None,
         })
 
@@ -866,9 +675,7 @@ def history():
         return jsonify({
             'rows': out,
             'stats': {'total': total_past, 'correct': correct_count},
-            'regime': next_regime['regime'],
             'loss_streak': loss_streak,
-            'win_streak': win_streak,
             'recovery_active': flipped,
             'recovery_reason': reason,
             'base_prediction': base_pred,
@@ -891,8 +698,8 @@ def predict():
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         results = [v['result'] for v in valid][::-1]
 
-        win_streak, loss_streak = compute_streaks(valid)
-        base_pred, base_conf, detail, regime_info = full_bridge_predict_adaptive(results)
+        loss_streak = compute_loss_streak(valid)
+        base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
 
         return jsonify({
@@ -901,15 +708,12 @@ def predict():
             'prediction': pred, 'confidence': conf,
             'base_prediction': base_pred, 'base_confidence': base_conf,
             'recovery_flipped': flipped, 'recovery_reason': reason,
-            'loss_streak': loss_streak, 'win_streak': win_streak,
+            'loss_streak': loss_streak,
             'total_sessions': len(valid),
             'signals': detail,
             'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
             'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
             'signal_count': len(detail),
-            'regime': regime_info['regime'],
-            'trans_rate': regime_info['trans_rate'],
-            'max_streak': regime_info['max_streak'],
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
@@ -930,8 +734,8 @@ def lc79():
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         results = [v['result'] for v in valid][::-1]
 
-        win_streak, loss_streak = compute_streaks(valid)
-        base_pred, base_conf, detail, regime_info = full_bridge_predict_adaptive(results)
+        loss_streak = compute_loss_streak(valid)
+        base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
 
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
@@ -950,14 +754,12 @@ def lc79():
         last = valid[-1]; next_phien = last['phien'] + 1
 
         return jsonify({
-            'Id': 'le minh v24', 'Phien': str(next_phien),
+            'Id': 'le minh v25', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
-            'Regime': regime_info['regime'],
             'Base_du_doan': base_pred if flipped else None,
             'Auto_flip': flipped,
             'Chuoi_thua': loss_streak,
-            'Chuoi_thang': win_streak,
         })
     except Exception as e:
         traceback.print_exc()
