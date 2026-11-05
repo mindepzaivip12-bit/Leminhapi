@@ -1,20 +1,16 @@
-# python · le_minh_v91_plus_v2.py · Python 3.10+ · Flask 2.x · requests 2.x
 import os
 import math
 import traceback
 import time
 import itertools
 from datetime import datetime
-from collections import defaultdict, deque, Counter
+from collections import defaultdict
 import requests
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify
+from flask_cors import CORS
 
 app = Flask(__name__)
-try:
-    from flask_cors import CORS
-    CORS(app)
-except ImportError:
-    pass
+CORS(app)
 
 API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 
@@ -25,14 +21,14 @@ MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 
 # =====================================================================
-# HTML TEMPLATE (v91 — unchanged)
+# HTML TEMPLATE (unchanged shell)
 # =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 </title>
+<title>LE MINH MD5 V2</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -75,7 +71,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span> v2</span></div>
+    <div class="header-title">LE MINH <span>V2</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -96,7 +92,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 let isResetting=false;
 function animateNumber(el,target,suffix=''){const s=parseInt(el.innerText.replace(/[^0-9]/g,''))||0;if(s===target){el.innerText=target+suffix;return}const d=500,st=performance.now();function u(t){const p=Math.min((t-st)/d,1),e=1-Math.pow(1-p,3);el.innerText=Math.floor(s+(target-s)*e)+suffix;if(p<1)requestAnimationFrame(u)}requestAnimationFrame(u)}
 async function fetchData(){if(isResetting)return;try{const r=await fetch('/api/history',{cache:'no-store'});const data=await r.json();document.getElementById('time-update').innerText=new Date().toLocaleTimeString('vi-VN');renderTable(data.rows||[],data.stats||{})}catch(e){console.error(e)}}
-function renderTable(rows,stats){const tb=document.getElementById('table-body');const total=stats.total||0,correct=stats.correct||0,wrong=total-correct;animateNumber(document.getElementById('stat-total'),total);animateNumber(document.getElementById('stat-win'),correct);animateNumber(document.getElementById('stat-lose'),wrong);animateNumber(document.getElementById('stat-rate'),Math.round(total>0?(correct/total)*100:0),'%');if(!rows.length){tb.innerHTML='<tr><td colspan="4" class="loading">Chưa có dữ liệu.</td></tr>';return}let html='';rows.forEach(row=>{const trCls=row.is_next?'class="row-next"':'';let ph=`<span class="badge badge-empty">-</span>`;if(row.prediction==="Tài")ph=`<span class="badge badge-tai">TÀI</span>`;if(row.prediction==="Xỉu")ph=`<span class="badge badge-xiu">XỈU</span>`;let ch='';if(row.conf&&row.prediction!=="-"){const c=row.conf>=70?'conf-badge high':'conf-badge';ch=`<div class="${c}">${row.conf}%</div>`}let fh='';if(row.recovery_flipped&&row.prediction!=="-"){fh=`<span class="flip-tag">🔄 FLIP</span>`}let rh2='';if(row.regime){rh2=`<span class="regime-tag">${row.regime}</span>`}const pf=`<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${ph}${ch}${fh}${rh2}</div>`;let rh=`<span class="badge badge-empty">-</span>`;if(row.result==="Tài")rh=`<span class="badge badge-tai">TÀI</span>`;if(row.result==="Xỉu")rh=`<span class="badge badge-xiu">XỈU</span>`;let dd='';if(row.dice!=="? + ? + ?"){const p=row.dice.split(" + ");const s=parseInt(p[0])+parseInt(p[1])+parseInt(p[2]);dd=`<span class="dice-text">${row.dice} (${s})</span>`}const rf=`<div style="display:flex;flex-direction:column;align-items:center;">${rh}${dd}</div>`;let sh='';if(row.is_next)sh=`<span class="status st-wait">Chờ</span>`;else if(row.is_correct===true)sh=`<span class="status st-win">✔ THẮNG</span>`;else if(row.is_correct===false)sh=`<span class="status st-lose">✖ THUA</span>`;else sh=`<span class="status">-</span>`;html+=`<tr ${trCls}><td>#${row.phien}</td><td>${pf}</td><td>${rf}</td><td>${sh}</td></tr>`});tb.innerHTML=html}
+function renderTable(rows,stats){const tb=document.getElementById('table-body');const total=stats.total||0,correct=stats.correct||0,wrong=total-correct;animateNumber(document.getElementById('stat-total'),total);animateNumber(document.getElementById('stat-win'),correct);animateNumber(document.getElementById('stat-lose'),wrong);animateNumber(document.getElementById('stat-rate'),Math.round(total>0?(correct/total)*100:0),'%');if(!rows.length){tb.innerHTML='<tr><td colspan="4" class="loading">Chưa có dữ liệu.</td></tr>';return}let html='';rows.forEach(row=>{const trCls=row.is_next?'class="row-next"':'';let ph=`<span class="badge badge-empty">-</span>`;if(row.prediction==="Tài")ph=`<span class="badge badge-tai">TÀI</span>`;if(row.prediction==="Xỉu")ph=`<span class="badge badge-xiu">XỈU</span>`;let ch='';if(row.conf&&row.prediction!=="-"){const c=row.conf>=70?'conf-badge high':'conf-badge';ch=`<div class="${c}">${row.conf}%</div>`}let fh='';if(row.recovery_flipped&&row.prediction!=="-"){fh=`<span class="flip-tag">🔄 FLIP</span>`}let rh2='';if(row.regime && row.regime !== "unknown"){rh2=`<span class="regime-tag">${row.regime}</span>`}const pf=`<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${ph}${ch}${fh}${rh2}</div>`;let rh=`<span class="badge badge-empty">-</span>`;if(row.result==="Tài")rh=`<span class="badge badge-tai">TÀI</span>`;if(row.result==="Xỉu")rh=`<span class="badge badge-xiu">XỈU</span>`;let dd='';if(row.dice!=="? + ? + ?"){const p=row.dice.split(" + ");const s=parseInt(p[0])+parseInt(p[1])+parseInt(p[2]);dd=`<span class="dice-text">${row.dice} (${s})</span>`}const rf=`<div style="display:flex;flex-direction:column;align-items:center;">${rh}${dd}</div>`;let sh='';if(row.is_next)sh=`<span class="status st-wait">Chờ</span>`;else if(row.is_correct===true)sh=`<span class="status st-win">✔ THẮNG</span>`;else if(row.is_correct===false)sh=`<span class="status st-lose">✖ THUA</span>`;else sh=`<span class="status">-</span>`;html+=`<tr ${trCls}><td>#${row.phien}</td><td>${pf}</td><td>${rf}</td><td>${sh}</td></tr>`});tb.innerHTML=html}
 async function confirmReset(){Swal.fire({title:'Reset?',text:'Xoá toàn bộ lịch sử?',icon:'warning',background:'#1e293b',color:'#f8fafc',showCancelButton:true,confirmButtonColor:'#0ea5e9',cancelButtonColor:'#64748b',confirmButtonText:'Đồng ý',cancelButtonText:'Hủy'}).then(async r=>{if(r.isConfirmed){isResetting=true;Swal.fire({title:'Đang Reset...',allowOutsideClick:false,background:'#1e293b',color:'#f8fafc',didOpen:()=>{Swal.showLoading()}});try{const res=await fetch('/api/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const d=await res.json();if(d.status==='success'){Swal.fire({title:'OK!',text:'Đã reset.',icon:'success',background:'#1e293b',color:'#f8fafc',confirmButtonColor:'#0ea5e9'});isResetting=false;fetchData()}else throw new Error(d.message)}catch(e){Swal.fire({title:'Lỗi!',text:e.message,icon:'error',background:'#1e293b',color:'#f8fafc'});isResetting=false}}})}
 fetchData();setInterval(fetchData,3000);
 </script>
@@ -162,7 +158,7 @@ def _dice_sum_from_str(dice_str):
 
 
 # =====================================================================
-# CORE ALGORITHMS (v91)
+# CORE ALGORITHMS (unchanged)
 # =====================================================================
 def algo_bet_break(results, groups):
     if not groups or len(results) < 3: return []
@@ -401,7 +397,7 @@ def algo_dice_sum_trend(dice_sums):
 
 
 # =====================================================================
-# 64-PATTERN SYSTEM (v91 — unchanged)
+# 64-PATTERN SYSTEM (unchanged)
 # =====================================================================
 def _all_groups(results):
     if not results: return []
@@ -586,7 +582,7 @@ def algo_patterns_64_aggregate(results, dice_sums=None):
 
 
 # =====================================================================
-# BRIDGE
+# BRIDGE (signal collector)
 # =====================================================================
 def analyze_full_bridge(results, dice_sums=None, include_patterns64=True):
     if len(results) < 3: return []
@@ -619,6 +615,7 @@ def analyze_full_bridge(results, dice_sums=None, include_patterns64=True):
 
 
 def full_bridge_predict(results, dice_sums=None):
+    """Lightweight non-adaptive — used by historical replay."""
     if dice_sums is not None and len(dice_sums) != len(results): dice_sums = None
     if not results: return "Tài", 50
     if len(results) == 1: return _opp(results[0]), 52
@@ -642,9 +639,18 @@ def full_bridge_predict(results, dice_sums=None):
 
 
 # =====================================================================
-# REGIME DETECTOR
+# 🆕 REGIME DETECTOR
 # =====================================================================
 def detect_regime(results):
+    """
+    Phân loại thị trường hiện tại:
+      - 'bet_strong'   : bệt >= 4 tay
+      - 'alt_strong'   : đảo >= 65%
+      - 'alternating'  : đảo vừa (45–65%)
+      - 'bet_friendly' : group trung bình >= 3
+      - 'normal'       : cân bằng
+      - 'unknown'      : < 8 phiên
+    """
     if len(results) < 8:
         return 'unknown', {'cur_streak': 0, 'avg_group_len': 0, 'alt_rate': 0, 'groups_count': 0}
     groups = _all_groups(results)
@@ -668,7 +674,7 @@ def detect_regime(results):
 
 
 # =====================================================================
-# FULL BRIDGE ADAPTIVE v2
+# 🆕 FULL BRIDGE ADAPTIVE v2 (regime-aware calibration)
 # =====================================================================
 def _predict_result(pred, conf, detail, regime, regime_info, tai_score, xiu_score, edge=0.0):
     return {
@@ -680,6 +686,11 @@ def _predict_result(pred, conf, detail, regime, regime_info, tai_score, xiu_scor
 
 
 def full_bridge_predict_adaptive_v2(results, replay_n=80, dice_sums=None):
+    """
+    Dự đoán có hiệu chuẩn theo regime.
+    - Replay N phiên gần nhất để đo accuracy từng signal trong từng regime.
+    - Dùng Laplace smoothing + regime fallback (regime → normal → global).
+    """
     if dice_sums is not None and len(dice_sums) != len(results):
         dice_sums = None
     n = len(results)
@@ -693,6 +704,7 @@ def full_bridge_predict_adaptive_v2(results, replay_n=80, dice_sums=None):
         p, c = (_opp(results[0]), 55) if results[0] == results[1] else (results[1], 52)
         return _predict_result(p, c, [], cur_regime, cur_regime_info, 0, 0)
 
+    # signal_stats[regime][name] = {'wins', 'total'}
     signal_stats = defaultdict(lambda: defaultdict(lambda: {'wins': 0.0, 'total': 0.0}))
     replay_count = min(replay_n, n - 3)
 
@@ -780,7 +792,7 @@ def full_bridge_predict_adaptive_v2(results, replay_n=80, dice_sums=None):
 
 
 # =====================================================================
-# CACHE + PERFORMANCE
+# PREDICTION CACHE + PERFORMANCE
 # =====================================================================
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
@@ -822,13 +834,14 @@ def compute_performance(valid, window=30):
 
 
 # =====================================================================
-# SMART FLIP v2
+# 🆕 SMART FLIP v2 (score-based, multi-factor)
 # =====================================================================
 def _classify_last_bet(valid):
     if len(valid) < 2: return None
     try:
         last_idx = len(valid) - 1
         prev_phien = valid[last_idx]['phien']
+
         pred = None
         if prev_phien in LAST_PREDICTIONS:
             pred, _ = LAST_PREDICTIONS[prev_phien]
@@ -839,6 +852,7 @@ def _classify_last_bet(valid):
                 hist = [v['result'] for v in valid[:last_idx]][::-1]
                 hist_dice = [_dice_sum_from_str(v['dice']) for v in valid[:last_idx]][::-1]
                 pred, _ = full_bridge_predict(hist, hist_dice)
+
         if pred is None or pred == '-': return None
         prev_result = valid[last_idx - 1]['result']
         if pred == prev_result: return 'continue'
@@ -849,6 +863,24 @@ def _classify_last_bet(valid):
 
 
 def apply_auto_adjust_v2(base_pred, base_conf, valid, regime='normal', signal_detail=None):
+    """
+    Pipeline điều chỉnh v2 — score-based.
+    Thua 2-3 tay → tự đụng dự đoán nếu đủ điểm.
+
+    Score factors:
+      loss_streak      : +0.5 / +2.0 / +3.0 / +4.0 / +5.0
+      bet context fail : +1.5 (continue) / +1.0 (break)
+      accuracy window  : +2.5 / +1.8 / +0.9 (bad) | -0.8 (good)
+      regime tension   : +1.8 / +1.5 / +0.8
+      signal disagree  : +1.2
+      dice tension     : +0.8
+
+    Decision:
+      score >= 4.0 → HARD flip
+      score >= 2.5 → SOFT flip
+      score >= 1.5 → PENALTY (giảm conf)
+      else          → giữ nguyên
+    """
     if len(valid) < 3:
         return {'pred': base_pred, 'conf': base_conf, 'flipped': False,
                 'reason': None, 'loss_streak': 0, 'recent_acc': 0.5,
@@ -856,24 +888,29 @@ def apply_auto_adjust_v2(base_pred, base_conf, valid, regime='normal', signal_de
 
     loss_streak, recent_acc, recent_total = compute_performance(valid, window=25)
     bet_ctx = _classify_last_bet(valid)
+
     score = 0.0
     reasons = []
 
+    # 1. Loss streak
     if loss_streak >= 5: score += 5.0; reasons.append(f's{loss_streak}')
     elif loss_streak == 4: score += 4.0; reasons.append('s4')
     elif loss_streak == 3: score += 3.0; reasons.append('s3')
     elif loss_streak == 2: score += 2.0; reasons.append('s2')
     elif loss_streak == 1: score += 0.5; reasons.append('s1')
 
+    # 2. Bet context (thua trên bệt/bẻ)
     if bet_ctx == 'continue': score += 1.5; reasons.append('bet_fail')
     elif bet_ctx == 'break': score += 1.0; reasons.append('break_fail')
 
+    # 3. Accuracy window
     if recent_total >= 15:
         if recent_acc < 0.38: score += 2.5; reasons.append('acc_crit')
         elif recent_acc < 0.43: score += 1.8; reasons.append('acc_low')
         elif recent_acc < 0.48: score += 0.9; reasons.append('acc_soft')
         elif recent_acc > 0.62: score -= 0.8; reasons.append('acc_good')
 
+    # 4. Regime tension
     if regime == 'bet_strong' and bet_ctx == 'continue':
         score += 1.8; reasons.append('regime_bet_break')
     elif regime == 'alt_strong' and bet_ctx == 'break':
@@ -881,6 +918,7 @@ def apply_auto_adjust_v2(base_pred, base_conf, valid, regime='normal', signal_de
     elif regime == 'bet_friendly' and bet_ctx == 'continue':
         score += 0.8; reasons.append('regime_bet_ready')
 
+    # 5. Signal disagreement
     if signal_detail:
         tw = sum(s['adjusted_weight'] for s in signal_detail if s['pred'] == 'Tài')
         xw = sum(s['adjusted_weight'] for s in signal_detail if s['pred'] == 'Xỉu')
@@ -891,6 +929,7 @@ def apply_auto_adjust_v2(base_pred, base_conf, valid, regime='normal', signal_de
             if maj_pred != base_pred and maj_ratio > 0.68:
                 score += 1.2; reasons.append('sig_disagree')
 
+    # 6. Dice-sum tension (orthogonal)
     if len(valid) >= 5:
         dice_sums = [_dice_sum_from_str(v['dice']) for v in valid[-5:]][::-1]
         valid_dice = [s for s in dice_sums if s is not None]
@@ -904,6 +943,7 @@ def apply_auto_adjust_v2(base_pred, base_conf, valid, regime='normal', signal_de
     base = {'loss_streak': loss_streak, 'recent_acc': recent_acc,
             'score': round(score, 2), 'score_reasons': reasons}
 
+    # Decision
     if score >= 4.0:
         return {**base, 'pred': _opp(base_pred),
                 'conf': min(96, base_conf + 12 + loss_streak * 2),
@@ -930,7 +970,6 @@ def _store_last_prediction(phien, pred, conf):
         for k in sorted(LAST_PREDICTIONS.keys())[:len(LAST_PREDICTIONS) - MAX_PREDICTION_CACHE]:
             del LAST_PREDICTIONS[k]
 
-
 def _sync_history():
     raw_rows, success = fetch_sessions()
     if not success and not HISTORY_CACHE: return [], False
@@ -940,424 +979,120 @@ def _sync_history():
     valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
     return valid, True
 
-
 def _extract_dice_sums(valid_slice):
     return [_dice_sum_from_str(v['dice']) for v in valid_slice]
 
 
 # =====================================================================
+# SEQUENCE ANALYTICS - THỐNG KÊ LỊCH SỬ (KHÔNG DỰ ĐOÁN)
+# Bổ sung độc lập, không thay đổi HTML/CSS hoặc các endpoint cũ.
 # =====================================================================
-# V2 MODULE — 12-BO Ensemble + Adaptive Filter (ADDITIVE, isolated)
-# =====================================================================
-# =====================================================================
+def sequence_analytics(results):
+    """Thống kê chuỗi kết quả đã xảy ra; không dự đoán phiên kế tiếp."""
+    seq = []
+    for value in results:
+        text = str(value or '').strip().casefold()
+        if text in ('tài', 'tai'):
+            seq.append('TAI')
+        elif text in ('xỉu', 'xiu'):
+            seq.append('XIU')
 
-DEFAULT_CONFIG = {
-    "GID": "vgmn_100", "POLL_SEC": 3.0, "HIST_KEEP": 600, "PERSIST_KEEP": 300,
-    "TIE_LOGIC": "PPM6", "CONSEC_CHECK": True,
-    "WR_WINDOW": 13, "WR_DECAY": 0.95, "WR_FLOOR": 1.0, "WR_WEIGHT_NEWEST": 1.0,
-    "WR_FLIP_WEIGHT": False, "WR_MIN_GAMES": 1, "FLIP_FINAL": False,
-    "AF_ENABLED": True, "AF_FLIP_LOW": 37.0, "AF_FLIP_HIGH": 63.0, "AF_FLIP_BAND": True,
-    "AF_FLIP_LOW_MIN": 30.0, "AF_FLIP_LOW_MAX": 45.0,
-    "AF_FLIP_HIGH_MIN": 53.0, "AF_FLIP_HIGH_MAX": 68.0, "AF_MIN_GAMES": 7,
-    "AF_GROUP_FLIPPED_ONLY": True, "AF_GROUP_NEED_MAJORITY": True,
-    "AF_SWITCH": True, "AF_SWITCH_NEED": 6, "AF_SWITCH_LEAD": False, "AF_SWITCH_PRIO": True,
-    "AF_MODE_FLIP": False, "AF_MODE_WINDOW": 13, "AF_MODE_MIN": 7, "AF_MODE_BELOW": 45.0,
-    "AF_FLIP_FINAL": False, "AF_FLIP_FINAL_CT": False,
-    "AF_FLIP_FINAL_CAO": True, "AF_FLIP_FINAL_THAP": False, "AF_FLIP_FINAL_ALL": True,
-    "EVAL_WINDOW": 300,
-}
-
-
-def _norm(x):
-    if not x: return "HOA"
-    u = str(x).strip().upper()
-    if u.startswith("T"): return "TAI"
-    if u.startswith("X"): return "XIU"
-    return "HOA"
-
-
-def _label(x):
-    return "Tài" if x == "TAI" else ("Xỉu" if x == "XIU" else "Hòa")
-
-
-def _binomial_smooth(k, n, alpha=1.0):
-    return (k + alpha) / (n + 2 * alpha)
-
-
-class HistoryStore:
-    def __init__(self, keep=600, persist_keep=300):
-        self.keep = keep
-        self.persist_keep = persist_keep
-        self.data = deque(maxlen=keep)
-        self.predictions = deque(maxlen=keep)
-
-    def append(self, phien, ket_qua, tong=0, sid=None):
-        self.data.append({"phien": phien, "ket_qua": ket_qua, "tong": tong, "sid": sid})
-
-    def append_prediction(self, phien, du_doan):
-        self.predictions.append({"phien": phien, "du_doan": du_doan})
-
-    def last_results(self, n):
-        return [x["ket_qua"] for x in list(self.data)[-n:]]
-
-    def last_phien(self):
-        return self.data[-1]["phien"] if self.data else None
-
-    def next_phien(self):
-        p = self.last_phien()
-        return (p + 1) if p is not None else None
-
-    def update_ket_qua(self, phien, ket_qua):
-        for item in reversed(self.data):
-            if item["phien"] == phien:
-                item["ket_qua"] = ket_qua
-                return True
-        return False
-
-
-def ppm6_predict(seq, order=6):
-    if not seq: return "TAI", 0.5
-    if len(seq) < order + 1:
-        tai = seq.count("TAI"); xiu = seq.count("XIU"); total = tai + xiu
-        if total == 0: return "TAI", 0.5
-        p = _binomial_smooth(tai, total)
-        return ("TAI" if p >= 0.5 else "XIU"), max(p, 1 - p)
-    ctx = tuple(seq[-order:]); counts = Counter()
-    tail = list(seq)
-    for i in range(len(tail) - order):
-        if tuple(tail[i:i + order]) == ctx:
-            nxt = tail[i + order]
-            if nxt in ("TAI", "XIU"): counts[nxt] += 1
-    if not counts: return ppm6_predict(seq, order - 1)
-    total = sum(counts.values())
-    p_tai = _binomial_smooth(counts["TAI"], total)
-    p_xiu = 1 - p_tai
-    return ("TAI", p_tai) if p_tai >= p_xiu else ("XIU", p_xiu)
-
-
-def regime_predict(seq, window=20):
-    if len(seq) < 5: return "TAI", 0.5
-    seg = seq[-window:]; tai = seg.count("TAI"); xiu = seg.count("XIU")
-    total = tai + xiu
-    p = _binomial_smooth(tai, total)
-    return ("TAI" if p >= 0.5 else "XIU"), max(p, 1 - p)
-
-
-def knnh_predict(seq, window=10, k=5):
-    if len(seq) < window + 1: return "TAI", 0.5
-    q = seq[-window:]; candidates = []
-    for i in range(len(seq) - window):
-        seg = seq[i:i + window]
-        dist = sum(1 for a, b in zip(seg, q) if a != b)
-        candidates.append((dist, seq[i + window]))
-    candidates.sort(key=lambda x: x[0])
-    top = candidates[:k]
-    if not top: return "TAI", 0.5
-    weight = Counter()
-    for dist, nxt in top:
-        weight[nxt] += 1.0 / (1.0 + dist)
-    total = sum(weight.values())
-    p_tai = weight["TAI"] / total if total else 0.5
-    return ("TAI", p_tai) if p_tai >= 0.5 else ("XIU", 1 - p_tai)
-
-
-def runctk_predict(seq, max_run=10):
-    if not seq: return "TAI", 0.5
-    last = seq[-1]; run = 1
-    for x in reversed(seq[:-1]):
-        if x == last: run += 1
-        else: break
-    if run >= max_run:
-        return ("XIU" if last == "TAI" else "TAI"), 0.6
-    return last, 0.55
-
-
-def totk_predict(seq):
-    if not seq: return "TAI", 0.5
-    return seq[-1], 0.52
-
-
-def sparse_predict(seq, window=30, min_hits=2):
-    if len(seq) < window: return "TAI", 0.5
-    ctx_len = 4
-    if len(seq) < ctx_len + 1: return "TAI", 0.5
-    ctx = tuple(seq[-ctx_len:]); counts = Counter()
-    tail = list(seq)
-    for i in range(len(tail) - ctx_len):
-        if tuple(tail[i:i + ctx_len]) == ctx:
-            nxt = tail[i + ctx_len]
-            if nxt in ("TAI", "XIU"): counts[nxt] += 1
-    if sum(counts.values()) < min_hits: return "TAI", 0.5
-    total = sum(counts.values())
-    p_tai = counts["TAI"] / total
-    return ("TAI", p_tai) if p_tai >= 0.5 else ("XIU", 1 - p_tai)
-
-
-def cautpl_predict(seq, window=15):
-    if len(seq) < window: return "TAI", 0.5
-    seg = seq[-window:]
-    has_tai = "TAI" in seg; has_xiu = "XIU" in seg
-    if has_tai and not has_xiu: return "XIU", 0.6
-    if has_xiu and not has_tai: return "TAI", 0.6
-    return regime_predict(seq, window)
-
-
-def fshare_predict(seq, window=20):
-    if not seq: return "TAI", 0.5
-    seg = seq[-window:] if len(seq) >= window else seq
-    tai = seg.count("TAI"); xiu = seg.count("XIU"); total = tai + xiu
-    if total == 0: return "TAI", 0.5
-    p = tai / total
-    if p > 0.55: return "XIU", p
-    if p < 0.45: return "TAI", 1 - p
-    return ("TAI" if p >= 0.5 else "XIU"), max(p, 1 - p)
-
-
-def blkhaz_predict(seq):
-    if not seq: return "TAI", 0.5
-    tai = seq.count("TAI"); xiu = seq.count("XIU"); total = tai + xiu
-    if total == 0: return "TAI", 0.5
-    p = _binomial_smooth(tai, total)
-    return ("TAI" if p >= 0.5 else "XIU"), max(p, 1 - p)
-
-
-def bocpd_predict(seq, threshold=0.6):
-    if len(seq) < 10: return "TAI", 0.5
-    n = len(seq); seg = seq[-10:]
-    p1 = seg.count("TAI") / len(seg)
-    prior = seq[:n - 10].count("TAI") / max(1, n - 10)
-    if abs(p1 - prior) > threshold:
-        if p1 > prior: return "XIU", 0.6
-        return "TAI", 0.6
-    return ("TAI" if prior >= 0.5 else "XIU"), max(prior, 1 - prior)
-
-
-def gbs_predict(seq, window=12):
-    if len(seq) < window: return "TAI", 0.5
-    seg = seq[-window:]; score = 0
-    for i in range(1, len(seg)):
-        if seg[i] != seg[i - 1]: score += 1
-        else: score -= 1
-    if score > 0: return seg[-1], 0.58
-    return ("XIU" if seg[-1] == "TAI" else "TAI"), 0.58
-
-
-def afm_predict(seq):
-    if not seq: return "TAI", 0.5
-    return seq[-1], 0.51
-
-
-BO_FUNCS = {
-    "PPM6": ppm6_predict, "REGIME": regime_predict, "KNNH": knnh_predict,
-    "RUNCTX": runctk_predict, "TOTK": totk_predict, "SPARSE": sparse_predict,
-    "CAUTPL": cautpl_predict, "FSHARE": fshare_predict, "BLKHAZ": blkhaz_predict,
-    "BOCPD": bocpd_predict, "GBS": gbs_predict, "AFM": afm_predict,
-}
-
-
-def weighted_vote(results, weights, decay=0.95, floor=1.0, newest_weight=1.0, flip_weight=False):
-    score_tai = 0.0; score_xiu = 0.0
-    n = len(results)
-    for i, (name, (pred, conf)) in enumerate(results.items()):
-        age = n - 1 - i
-        w_age = max(floor, decay ** age)
-        w_new = newest_weight if i == n - 1 else 1.0
-        base_w = weights.get(name, 1.0) * w_age * w_new
-        if flip_weight and i == n - 1: base_w *= -1
-        w = base_w * conf
-        if pred == "TAI": score_tai += w
-        elif pred == "XIU": score_xiu += w
-    if score_tai == score_xiu: return None, 0.5
-    total = score_tai + score_xiu
-    if score_tai > score_xiu:
-        return "TAI", (score_tai / total if total else 0.5)
-    return "XIU", (score_xiu / total if total else 0.5)
-
-
-def tie_break(seq, logic="PPM6"):
-    func = BO_FUNCS.get(logic, ppm6_predict)
-    return func(seq)
-
-
-def consec_check(seq):
-    if len(seq) < 3: return None
-    last = seq[-1]; run = 1
-    for x in reversed(seq[:-1]):
-        if x == last: run += 1
-        else: break
-    if run >= 6: return ("XIU" if last == "TAI" else "TAI")
-    return None
-
-
-def af_filter(seq, pred, conf, config):
-    if not config.get("AF_ENABLED", True): return pred, conf
-    if len(seq) < config.get("AF_MIN_GAMES", 7): return pred, conf
-    conf_pct = conf * 100.0
-    low_min = config.get("AF_FLIP_LOW_MIN", 30.0); low_max = config.get("AF_FLIP_LOW_MAX", 45.0)
-    high_min = config.get("AF_FLIP_HIGH_MIN", 53.0); high_max = config.get("AF_FLIP_HIGH_MAX", 68.0)
-    low_band = low_min <= conf_pct <= low_max
-    high_band = high_min <= conf_pct <= high_max
-    if not config.get("AF_FLIP_BAND", True):
-        low_band = conf_pct <= config.get("AF_FLIP_LOW", 37.0)
-        high_band = conf_pct >= config.get("AF_FLIP_HIGH", 63.0)
-    should_flip = False
-    if low_band and pred == "TAI": should_flip = True
-    if high_band and pred == "XIU": should_flip = True
-    if config.get("AF_MODE_FLIP", False):
-        window = config.get("AF_MODE_WINDOW", 13); min_g = config.get("AF_MODE_MIN", 7)
-        below = config.get("AF_MODE_BELOW", 45.0); seg = seq[-window:]
-        if len(seg) >= min_g:
-            ratio = seg.count("TAI") / len(seg) * 100.0
-            if ratio < below and pred == "XIU": should_flip = True
-    if should_flip:
-        pred = "XIU" if pred == "TAI" else "TAI"
-        conf = 1.0 - conf
-    return pred, conf
-
-
-def af_switch(seq, pred, conf, config):
-    if not config.get("AF_SWITCH", True): return pred, conf
-    need = config.get("AF_SWITCH_NEED", 6)
-    if len(seq) < need: return pred, conf
-    seg = seq[-need:]; tai = seg.count("TAI"); xiu = seg.count("XIU")
-    if tai == xiu: return pred, conf
-    lead = "TAI" if tai > xiu else "XIU"
-    lead_conf = tai / need if lead == "TAI" else xiu / need
-    if config.get("AF_SWITCH_PRIO", True):
-        if lead != pred: pred, conf = lead, max(conf, lead_conf)
-    else:
-        if lead == pred: conf = max(conf, lead_conf)
-    return pred, conf
-
-
-def af_final(pred, conf, config):
-    if not config.get("AF_FLIP_FINAL_ALL", False) and not config.get("AF_FLIP_FINAL", False):
-        return pred, conf
-    conf_pct = conf * 100.0
-    if config.get("AF_FLIP_FINAL_ALL", False):
-        if pred == "XIU" and config.get("AF_FLIP_FINAL_CAO", True) and conf_pct >= config.get("AF_FLIP_HIGH", 63.0):
-            pred, conf = "TAI", 1.0 - conf
-        elif pred == "TAI" and config.get("AF_FLIP_FINAL_THAP", False) and conf_pct <= config.get("AF_FLIP_LOW", 37.0):
-            pred, conf = "XIU", 1.0 - conf
-    return pred, conf
-
-
-class Predictor:
-    def __init__(self, config=None):
-        self.config = dict(DEFAULT_CONFIG)
-        if config:
-            self.config.update(config)
-        self.history = HistoryStore(
-            keep=self.config.get("HIST_KEEP", 600),
-            persist_keep=self.config.get("PERSIST_KEEP", 300),
-        )
-        self.bo_logic = ["PPM6", "REGIME", "KNNH", "RUNCTX", "TOTK", "SPARSE",
-                         "CAUTPL", "FSHARE", "BLKHAZ", "BOCPD", "GBS", "AFM"]
-        self.wr_weights = {name: 1.0 for name in self.bo_logic}
-        self.stats = {name: {"hit": 0, "total": 0} for name in self.bo_logic}
-        self._last_bo_predictions = {}
-
-    def update_result(self, phien, ket_qua, tong=0, sid=None):
-        kq = _norm(ket_qua)
-        self.history.append(phien, kq, tong, sid)
-        for name, (pred, conf) in self._last_bo_predictions.items():
-            if pred == kq:
-                self.stats[name]["hit"] += 1
-            self.stats[name]["total"] += 1
-            total = self.stats[name]["total"]
-            hit = self.stats[name]["hit"]
-            if total >= self.config.get("WR_MIN_GAMES", 1):
-                self.wr_weights[name] = _binomial_smooth(hit, total)
-        self._last_bo_predictions = {}
-
-    def predict_next(self):
-        seq = self.history.last_results(self.config.get("HIST_KEEP", 600))
-        if not seq:
-            return {"phien": None, "du_doan": "Tài", "do_tin_cay": 0.5, "chi_tiet": {}}
-        results = {}
-        for name in self.bo_logic:
-            func = BO_FUNCS[name]
-            pred, conf = func(seq)
-            results[name] = (pred, conf)
-        self._last_bo_predictions = dict(results)
-        pred, conf = weighted_vote(
-            results, self.wr_weights,
-            decay=self.config.get("WR_DECAY", 0.95),
-            floor=self.config.get("WR_FLOOR", 1.0),
-            newest_weight=self.config.get("WR_WEIGHT_NEWEST", 1.0),
-            flip_weight=self.config.get("WR_FLIP_WEIGHT", False),
-        )
-        if pred is None:
-            pred, conf = tie_break(seq, self.config.get("TIE_LOGIC", "PPM6"))
-        if self.config.get("CONSEC_CHECK", True):
-            forced = consec_check(seq)
-            if forced is not None:
-                pred = forced
-                conf = max(conf, 0.6)
-        if self.config.get("AF_ENABLED", True):
-            pred, conf = af_filter(seq, pred, conf, self.config)
-            pred, conf = af_switch(seq, pred, conf, self.config)
-            pred, conf = af_final(pred, conf, self.config)
-        if self.config.get("FLIP_FINAL", False):
-            pred = "XIU" if pred == "TAI" else "TAI"
-            conf = 1.0 - conf
-        phien = self.history.next_phien()
-        if phien is not None:
-            self.history.append_prediction(phien, _label(pred))
+    total = len(seq)
+    if total == 0:
         return {
-            "phien": phien,
-            "du_doan": _label(pred),
-            "do_tin_cay": round(conf, 4),
-            "chi_tiet": {k: {"du_doan": _label(v[0]), "tin_cay": round(v[1], 4)} for k, v in results.items()},
+            'total': 0, 'tai_count': 0, 'xiu_count': 0,
+            'tai_rate': 0.0, 'xiu_rate': 0.0,
+            'longest_run': 0, 'current_run': 0,
+            'current_run_result': None,
+            'transitions': {'TAI_TAI': 0, 'TAI_XIU': 0,
+                            'XIU_TAI': 0, 'XIU_XIU': 0},
+            'entropy': 0.0, 'windows': {}
         }
 
-    def get_wr_weights(self):
-        return {k: round(v, 4) for k, v in self.wr_weights.items()}
+    tai = seq.count('TAI')
+    xiu = total - tai
 
-    def get_stats(self):
-        out = {}
-        for name, s in self.stats.items():
-            total = s["total"]; hit = s["hit"]
-            out[name] = {
-                "hit": hit, "total": total,
-                "ty_le": round(_binomial_smooth(hit, total), 4) if total else None,
-            }
-        return out
+    # Các đoạn kết quả liên tiếp
+    runs = []
+    current_value = seq[0]
+    current_length = 1
+    for value in seq[1:]:
+        if value == current_value:
+            current_length += 1
+        else:
+            runs.append({'result': current_value, 'length': current_length})
+            current_value = value
+            current_length = 1
+    runs.append({'result': current_value, 'length': current_length})
+
+    transitions = {
+        'TAI_TAI': 0, 'TAI_XIU': 0,
+        'XIU_TAI': 0, 'XIU_XIU': 0
+    }
+    for previous, current in zip(seq, seq[1:]):
+        transitions[f'{previous}_{current}'] += 1
+
+    # Tỷ lệ mô tả theo các cửa sổ lịch sử
+    windows = {}
+    for size in (10, 20, 50, 100):
+        part = seq[-size:]
+        count = len(part)
+        part_tai = part.count('TAI')
+        part_xiu = count - part_tai
+        windows[str(size)] = {
+            'samples': count,
+            'tai': part_tai,
+            'xiu': part_xiu,
+            'tai_rate': round(part_tai / count * 100, 2) if count else 0.0,
+            'xiu_rate': round(part_xiu / count * 100, 2) if count else 0.0
+        }
+
+    # Entropy Shannon mô tả mức phân bố của dữ liệu
+    entropy = 0.0
+    for count in (tai, xiu):
+        probability = count / total
+        if probability > 0:
+            entropy -= probability * math.log2(probability)
+
+    return {
+        'total': total,
+        'tai_count': tai,
+        'xiu_count': xiu,
+        'tai_rate': round(tai / total * 100, 2),
+        'xiu_rate': round(xiu / total * 100, 2),
+        'longest_run': max(run['length'] for run in runs),
+        'current_run': runs[-1]['length'],
+        'current_run_result': runs[-1]['result'],
+        'transitions': transitions,
+        'entropy': round(entropy, 4),
+        'windows': windows,
+        'updated_at': datetime.now().isoformat()
+    }
+
+
+@app.route('/api/sequence-stats')
+def sequence_stats():
+    """Endpoint thống kê lịch sử, không tạo dự đoán hay khuyến nghị cược."""
+    try:
+        valid, success = _sync_history()
+        if not success:
+            return jsonify({
+                'success': False,
+                'error': 'Không thể kết nối API dữ liệu'
+            }), 500
+
+        results = [row.get('result') for row in valid]
+        return jsonify({
+            'success': True,
+            'analysis': sequence_analytics(results)
+        })
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(exc)}), 500
 
 
 # =====================================================================
-# V2 SINGLETON + SYNC
-# =====================================================================
-V2_PREDICTOR = Predictor()
-V2_LAST_PHIEN = None
-
-
-def _reset_v2():
-    global V2_PREDICTOR, V2_LAST_PHIEN
-    V2_PREDICTOR = Predictor()
-    V2_LAST_PHIEN = None
-
-
-def _sync_v2(valid_sessions):
-    """Feed only new sessions into V2 predictor. Auto-reset on phien backwards."""
-    global V2_LAST_PHIEN
-    if not valid_sessions:
-        return V2_PREDICTOR
-    # Detect reset triggered from v91 side
-    if V2_LAST_PHIEN is not None and valid_sessions[-1]['phien'] < V2_LAST_PHIEN:
-        _reset_v2()
-    for v in valid_sessions:
-        if V2_LAST_PHIEN is not None and v['phien'] <= V2_LAST_PHIEN:
-            continue
-        if V2_LAST_PHIEN is not None:
-            V2_PREDICTOR.predict_next()
-        V2_PREDICTOR.update_result(v['phien'], v['result'], v.get('total', 0))
-        V2_LAST_PHIEN = v['phien']
-    return V2_PREDICTOR
-
-
-# =====================================================================
-# ROUTES — v91 (unchanged)
+# ROUTES
 # =====================================================================
 @app.route('/')
 def index(): return render_template_string(HTML_TEMPLATE)
@@ -1377,13 +1112,16 @@ def history():
                 'conf': adj['conf'], 'recovery_flipped': adj['flipped'],
                 'regime': base['regime'],
             }], 'stats': {'total': 0, 'correct': 0}})
+
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
         dice_for_next = _extract_dice_sums(valid)[::-1]
+
         base = full_bridge_predict_adaptive_v2(history_for_next, dice_sums=dice_for_next)
         adj = apply_auto_adjust_v2(base['pred'], base['conf'], valid, base['regime'], base['detail'])
         _store_last_prediction(next_phien, adj['pred'], adj['conf'])
+
         out = [{
             'phien': next_phien, 'is_next': True,
             'prediction': adj['pred'], 'result': 'Chờ...', 'dice': "? + ? + ?",
@@ -1391,6 +1129,7 @@ def history():
             'recovery_flipped': adj['flipped'], 'flip_reason': adj['reason'],
             'regime': base['regime'],
         }]
+
         correct_count = 0; total_past = 0
         scan_limit = min(len(valid), 200)
         for i in range(len(valid) - 1, len(valid) - scan_limit - 1, -1):
@@ -1417,28 +1156,35 @@ def predict():
     try:
         valid, success = _sync_history()
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
+
         results = [v['result'] for v in valid][::-1] if valid else []
         dice_sums = _extract_dice_sums(valid)[::-1] if valid else []
+
         base = full_bridge_predict_adaptive_v2(results, dice_sums=dice_sums if dice_sums else None)
         adj = apply_auto_adjust_v2(base['pred'], base['conf'], valid, base['regime'], base['detail'])
+
         next_phien = (valid[-1]['phien'] + 1) if valid else (RESET_ID + 1)
         if valid: _store_last_prediction(next_phien, adj['pred'], adj['conf'])
         last = valid[-1] if valid else None
+
         return jsonify({
             'last_phien': last['phien'] if last else None,
             'next_phien': next_phien,
             'last_result': last['result'] if last else None,
             'last_dice': last['dice'] if last else None,
+
             'prediction': adj['pred'], 'confidence': adj['conf'],
             'base_prediction': base['pred'], 'base_confidence': base['conf'],
             'was_flipped': adj['flipped'], 'flip_reason': adj['reason'],
             'flip_score': adj['score'], 'flip_score_reasons': adj['score_reasons'],
             'flip_decision': 'HARD' if adj['flipped'] and adj['score'] >= 4.0
                             else ('SOFT' if adj['flipped'] else ('PENALTY' if adj['reason'] and adj['reason'].startswith('PENALTY') else 'NONE')),
+
             'regime': base['regime'], 'regime_info': base['regime_info'],
             'loss_streak': adj['loss_streak'],
             'recent_accuracy': round(adj['recent_acc'] * 100, 1),
             'edge': base['edge'],
+
             'tai_score': base['tai_score'], 'xiu_score': base['xiu_score'],
             'signal_count': len(base['detail']), 'signals': base['detail'],
             'total_sessions': len(valid),
@@ -1563,6 +1309,7 @@ def patterns64_summary():
 
 @app.route('/api/full')
 def full():
+    """Comprehensive — everything in one call."""
     try:
         valid, success = _sync_history()
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
@@ -1578,6 +1325,7 @@ def full():
             'last_phien': last['phien'] if last else None,
             'last_result': last['result'] if last else None,
             'last_dice': last['dice'] if last else None,
+
             'prediction': adj['pred'], 'confidence': adj['conf'],
             'base_prediction': base['pred'], 'base_confidence': base['conf'],
             'was_flipped': adj['flipped'],
@@ -1586,11 +1334,13 @@ def full():
             'flip_reason': adj['reason'],
             'flip_score': adj['score'],
             'flip_score_reasons': adj['score_reasons'],
+
             'regime': base['regime'], 'regime_info': base['regime_info'],
             'loss_streak': adj['loss_streak'],
             'recent_accuracy': round(adj['recent_acc'] * 100, 1),
             'recent_accuracy_samples': 25,
             'edge': base['edge'],
+
             'tai_score': base['tai_score'], 'xiu_score': base['xiu_score'],
             'signal_count': len(base['detail']), 'signals': base['detail'],
             'total_sessions': len(valid),
@@ -1646,6 +1396,7 @@ def debug_flip():
 
 @app.route('/api/sample')
 def sample():
+    """Static sample — no live data needed. Mẫu response cho mọi endpoint."""
     return jsonify({
         'note': 'Static sample responses — không cần live data',
         'samples': {
@@ -1679,20 +1430,41 @@ def sample():
                 'Flip_score': 5.3, 'Regime': 'bet_strong',
                 'Chuoi_thua': 2, 'Accuracy_25': 58.0,
             },
-            '/api/v2/predict': {
-                'next_phien': 123456, 'prediction': 'Xỉu', 'confidence': 72.5,
-                'bo_details': {
-                    'PPM6': {'du_doan': 'Xỉu', 'tin_cay': 0.72},
-                    'REGIME': {'du_doan': 'Xỉu', 'tin_cay': 0.61},
-                    'KNNH': {'du_doan': 'Tài', 'tin_cay': 0.55},
-                },
-                'wr_weights': {'PPM6': 0.63, 'REGIME': 0.58, 'KNNH': 0.44},
-                'stats': {
-                    'PPM6': {'hit': 42, 'total': 60, 'ty_le': 0.701},
-                    'REGIME': {'hit': 38, 'total': 60, 'ty_le': 0.635},
-                },
-                'history_size': 240,
-                'timestamp': '2025-01-01T12:00:00',
+            '/api/predict': {
+                'last_phien': 123455, 'next_phien': 123456,
+                'last_result': 'Tài', 'last_dice': '4 + 5 + 6',
+                'prediction': 'Xỉu', 'confidence': 78,
+                'base_prediction': 'Tài', 'base_confidence': 62,
+                'was_flipped': True, 'flip_reason': 'SOFT:s2+bet_fail',
+                'flip_score': 5.3, 'flip_decision': 'SOFT',
+                'regime': 'bet_strong', 'loss_streak': 2,
+                'recent_accuracy': 58.0, 'edge': 0.234,
+                'tai_score': 42.1, 'xiu_score': 68.5,
+                'signal_count': 9,
+            },
+            '/api/history': {
+                'rows': [
+                    {'phien': 123456, 'is_next': True, 'prediction': 'Xỉu',
+                     'result': 'Chờ...', 'dice': '? + ? + ?',
+                     'is_correct': None, 'conf': 78,
+                     'recovery_flipped': True, 'flip_reason': 'SOFT:s2+bet_fail',
+                     'regime': 'bet_strong'},
+                    {'phien': 123455, 'is_next': False, 'prediction': 'Tài',
+                     'result': 'Tài', 'dice': '4 + 5 + 6',
+                     'is_correct': True, 'conf': 62,
+                     'recovery_flipped': False, 'regime': None},
+                ],
+                'stats': {'total': 1, 'correct': 1},
+            },
+            '/api/patterns64/summary': {
+                'next_phien': 123456, 'last_result': 'Tài',
+                'prediction': 'Xỉu', 'confidence': 71,
+                'tai_score': 34.0, 'xiu_score': 52.0,
+                'matched_count': 7, 'regime': 'bet_strong',
+                'matched_patterns': [
+                    {'id': 'bet_5', 'name': 'Bệt 5', 'group': 'bet', 'pred': 'Xỉu', 'weight': 18},
+                    {'id': 'seq3_TTT', 'name': '3 mẫu TTT', 'group': 'seq3', 'pred': 'Xỉu', 'weight': 14},
+                ],
             },
         },
     })
@@ -1710,125 +1482,17 @@ def reset_api():
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
                 PREDICTION_CACHE = {}
                 LAST_PREDICTIONS = {}
-                _reset_v2()
                 return jsonify({'status': 'success', 'reset_to': RESET_ID + 1})
         elif HISTORY_CACHE:
             RESET_ID = max(HISTORY_CACHE.keys())
             HISTORY_CACHE = {RESET_ID: HISTORY_CACHE[RESET_ID]}
             PREDICTION_CACHE = {}
             LAST_PREDICTIONS = {}
-            _reset_v2()
             return jsonify({'status': 'success', 'reset_to': RESET_ID + 1, 'note': 'Offline reset'})
         return jsonify({'status': 'error', 'message': 'Không có kết nối mạng và không có dữ liệu cache'}), 400
     except Exception as e:
         traceback.print_exc()
         return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-# =====================================================================
-# ROUTES — V2 (ADDITIVE, new endpoints only)
-# =====================================================================
-@app.route('/api/v2/predict')
-def v2_predict():
-    try:
-        valid, success = _sync_history()
-        if not success:
-            return jsonify({'error': 'Không thể kết nối API'}), 500
-        predictor = _sync_v2(valid)
-        result = predictor.predict_next()
-        return jsonify({
-            'algorithm': 'v2 - 12-BO Ensemble + Adaptive Filter',
-            'next_phien': result['phien'],
-            'prediction': result['du_doan'],
-            'confidence': round(result['do_tin_cay'] * 100, 1),
-            'bo_details': result['chi_tiet'],
-            'wr_weights': predictor.get_wr_weights(),
-            'stats': predictor.get_stats(),
-            'history_size': len(predictor.history.data),
-            'config': {k: v for k, v in predictor.config.items() if not k.startswith('_')},
-            'timestamp': datetime.now().isoformat(),
-        })
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/v2/stats')
-def v2_stats():
-    try:
-        valid, success = _sync_history()
-        if not success:
-            return jsonify({'error': 'Không thể kết nối API'}), 500
-        predictor = _sync_v2(valid)
-        return jsonify({
-            'stats': predictor.get_stats(),
-            'wr_weights': predictor.get_wr_weights(),
-            'history_size': len(predictor.history.data),
-            'last_phien': predictor.history.last_phien(),
-            'next_phien': predictor.history.next_phien(),
-            'bo_logic': predictor.bo_logic,
-        })
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/v2/config', methods=['GET', 'POST'])
-def v2_config():
-    if request.method == 'GET':
-        return jsonify({
-            'config': V2_PREDICTOR.config,
-            'default_config': DEFAULT_CONFIG,
-        })
-    try:
-        data = request.get_json() or {}
-        _reset_v2()
-        V2_PREDICTOR.config.update(data)
-        # Re-sync immediately with new config
-        valid, success = _sync_history()
-        if success and valid:
-            _sync_v2(valid)
-        return jsonify({
-            'status': 'success',
-            'config': V2_PREDICTOR.config,
-            'note': 'V2 predictor reset + resynced with new config',
-            'history_size': len(V2_PREDICTOR.history.data),
-        })
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/v2/reset', methods=['POST'])
-def v2_reset():
-    try:
-        _reset_v2()
-        return jsonify({'status': 'success', 'note': 'V2 predictor reset (v91 untouched)'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-@app.route('/api/v2/bo/<name>')
-def v2_single_bo(name):
-    """Test một BO đơn lẻ — dùng debug."""
-    try:
-        if name not in BO_FUNCS:
-            return jsonify({'error': f'BO "{name}" không tồn tại', 'available': list(BO_FUNCS.keys())}), 404
-        valid, success = _sync_history()
-        if not success:
-            return jsonify({'error': 'Không thể kết nối API'}), 500
-        seq = [_norm(v['result']) for v in valid][::-1]
-        pred, conf = BO_FUNCS[name](seq)
-        return jsonify({
-            'bo': name,
-            'prediction': _label(pred),
-            'confidence': round(conf * 100, 1),
-            'raw': {'pred': pred, 'conf': round(conf, 4)},
-            'history_size': len(seq),
-        })
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
