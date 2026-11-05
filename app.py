@@ -14,7 +14,7 @@ API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=we
 
 HISTORY_CACHE = {}
 PREDICTION_CACHE = {}
-LAST_PREDICTIONS = {}          # phien -> (pred, conf) — dự đoán ĐÃ HIỂN THỊ
+LAST_PREDICTIONS = {}
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 
@@ -93,7 +93,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>CTEWHEHE</span></div>
+    <div class="header-title">LE MINH <span>V26.1</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -262,7 +262,8 @@ def fetch_sessions():
                     dices = item.get('dices', [0, 0, 0])
                     dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
                     total = item.get('point', sum(dices))
-                    rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
+                    rows.append({'phien': int(item['id']), 'result': res,
+                                 'dice': dice_str, 'total': total})
                 return rows, True
     except Exception as e:
         print(f"[API ERROR]: {e}")
@@ -292,9 +293,21 @@ def _opp(v):
 def _count_alternations(results, max_len=15):
     count = 0
     for i in range(min(len(results) - 1, max_len)):
-        if results[i] != results[i+1]: count += 1
+        if results[i] != results[i + 1]: count += 1
         else: break
     return count
+
+
+def _dice_sum_from_str(dice_str):
+    if not dice_str: return None
+    try:
+        parts = dice_str.split(" + ")
+        if len(parts) != 3: return None
+        vals = [int(p.strip()) for p in parts]
+        if any(v <= 0 or v > 6 for v in vals): return None
+        return sum(vals)
+    except (ValueError, AttributeError):
+        return None
 
 
 # =====================================================================
@@ -364,7 +377,7 @@ def algo_markov1(results):
     if len(results) < 15: return None
     tr = {"Tài": {"Tài": 0, "Xỉu": 0}, "Xỉu": {"Tài": 0, "Xỉu": 0}}
     for i in range(len(results[:45]) - 1):
-        tr[results[i+1]][results[i]] += 1
+        tr[results[i + 1]][results[i]] += 1
     last = results[0]; tot = sum(tr[last].values())
     if tot < 5: return None
     p = tr[last]["Tài"] / tot
@@ -377,7 +390,8 @@ def algo_multi_window(results):
     n = len(results)
     if n < 15: return None
     w5 = results[:5].count("Tài"); w10 = results[:10].count("Tài"); w15 = results[:15].count("Tài")
-    vt = sum([w5 >= 4, w10 >= 7, w15 >= 10]); vx = sum([w5 <= 1, w10 <= 3, w15 <= 5])
+    vt = sum([w5 >= 4, w10 >= 7, w15 >= 10])
+    vx = sum([w5 <= 1, w10 <= 3, w15 <= 5])
     if   vt >= 2: return ("Tài", 11, "multi_window")
     elif vx >= 2: return ("Xỉu", 11, "multi_window")
     return None
@@ -409,7 +423,7 @@ def algo_entropy(results):
     if len(results) < 20: return None
     p_tai = results[:20].count("Tài") / 20
     if p_tai in (0, 1): return ("Tài" if p_tai > 0.5 else "Xỉu", 9, "entropy_zero")
-    entropy = -(p_tai * math.log2(p_tai) + (1-p_tai) * math.log2(1-p_tai))
+    entropy = -(p_tai * math.log2(p_tai) + (1 - p_tai) * math.log2(1 - p_tai))
     if entropy < 0.6: return ("Tài" if p_tai > 0.5 else "Xỉu", 9, "entropy_low")
     return None
 
@@ -443,31 +457,172 @@ def algo_runlength_compare(results):
     return None
 
 
-def analyze_full_bridge(results):
+# =====================================================================
+# ⭐ THUẬT TOÁN NÂNG CAO MỚI ⭐
+# =====================================================================
+def algo_markov2(results):
+    n = len(results)
+    if n < 20: return None
+    counts = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for i in range(min(n, 60) - 2):
+        context = (results[i + 1], results[i + 2])
+        counts[context][results[i]] += 1
+    context = (results[0], results[1])
+    c = counts.get(context)
+    if not c: return None
+    total = c["Tài"] + c["Xỉu"]
+    if total < 4: return None
+    p_tai = c["Tài"] / total
+    if p_tai >= 0.68: return ("Tài", 11, "markov2_tai")
+    if p_tai <= 0.32: return ("Xỉu", 11, "markov2_xiu")
+    return None
+
+
+def algo_markov3(results):
+    n = len(results)
+    if n < 30: return None
+    counts = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for i in range(min(n, 70) - 3):
+        context = (results[i + 1], results[i + 2], results[i + 3])
+        counts[context][results[i]] += 1
+    context = (results[0], results[1], results[2])
+    c = counts.get(context)
+    if not c: return None
+    total = c["Tài"] + c["Xỉu"]
+    if total < 3: return None
+    p_tai = c["Tài"] / total
+    if p_tai >= 0.70: return ("Tài", 13, "markov3_tai")
+    if p_tai <= 0.30: return ("Xỉu", 13, "markov3_xiu")
+    return None
+
+
+def algo_pattern_match(results):
+    n = len(results)
+    if n < 15: return None
+    best = None
+    for plen in (2, 3, 4):
+        if n < plen + 5: continue
+        pattern = tuple(results[:plen])
+        counts = {"Tài": 0, "Xỉu": 0}
+        for i in range(1, n - plen + 1):
+            if tuple(results[i:i + plen]) == pattern:
+                counts[results[i - 1]] += 1
+        total = counts["Tài"] + counts["Xỉu"]
+        if total < 3: continue
+        p_tai = counts["Tài"] / total
+        weight = min(14, 8 + plen * 2)
+        if p_tai >= 0.72:
+            cand = ("Tài", weight, f"pattern_L{plen}")
+            if best is None or cand[1] > best[1]: best = cand
+        elif p_tai <= 0.28:
+            cand = ("Xỉu", weight, f"pattern_L{plen}")
+            if best is None or cand[1] > best[1]: best = cand
+    return best
+
+
+def algo_streak_probability(results):
+    n = len(results)
+    if n < 10: return None
+    cur_streak = 1
+    for r in results[1:]:
+        if r == results[0]: cur_streak += 1
+        else: break
+    if cur_streak < 2: return None
+    streaks = []
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and results[j] == results[i]:
+            j += 1
+        streaks.append((i, j - i))
+        i = j
+    rev = cont = 0
+    for start, length in streaks:
+        if start == 0: continue
+        if start + length == n: continue
+        if length >= cur_streak:
+            if length == cur_streak: rev += 1
+            else:                    cont += 1
+    total = rev + cont
+    if total < 5: return None
+    p_rev = rev / total
+    if p_rev >= 0.72: return (_opp(results[0]), 12, "streak_reversal_high")
+    if p_rev <= 0.28: return (results[0], 11, "streak_continuation_high")
+    return None
+
+
+def algo_dice_sum_extreme(dice_sums):
+    if not dice_sums or len(dice_sums) < 5: return None
+    recent = [s for s in dice_sums[:5] if s is not None]
+    if len(recent) < 5: return None
+    avg = sum(recent) / len(recent)
+    if avg >= 13.0: return ("Xỉu", 12, "dice_avg_high")
+    if avg <= 8.0:  return ("Tài", 12, "dice_avg_low")
+    return None
+
+
+def algo_dice_sum_trend(dice_sums):
+    if not dice_sums or len(dice_sums) < 10: return None
+    valid = [s for s in dice_sums[:10] if s is not None]
+    if len(valid) < 10: return None
+    n = len(valid)
+    xs = list(range(n))
+    mean_x = sum(xs) / n
+    mean_y = sum(valid) / n
+    num = sum((xs[i] - mean_x) * (valid[i] - mean_y) for i in range(n))
+    den = sum((xs[i] - mean_x) ** 2 for i in range(n))
+    if den == 0: return None
+    slope = num / den
+    if slope > 0.9:  return ("Tài", 9, "dice_trend_revert")
+    if slope < -0.9: return ("Xỉu", 9, "dice_trend_revert")
+    return None
+
+
+# =====================================================================
+# ANALYZER — gộp tất cả tín hiệu (có try/except bảo vệ)
+# =====================================================================
+def analyze_full_bridge(results, dice_sums=None):
     if len(results) < 3: return []
     signals = []
     groups = get_groups(results)
     signals.extend(algo_bet_break(results, groups))
     alt = algo_alternation(results)
     if alt: signals.append(alt)
-    for fn in (algo_recency_momentum, algo_weighted_trend, algo_markov1,
-               algo_multi_window, algo_hot_tilt, algo_tilt_ratio,
-               algo_entropy, algo_simple_enhanced, algo_runlength_compare):
-        s = fn(results)
-        if s: signals.append(s)
+
+    fns = (algo_recency_momentum, algo_weighted_trend, algo_markov1,
+           algo_multi_window, algo_hot_tilt, algo_tilt_ratio,
+           algo_entropy, algo_simple_enhanced, algo_runlength_compare,
+           algo_markov2, algo_markov3, algo_pattern_match, algo_streak_probability)
+    for fn in fns:
+        try:
+            s = fn(results)
+            if s: signals.append(s)
+        except Exception:
+            pass
+
+    if dice_sums is not None and len(dice_sums) == len(results):
+        for fn in (algo_dice_sum_extreme, algo_dice_sum_trend):
+            try:
+                s = fn(dice_sums)
+                if s: signals.append(s)
+            except Exception:
+                pass
+
     return signals
 
 
 # =====================================================================
-# BASE PREDICTOR — hoạt động ngay từ phiên 0
+# BASE PREDICTOR
 # =====================================================================
-def full_bridge_predict(results):
+def full_bridge_predict(results, dice_sums=None):
+    if dice_sums is not None and len(dice_sums) != len(results):
+        dice_sums = None
     if not results: return "Tài", 50
     if len(results) == 1: return _opp(results[0]), 52
     if len(results) == 2:
         if results[0] == results[1]: return _opp(results[0]), 55
         return results[1], 52
-    signals = analyze_full_bridge(results)
+    signals = analyze_full_bridge(results, dice_sums)
     if not signals: return results[0], 52
     st = sx = 0.0
     for p, w, name in signals:
@@ -476,7 +631,7 @@ def full_bridge_predict(results):
     total = st + sx
     if total == 0: return results[0], 50
     ratio = max(st, sx) / total
-    evidence = min(1.0, total / 40.0)
+    evidence = min(1.0, total / 60.0)
     conf = int(max(50, min(92, 50 + ((ratio - 0.5) * 100) * evidence)))
     if st > sx: return "Tài", conf
     if sx > st: return "Xỉu", conf
@@ -486,7 +641,9 @@ def full_bridge_predict(results):
 # =====================================================================
 # ADAPTIVE PREDICTOR
 # =====================================================================
-def full_bridge_predict_adaptive(results, replay_n=80):
+def full_bridge_predict_adaptive(results, replay_n=80, dice_sums=None):
+    if dice_sums is not None and len(dice_sums) != len(results):
+        dice_sums = None
     n = len(results)
     if n == 0: return "Tài", 50, []
     if n == 1: return _opp(results[0]), 52, []
@@ -497,14 +654,18 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
     replay_count = min(replay_n, n - 3)
     for j in range(replay_count):
-        history = results[j + 1:]; actual = results[j]
+        history = results[j + 1:]
+        history_dice = dice_sums[j + 1:] if dice_sums else None
         decay = math.exp(-j / max(replay_count / 2.0, 1.0))
-        for pred_sig, weight, name in analyze_full_bridge(history):
-            signal_stats[name]['total'] += decay
-            if pred_sig == actual:
-                signal_stats[name]['wins'] += decay
+        try:
+            for pred_sig, weight, name in analyze_full_bridge(history, history_dice):
+                signal_stats[name]['total'] += decay
+                if pred_sig == results[j]:
+                    signal_stats[name]['wins'] += decay
+        except Exception:
+            continue
 
-    signals = analyze_full_bridge(results)
+    signals = analyze_full_bridge(results, dice_sums)
     if not signals:
         return results[0], 52, []
 
@@ -533,7 +694,7 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     else: return _opp(results[0]), 50, detail
 
     base_conf = 50 + (ratio - 0.5) * 100
-    evidence = min(1.0, total / 50.0)
+    evidence = min(1.0, total / 60.0)
     conf = 50 + (base_conf - 50) * evidence
     if ratio >= 0.72: conf += 6
     if ratio >= 0.80 and len(signals) >= 5: conf += 6
@@ -543,7 +704,7 @@ def full_bridge_predict_adaptive(results, replay_n=80):
 
 
 # =====================================================================
-# PREDICTION CACHE — DỰ ĐOÁN NGAY, KHÔNG ĐỢI 3 PHIÊN
+# PREDICTION CACHE
 # =====================================================================
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
@@ -559,7 +720,8 @@ def get_prediction_for(valid, i):
         pred, conf = LAST_PREDICTIONS[key]
     else:
         hist = [v['result'] for v in valid[:i]][::-1]
-        pred, conf = full_bridge_predict(hist)
+        hist_dice = [_dice_sum_from_str(v['dice']) for v in valid[:i]][::-1]
+        pred, conf = full_bridge_predict(hist, hist_dice)
 
     is_correct = (pred == valid[i]['result'])
     result = (pred, conf, is_correct)
@@ -571,7 +733,7 @@ def get_prediction_for(valid, i):
 
 
 # =====================================================================
-# PERFORMANCE: loss_streak + recent_accuracy
+# PERFORMANCE
 # =====================================================================
 def compute_performance(valid, window=30):
     if not valid:
@@ -597,7 +759,7 @@ def compute_performance(valid, window=30):
 
 
 # =====================================================================
-# AUTO-ADJUST — Tự điều chỉnh khi sai nhiều
+# AUTO-ADJUST
 # =====================================================================
 def apply_auto_adjust(base_pred, base_conf, valid):
     loss_streak, recent_acc, recent_total = compute_performance(valid)
@@ -605,7 +767,6 @@ def apply_auto_adjust(base_pred, base_conf, valid):
     if recent_total >= 15 and recent_acc < 0.42:
         return (_opp(base_pred), min(90, base_conf + 8),
                 True, "flip_low_accuracy", loss_streak, recent_acc)
-
     if loss_streak >= 5:
         return (_opp(base_pred), min(96, base_conf + 18),
                 True, "flip_streak_5plus", loss_streak, recent_acc)
@@ -624,7 +785,6 @@ def apply_auto_adjust(base_pred, base_conf, valid):
     if loss_streak == 1:
         return (base_pred, max(50, base_conf - 5),
                 False, "penalty_streak_1", loss_streak, recent_acc)
-
     if recent_total >= 15 and recent_acc > 0.60:
         return (base_pred, min(95, base_conf + 5),
                 False, "boost_good_acc", loss_streak, recent_acc)
@@ -655,6 +815,10 @@ def _sync_history():
     return valid, True
 
 
+def _extract_dice_sums(valid_slice):
+    return [_dice_sum_from_str(v['dice']) for v in valid_slice]
+
+
 # =====================================================================
 # ROUTES
 # =====================================================================
@@ -683,19 +847,17 @@ def history():
                     'base_prediction': base_pred if flipped else None,
                 }],
                 'stats': {'total': 0, 'correct': 0},
-                'loss_streak': ls,
-                'recovery_active': flipped,
-                'recovery_reason': reason,
-                'base_prediction': base_pred,
-                'recent_accuracy': round(acc * 100, 1),
-                'recent_total': 0,
+                'loss_streak': ls, 'recovery_active': flipped,
+                'recovery_reason': reason, 'base_prediction': base_pred,
+                'recent_accuracy': round(acc * 100, 1), 'recent_total': 0,
             })
 
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
+        dice_for_next = _extract_dice_sums(valid)[::-1]
 
-        base_pred, base_conf, _ = full_bridge_predict_adaptive(history_for_next)
+        base_pred, base_conf, _ = full_bridge_predict_adaptive(history_for_next, dice_sums=dice_for_next)
         next_pred, next_conf, flipped, reason, loss_streak, recent_acc = apply_auto_adjust(
             base_pred, base_conf, valid
         )
@@ -710,14 +872,12 @@ def history():
             'base_prediction': base_pred if flipped else None,
         }]
 
-        correct_count = 0
-        total_past = 0
+        correct_count = 0; total_past = 0
         scan_limit = min(len(valid), 200)
         for i in range(len(valid) - 1, len(valid) - scan_limit - 1, -1):
             if i < 0: break
             current_session = valid[i]
-            if current_session['phien'] <= RESET_ID:
-                continue
+            if current_session['phien'] <= RESET_ID: continue
             pred, conf, is_correct = get_prediction_for(valid, i)
             if is_correct is not None: total_past += 1
             if is_correct: correct_count += 1
@@ -731,10 +891,8 @@ def history():
         return jsonify({
             'rows': out,
             'stats': {'total': total_past, 'correct': correct_count},
-            'loss_streak': loss_streak,
-            'recovery_active': flipped,
-            'recovery_reason': reason,
-            'base_prediction': base_pred,
+            'loss_streak': loss_streak, 'recovery_active': flipped,
+            'recovery_reason': reason, 'base_prediction': base_pred,
             'recent_accuracy': round(recent_acc * 100, 1),
             'recent_total': compute_performance(valid)[2],
         })
@@ -751,7 +909,10 @@ def predict():
             return jsonify({'error': 'Không thể kết nối API'}), 500
 
         results = [v['result'] for v in valid][::-1] if valid else []
-        base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
+        dice_sums = _extract_dice_sums(valid)[::-1] if valid else []
+        base_pred, base_conf, detail = full_bridge_predict_adaptive(
+            results, dice_sums=dice_sums if dice_sums else None
+        )
         pred, conf, flipped, reason, loss_streak, recent_acc = apply_auto_adjust(
             base_pred, base_conf, valid
         )
@@ -790,7 +951,10 @@ def lc79():
             return jsonify({'error': 'Không thể kết nối API'}), 500
 
         results = [v['result'] for v in valid][::-1] if valid else []
-        base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
+        dice_sums = _extract_dice_sums(valid)[::-1] if valid else []
+        base_pred, base_conf, detail = full_bridge_predict_adaptive(
+            results, dice_sums=dice_sums if dice_sums else None
+        )
         pred, conf, flipped, reason, loss_streak, recent_acc = apply_auto_adjust(
             base_pred, base_conf, valid
         )
@@ -804,7 +968,7 @@ def lc79():
         if total_sig > 0:
             ratio = max(tai_score, xiu_score) / total_sig
             base_conf_f = 50 + (ratio - 0.5) * 100
-            evidence = min(1.0, total_sig / 50.0)
+            evidence = min(1.0, total_sig / 60.0)
             conf_float = max(50.0, min(95.0, 50 + (base_conf_f - 50) * evidence))
         else:
             conf_float = 50.0
@@ -815,7 +979,7 @@ def lc79():
         last = valid[-1] if valid else None
 
         return jsonify({
-            'Id': 'le minh v26',
+            'Id': 'le minh v26.1',
             'Phien': str(next_phien),
             'Ket_qua': last['result'].lower() if last else None,
             'Lich_su': lich_su,
