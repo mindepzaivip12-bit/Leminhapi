@@ -1,6 +1,7 @@
 import os
 import math
 import traceback
+import time
 from datetime import datetime
 from collections import defaultdict
 import requests
@@ -14,7 +15,7 @@ API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=we
 
 HISTORY_CACHE = {}
 PREDICTION_CACHE = {}
-LAST_PREDICTIONS = {}
+LAST_PREDICTIONS = {}          
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 
@@ -36,7 +37,6 @@ HTML_TEMPLATE = """
         --win-color: #34d399; --win-bg: rgba(52, 211, 153, 0.15);
         --lose-color: #f87171; --lose-bg: rgba(248, 113, 113, 0.15);
         --wait-color: #fbbf24; --wait-bg: rgba(251, 191, 36, 0.15);
-        --recovery-color: #fb923c; --recovery-bg: rgba(251, 146, 60, 0.15);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
     body { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); color: var(--text-main); min-height: 100vh; padding-bottom: 40px; }
@@ -64,17 +64,14 @@ HTML_TEMPLATE = """
     .data-table tr:last-child td { border-bottom: none; }
     .data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
     .row-next { background: rgba(14, 165, 233, 0.08); border-left: 4px solid var(--tai-color); }
-    .row-next.recovery { background: rgba(251, 146, 60, 0.1); border-left: 4px solid var(--recovery-color); }
     .badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; min-width: 70px; text-align: center; }
     .badge-tai { background: var(--tai-bg); color: var(--tai-color); border: 1px solid rgba(56, 189, 248, 0.3); box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); }
     .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); border: 1px solid rgba(244, 114, 182, 0.3); box-shadow: 0 0 10px rgba(244, 114, 182, 0.2); }
     .badge-empty { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
-    .recovery-badge { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 800; background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); box-shadow: 0 0 10px rgba(251, 146, 60, 0.3); animation: pulse 1.5s infinite; letter-spacing: 0.5px; }
     .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; }
     .st-win { background: var(--win-bg); color: var(--win-color); border: 1px solid rgba(52, 211, 153, 0.3); }
     .st-lose { background: var(--lose-bg); color: var(--lose-color); border: 1px solid rgba(248, 113, 113, 0.3); }
     .st-wait { background: var(--wait-bg); color: var(--wait-color); border: 1px solid rgba(251, 191, 36, 0.3); animation: pulse 1.5s infinite; }
-    .st-recover { background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); animation: pulse 1.5s infinite; }
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
     .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
@@ -93,7 +90,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>V26.1</span></div>
+    <div class="header-title">LE MINH <span>BÁ KHÍ</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -171,21 +168,19 @@ function renderTable(rows, stats) {
     }
     let html = '';
     rows.forEach((row) => {
-        let trClass = '';
-        if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
+        let trClass = row.is_next ? 'class="row-next"' : '';
+        
         let predHtml = `<span class="badge badge-empty">-</span>`;
         if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
-        let recBadge = "";
-        if (row.recovery_flipped) {
-            recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡ RECOVERY</span>`;
-        }
+        
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
             const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
             confHtml = `<div class="${cls}">${row.conf}%</div>`;
         }
-        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}${recBadge}</div>`;
+        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}</div>`;
+        
         let resultHtml = `<span class="badge badge-empty">-</span>`;
         if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
@@ -196,11 +191,10 @@ function renderTable(rows, stats) {
             diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
         }
         let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
+        
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = row.recovery_flipped
-                ? `<span class="status st-recover">⚡ Đảo chiều</span>`
-                : `<span class="status st-wait">Chờ kết quả</span>`;
+            statusHtml = `<span class="status st-wait">Chờ kết quả</span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -208,6 +202,7 @@ function renderTable(rows, stats) {
         } else {
             statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
         }
+        
         html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
     });
     tbody.innerHTML = html;
@@ -239,7 +234,7 @@ async function confirmReset() {
 }
 
 fetchData();
-setInterval(fetchData, 5000);
+setInterval(fetchData, 3000); // Cập nhật nhanh mỗi 3 giây
 </script>
 </body>
 </html>
@@ -247,26 +242,32 @@ setInterval(fetchData, 5000);
 
 
 # =====================================================================
-# DATA FETCHER
+# DATA FETCHER (Có cơ chế Retry chống lỗi mạng trên Render)
 # =====================================================================
 def fetch_sessions():
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
-        r = requests.get(API_URL_MD5, timeout=5, headers=headers)
-        if r.status_code == 200:
-            data = r.json()
-            if 'list' in data and data['list']:
-                rows = []
-                for item in data['list']:
-                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
-                    dices = item.get('dices', [0, 0, 0])
-                    dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
-                    total = item.get('point', sum(dices))
-                    rows.append({'phien': int(item['id']), 'result': res,
-                                 'dice': dice_str, 'total': total})
-                return rows, True
-    except Exception as e:
-        print(f"[API ERROR]: {e}")
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json'
+    }
+    # Thử tối đa 3 lần để tránh lỗi mạng chập chờn của Render
+    for attempt in range(3):
+        try:
+            r = requests.get(API_URL_MD5, timeout=6, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                if 'list' in data and data['list']:
+                    rows = []
+                    for item in data['list']:
+                        res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                        dices = item.get('dices', [0, 0, 0])
+                        dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
+                        total = item.get('point', sum(dices))
+                        rows.append({'phien': int(item['id']), 'result': res,
+                                     'dice': dice_str, 'total': total})
+                    return rows, True
+        except Exception as e:
+            print(f"[API ERROR] Lần {attempt + 1}: {e}")
+            time.sleep(1) # Chờ 1 giây trước khi thử lại
     return [], False
 
 
@@ -321,8 +322,8 @@ def algo_bet_break(results, groups):
     elif g0 >= 10: sigs.append((_opp(r0), 38, "bet_10plus"))
     elif g0 >= 8:  sigs.append((_opp(r0), 32, "bet_8_9"))
     elif g0 >= 6:  sigs.append((_opp(r0), 25, "bet_6_7"))
-    elif g0 == 5:  sigs.append((_opp(r0), 18, "bet_5"))
-    elif g0 == 4:  sigs.append((_opp(r0), 12, "bet_4"))
+    elif g0 == 5: sigs.append((_opp(r0), 18, "bet_5"))
+    elif g0 == 4: sigs.append((_opp(r0), 12, "bet_4"))
     elif g0 == 3:
         if len(groups) >= 5:
             past = groups[1:min(12, len(groups))]
@@ -457,9 +458,6 @@ def algo_runlength_compare(results):
     return None
 
 
-# =====================================================================
-# ⭐ THUẬT TOÁN NÂNG CAO MỚI ⭐
-# =====================================================================
 def algo_markov2(results):
     n = len(results)
     if n < 20: return None
@@ -578,9 +576,6 @@ def algo_dice_sum_trend(dice_sums):
     return None
 
 
-# =====================================================================
-# ANALYZER — gộp tất cả tín hiệu (có try/except bảo vệ)
-# =====================================================================
 def analyze_full_bridge(results, dice_sums=None):
     if len(results) < 3: return []
     signals = []
@@ -607,13 +602,9 @@ def analyze_full_bridge(results, dice_sums=None):
                 if s: signals.append(s)
             except Exception:
                 pass
-
     return signals
 
 
-# =====================================================================
-# BASE PREDICTOR
-# =====================================================================
 def full_bridge_predict(results, dice_sums=None):
     if dice_sums is not None and len(dice_sums) != len(results):
         dice_sums = None
@@ -638,9 +629,6 @@ def full_bridge_predict(results, dice_sums=None):
     return _opp(results[0]), 50
 
 
-# =====================================================================
-# ADAPTIVE PREDICTOR
-# =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=80, dice_sums=None):
     if dice_sums is not None and len(dice_sums) != len(results):
         dice_sums = None
@@ -703,19 +691,14 @@ def full_bridge_predict_adaptive(results, replay_n=80, dice_sums=None):
     return pred, int(max(50, min(95, conf))), detail
 
 
-# =====================================================================
-# PREDICTION CACHE
-# =====================================================================
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
     if key in PREDICTION_CACHE:
         return PREDICTION_CACHE[key]
-
     if key <= RESET_ID:
         result = ("-", 50, None)
         PREDICTION_CACHE[key] = result
         return result
-
     if key in LAST_PREDICTIONS:
         pred, conf = LAST_PREDICTIONS[key]
     else:
@@ -732,14 +715,9 @@ def get_prediction_for(valid, i):
     return result
 
 
-# =====================================================================
-# PERFORMANCE
-# =====================================================================
 def compute_performance(valid, window=30):
-    if not valid:
-        return 0, 0.5, 0
+    if not valid: return 0, 0.5, 0
     end = len(valid) - 1
-
     loss_streak = 0
     for i in range(end, max(-1, end - 20) - 1, -1):
         _, _, ok = get_prediction_for(valid, i)
@@ -758,43 +736,27 @@ def compute_performance(valid, window=30):
     return loss_streak, recent_acc, total
 
 
-# =====================================================================
-# AUTO-ADJUST
-# =====================================================================
 def apply_auto_adjust(base_pred, base_conf, valid):
     loss_streak, recent_acc, recent_total = compute_performance(valid)
-
     if recent_total >= 15 and recent_acc < 0.42:
-        return (_opp(base_pred), min(90, base_conf + 8),
-                True, "flip_low_accuracy", loss_streak, recent_acc)
+        return (_opp(base_pred), min(90, base_conf + 8), True, "flip_low_accuracy", loss_streak, recent_acc)
     if loss_streak >= 5:
-        return (_opp(base_pred), min(96, base_conf + 18),
-                True, "flip_streak_5plus", loss_streak, recent_acc)
+        return (_opp(base_pred), min(96, base_conf + 18), True, "flip_streak_5plus", loss_streak, recent_acc)
     if loss_streak == 4:
-        return (_opp(base_pred), min(95, base_conf + 14),
-                True, "flip_streak_4", loss_streak, recent_acc)
+        return (_opp(base_pred), min(95, base_conf + 14), True, "flip_streak_4", loss_streak, recent_acc)
     if loss_streak == 3:
-        return (_opp(base_pred), min(94, base_conf + 10),
-                True, "flip_streak_3", loss_streak, recent_acc)
+        return (_opp(base_pred), min(94, base_conf + 10), True, "flip_streak_3", loss_streak, recent_acc)
     if loss_streak == 2:
         if base_conf < 75:
-            return (_opp(base_pred), min(93, base_conf + 6),
-                    True, "flip_streak_2", loss_streak, recent_acc)
-        return (base_pred, max(50, base_conf - 10),
-                False, "penalty_streak_2", loss_streak, recent_acc)
+            return (_opp(base_pred), min(93, base_conf + 6), True, "flip_streak_2", loss_streak, recent_acc)
+        return (base_pred, max(50, base_conf - 10), False, "penalty_streak_2", loss_streak, recent_acc)
     if loss_streak == 1:
-        return (base_pred, max(50, base_conf - 5),
-                False, "penalty_streak_1", loss_streak, recent_acc)
+        return (base_pred, max(50, base_conf - 5), False, "penalty_streak_1", loss_streak, recent_acc)
     if recent_total >= 15 and recent_acc > 0.60:
-        return (base_pred, min(95, base_conf + 5),
-                False, "boost_good_acc", loss_streak, recent_acc)
-
+        return (base_pred, min(95, base_conf + 5), False, "boost_good_acc", loss_streak, recent_acc)
     return base_pred, base_conf, False, None, loss_streak, recent_acc
 
 
-# =====================================================================
-# STORAGE HELPERS
-# =====================================================================
 def _store_last_prediction(phien, pred, conf):
     LAST_PREDICTIONS[phien] = (pred, conf)
     if len(LAST_PREDICTIONS) > MAX_PREDICTION_CACHE:
@@ -819,9 +781,6 @@ def _extract_dice_sums(valid_slice):
     return [_dice_sum_from_str(v['dice']) for v in valid_slice]
 
 
-# =====================================================================
-# ROUTES
-# =====================================================================
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -842,14 +801,9 @@ def history():
                     'phien': RESET_ID + 1, 'is_next': True,
                     'prediction': next_pred, 'result': 'Chờ...',
                     'dice': "? + ? + ?", 'is_correct': None,
-                    'conf': next_conf, 'recovery_flipped': flipped,
-                    'recovery_reason': reason, 'loss_streak': ls,
-                    'base_prediction': base_pred if flipped else None,
+                    'conf': next_conf, 'recovery_flipped': False,
                 }],
                 'stats': {'total': 0, 'correct': 0},
-                'loss_streak': ls, 'recovery_active': flipped,
-                'recovery_reason': reason, 'base_prediction': base_pred,
-                'recent_accuracy': round(acc * 100, 1), 'recent_total': 0,
             })
 
         latest_session = valid[-1]
@@ -858,18 +812,14 @@ def history():
         dice_for_next = _extract_dice_sums(valid)[::-1]
 
         base_pred, base_conf, _ = full_bridge_predict_adaptive(history_for_next, dice_sums=dice_for_next)
-        next_pred, next_conf, flipped, reason, loss_streak, recent_acc = apply_auto_adjust(
-            base_pred, base_conf, valid
-        )
+        next_pred, next_conf, flipped, reason, loss_streak, recent_acc = apply_auto_adjust(base_pred, base_conf, valid)
         _store_last_prediction(next_phien, next_pred, next_conf)
 
         out = [{
             'phien': next_phien, 'is_next': True,
             'prediction': next_pred, 'result': 'Chờ...',
             'dice': "? + ? + ?", 'is_correct': None,
-            'conf': next_conf, 'recovery_flipped': flipped,
-            'recovery_reason': reason, 'loss_streak': loss_streak,
-            'base_prediction': base_pred if flipped else None,
+            'conf': next_conf, 'recovery_flipped': False,
         }]
 
         correct_count = 0; total_past = 0
@@ -891,10 +841,6 @@ def history():
         return jsonify({
             'rows': out,
             'stats': {'total': total_past, 'correct': correct_count},
-            'loss_streak': loss_streak, 'recovery_active': flipped,
-            'recovery_reason': reason, 'base_prediction': base_pred,
-            'recent_accuracy': round(recent_acc * 100, 1),
-            'recent_total': compute_performance(valid)[2],
         })
     except Exception as e:
         traceback.print_exc()
@@ -928,7 +874,6 @@ def predict():
             'last_dice': last['dice'] if last else None,
             'prediction': pred, 'confidence': conf,
             'base_prediction': base_pred, 'base_confidence': base_conf,
-            'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak,
             'recent_accuracy': round(recent_acc * 100, 1),
             'total_sessions': len(valid),
@@ -979,7 +924,7 @@ def lc79():
         last = valid[-1] if valid else None
 
         return jsonify({
-            'Id': 'le minh v26.1',
+            'Id': 'le minh v90',
             'Phien': str(next_phien),
             'Ket_qua': last['result'].lower() if last else None,
             'Lich_su': lich_su,
@@ -998,7 +943,9 @@ def lc79():
 def reset_api():
     global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, LAST_PREDICTIONS
     try:
+        # Cố gắng lấy dữ liệu từ API để xác nhận mốc Reset mới nhất
         raw_rows, success = fetch_sessions()
+        
         if success and raw_rows:
             valid = sorted(raw_rows, key=lambda x: x['phien'])
             if valid:
@@ -1007,8 +954,18 @@ def reset_api():
                 PREDICTION_CACHE = {}
                 LAST_PREDICTIONS = {}
                 return jsonify({'status': 'success', 'reset_to': RESET_ID + 1})
-        return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
+                
+        # NẾU API LỖI MẠNG: Vẫn cho phép Reset dựa trên dữ liệu Cache hiện tại
+        elif HISTORY_CACHE:
+            RESET_ID = max(HISTORY_CACHE.keys())
+            HISTORY_CACHE = {RESET_ID: HISTORY_CACHE[RESET_ID]}
+            PREDICTION_CACHE = {}
+            LAST_PREDICTIONS = {}
+            return jsonify({'status': 'success', 'reset_to': RESET_ID + 1, 'note': 'Offline reset'})
+            
+        return jsonify({'status': 'error', 'message': 'Không có kết nối mạng và không có dữ liệu cache'}), 400
     except Exception as e:
+        traceback.print_exc()
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
