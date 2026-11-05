@@ -21,14 +21,14 @@ MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 
 # =====================================================================
-# HTML TEMPLATE (có hiển thị badge AUTO FLIP)
+# HTML TEMPLATE (unchanged shell)
 # =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 - 64P + Smart Flip</title>
+<title>LE MINH MD5 - 64P + Smart Flip v2</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -64,13 +64,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .conf-badge{font-size:11px;color:#38bdf8;background:rgba(56,189,248,.1);padding:2px 8px;border-radius:10px;margin-top:4px;display:inline-block;font-weight:700}
     .conf-badge.high{color:#34d399;background:rgba(52,211,153,.15)}
     .flip-tag{font-size:9px;color:#fbbf24;font-weight:800;margin-top:2px;display:inline-block;background:rgba(251,191,36,.15);padding:1px 6px;border-radius:6px}
+    .regime-tag{font-size:9px;color:#a78bfa;font-weight:800;margin-top:2px;display:inline-block;background:rgba(167,139,250,.15);padding:1px 6px;border-radius:6px}
     .loading{text-align:center;padding:40px;color:var(--tai-color);font-weight:600}
     @media(max-width:500px){.data-table th,.data-table td{padding:10px 6px;font-size:12px}.stats-bar{grid-template-columns:repeat(2,1fr)}.time-update{display:none}}
 </style>
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span>64P + FLIP</span></div>
+    <div class="header-title">LE MINH <span>64P + FLIP v2</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -91,7 +92,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 let isResetting=false;
 function animateNumber(el,target,suffix=''){const s=parseInt(el.innerText.replace(/[^0-9]/g,''))||0;if(s===target){el.innerText=target+suffix;return}const d=500,st=performance.now();function u(t){const p=Math.min((t-st)/d,1),e=1-Math.pow(1-p,3);el.innerText=Math.floor(s+(target-s)*e)+suffix;if(p<1)requestAnimationFrame(u)}requestAnimationFrame(u)}
 async function fetchData(){if(isResetting)return;try{const r=await fetch('/api/history',{cache:'no-store'});const data=await r.json();document.getElementById('time-update').innerText=new Date().toLocaleTimeString('vi-VN');renderTable(data.rows||[],data.stats||{})}catch(e){console.error(e)}}
-function renderTable(rows,stats){const tb=document.getElementById('table-body');const total=stats.total||0,correct=stats.correct||0,wrong=total-correct;animateNumber(document.getElementById('stat-total'),total);animateNumber(document.getElementById('stat-win'),correct);animateNumber(document.getElementById('stat-lose'),wrong);animateNumber(document.getElementById('stat-rate'),Math.round(total>0?(correct/total)*100:0),'%');if(!rows.length){tb.innerHTML='<tr><td colspan="4" class="loading">Chưa có dữ liệu.</td></tr>';return}let html='';rows.forEach(row=>{const trCls=row.is_next?'class="row-next"':'';let ph=`<span class="badge badge-empty">-</span>`;if(row.prediction==="Tài")ph=`<span class="badge badge-tai">TÀI</span>`;if(row.prediction==="Xỉu")ph=`<span class="badge badge-xiu">XỈU</span>`;let ch='';if(row.conf&&row.prediction!=="-"){const c=row.conf>=70?'conf-badge high':'conf-badge';ch=`<div class="${c}">${row.conf}%</div>`}let fh='';if(row.recovery_flipped&&row.prediction!=="-"){fh=`<span class="flip-tag">🔄 FLIP</span>`}const pf=`<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${ph}${ch}${fh}</div>`;let rh=`<span class="badge badge-empty">-</span>`;if(row.result==="Tài")rh=`<span class="badge badge-tai">TÀI</span>`;if(row.result==="Xỉu")rh=`<span class="badge badge-xiu">XỈU</span>`;let dd='';if(row.dice!=="? + ? + ?"){const p=row.dice.split(" + ");const s=parseInt(p[0])+parseInt(p[1])+parseInt(p[2]);dd=`<span class="dice-text">${row.dice} (${s})</span>`}const rf=`<div style="display:flex;flex-direction:column;align-items:center;">${rh}${dd}</div>`;let sh='';if(row.is_next)sh=`<span class="status st-wait">Chờ</span>`;else if(row.is_correct===true)sh=`<span class="status st-win">✔ THẮNG</span>`;else if(row.is_correct===false)sh=`<span class="status st-lose">✖ THUA</span>`;else sh=`<span class="status">-</span>`;html+=`<tr ${trCls}><td>#${row.phien}</td><td>${pf}</td><td>${rf}</td><td>${sh}</td></tr>`});tb.innerHTML=html}
+function renderTable(rows,stats){const tb=document.getElementById('table-body');const total=stats.total||0,correct=stats.correct||0,wrong=total-correct;animateNumber(document.getElementById('stat-total'),total);animateNumber(document.getElementById('stat-win'),correct);animateNumber(document.getElementById('stat-lose'),wrong);animateNumber(document.getElementById('stat-rate'),Math.round(total>0?(correct/total)*100:0),'%');if(!rows.length){tb.innerHTML='<tr><td colspan="4" class="loading">Chưa có dữ liệu.</td></tr>';return}let html='';rows.forEach(row=>{const trCls=row.is_next?'class="row-next"':'';let ph=`<span class="badge badge-empty">-</span>`;if(row.prediction==="Tài")ph=`<span class="badge badge-tai">TÀI</span>`;if(row.prediction==="Xỉu")ph=`<span class="badge badge-xiu">XỈU</span>`;let ch='';if(row.conf&&row.prediction!=="-"){const c=row.conf>=70?'conf-badge high':'conf-badge';ch=`<div class="${c}">${row.conf}%</div>`}let fh='';if(row.recovery_flipped&&row.prediction!=="-"){fh=`<span class="flip-tag">🔄 FLIP</span>`}let rh2='';if(row.regime){rh2=`<span class="regime-tag">${row.regime}</span>`}const pf=`<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${ph}${ch}${fh}${rh2}</div>`;let rh=`<span class="badge badge-empty">-</span>`;if(row.result==="Tài")rh=`<span class="badge badge-tai">TÀI</span>`;if(row.result==="Xỉu")rh=`<span class="badge badge-xiu">XỈU</span>`;let dd='';if(row.dice!=="? + ? + ?"){const p=row.dice.split(" + ");const s=parseInt(p[0])+parseInt(p[1])+parseInt(p[2]);dd=`<span class="dice-text">${row.dice} (${s})</span>`}const rf=`<div style="display:flex;flex-direction:column;align-items:center;">${rh}${dd}</div>`;let sh='';if(row.is_next)sh=`<span class="status st-wait">Chờ</span>`;else if(row.is_correct===true)sh=`<span class="status st-win">✔ THẮNG</span>`;else if(row.is_correct===false)sh=`<span class="status st-lose">✖ THUA</span>`;else sh=`<span class="status">-</span>`;html+=`<tr ${trCls}><td>#${row.phien}</td><td>${pf}</td><td>${rf}</td><td>${sh}</td></tr>`});tb.innerHTML=html}
 async function confirmReset(){Swal.fire({title:'Reset?',text:'Xoá toàn bộ lịch sử?',icon:'warning',background:'#1e293b',color:'#f8fafc',showCancelButton:true,confirmButtonColor:'#0ea5e9',cancelButtonColor:'#64748b',confirmButtonText:'Đồng ý',cancelButtonText:'Hủy'}).then(async r=>{if(r.isConfirmed){isResetting=true;Swal.fire({title:'Đang Reset...',allowOutsideClick:false,background:'#1e293b',color:'#f8fafc',didOpen:()=>{Swal.showLoading()}});try{const res=await fetch('/api/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const d=await res.json();if(d.status==='success'){Swal.fire({title:'OK!',text:'Đã reset.',icon:'success',background:'#1e293b',color:'#f8fafc',confirmButtonColor:'#0ea5e9'});isResetting=false;fetchData()}else throw new Error(d.message)}catch(e){Swal.fire({title:'Lỗi!',text:e.message,icon:'error',background:'#1e293b',color:'#f8fafc'});isResetting=false}}})}
 fetchData();setInterval(fetchData,3000);
 </script>
@@ -157,7 +158,7 @@ def _dice_sum_from_str(dice_str):
 
 
 # =====================================================================
-# CORE ALGORITHMS (giữ nguyên)
+# CORE ALGORITHMS (unchanged)
 # =====================================================================
 def algo_bet_break(results, groups):
     if not groups or len(results) < 3: return []
@@ -396,7 +397,7 @@ def algo_dice_sum_trend(dice_sums):
 
 
 # =====================================================================
-# 64-PATTERN DETECTION SYSTEM
+# 64-PATTERN SYSTEM (unchanged)
 # =====================================================================
 def _all_groups(results):
     if not results: return []
@@ -581,7 +582,7 @@ def algo_patterns_64_aggregate(results, dice_sums=None):
 
 
 # =====================================================================
-# FULL BRIDGE PREDICTOR
+# BRIDGE (signal collector)
 # =====================================================================
 def analyze_full_bridge(results, dice_sums=None, include_patterns64=True):
     if len(results) < 3: return []
@@ -612,7 +613,9 @@ def analyze_full_bridge(results, dice_sums=None, include_patterns64=True):
         except Exception: pass
     return signals
 
+
 def full_bridge_predict(results, dice_sums=None):
+    """Lightweight non-adaptive — used by historical replay."""
     if dice_sums is not None and len(dice_sums) != len(results): dice_sums = None
     if not results: return "Tài", 50
     if len(results) == 1: return _opp(results[0]), 52
@@ -634,47 +637,145 @@ def full_bridge_predict(results, dice_sums=None):
     if sx > st: return "Xỉu", conf
     return _opp(results[0]), 50
 
-def full_bridge_predict_adaptive(results, replay_n=80, dice_sums=None):
-    if dice_sums is not None and len(dice_sums) != len(results): dice_sums = None
+
+# =====================================================================
+# 🆕 REGIME DETECTOR
+# =====================================================================
+def detect_regime(results):
+    """
+    Phân loại thị trường hiện tại:
+      - 'bet_strong'   : bệt >= 4 tay
+      - 'alt_strong'   : đảo >= 65%
+      - 'alternating'  : đảo vừa (45–65%)
+      - 'bet_friendly' : group trung bình >= 3
+      - 'normal'       : cân bằng
+      - 'unknown'      : < 8 phiên
+    """
+    if len(results) < 8:
+        return 'unknown', {'cur_streak': 0, 'avg_group_len': 0, 'alt_rate': 0, 'groups_count': 0}
+    groups = _all_groups(results)
+    cur_streak = groups[0][1] if groups else 0
+    past = [g[1] for g in groups[1:min(20, len(groups))]]
+    avg_len = sum(past) / len(past) if past else 2.0
+    alt_count = _count_alternations(results, 20)
+    denom = max(1, min(20, len(results) - 1))
+    alt_rate = alt_count / denom
+    info = {
+        'cur_streak': cur_streak,
+        'avg_group_len': round(avg_len, 2),
+        'alt_rate': round(alt_rate, 2),
+        'groups_count': len(groups),
+    }
+    if cur_streak >= 4: return 'bet_strong', info
+    if alt_rate >= 0.65: return 'alt_strong', info
+    if alt_rate >= 0.45: return 'alternating', info
+    if avg_len >= 3.0: return 'bet_friendly', info
+    return 'normal', info
+
+
+# =====================================================================
+# 🆕 FULL BRIDGE ADAPTIVE v2 (regime-aware calibration)
+# =====================================================================
+def _predict_result(pred, conf, detail, regime, regime_info, tai_score, xiu_score, edge=0.0):
+    return {
+        'pred': pred, 'conf': conf, 'detail': detail,
+        'regime': regime, 'regime_info': regime_info,
+        'tai_score': round(tai_score, 2), 'xiu_score': round(xiu_score, 2),
+        'edge': round(edge, 3),
+    }
+
+
+def full_bridge_predict_adaptive_v2(results, replay_n=80, dice_sums=None):
+    """
+    Dự đoán có hiệu chuẩn theo regime.
+    - Replay N phiên gần nhất để đo accuracy từng signal trong từng regime.
+    - Dùng Laplace smoothing + regime fallback (regime → normal → global).
+    """
+    if dice_sums is not None and len(dice_sums) != len(results):
+        dice_sums = None
     n = len(results)
-    if n == 0: return "Tài", 50, []
-    if n == 1: return _opp(results[0]), 52, []
+    cur_regime, cur_regime_info = detect_regime(results)
+
+    if n == 0:
+        return _predict_result('Tài', 50, [], cur_regime, cur_regime_info, 0, 0)
+    if n == 1:
+        return _predict_result(_opp(results[0]), 52, [], cur_regime, cur_regime_info, 0, 0)
     if n == 2:
-        if results[0] == results[1]: return _opp(results[0]), 55, []
-        return results[1], 52, []
-    signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
+        p, c = (_opp(results[0]), 55) if results[0] == results[1] else (results[1], 52)
+        return _predict_result(p, c, [], cur_regime, cur_regime_info, 0, 0)
+
+    # signal_stats[regime][name] = {'wins', 'total'}
+    signal_stats = defaultdict(lambda: defaultdict(lambda: {'wins': 0.0, 'total': 0.0}))
     replay_count = min(replay_n, n - 3)
+
     for j in range(replay_count):
         history = results[j + 1:]
         history_dice = dice_sums[j + 1:] if dice_sums else None
+        hist_regime, _ = detect_regime(history)
         decay = math.exp(-j / max(replay_count / 2.0, 1.0))
         try:
             for pred_sig, weight, name in analyze_full_bridge(history, history_dice, include_patterns64=False):
-                signal_stats[name]['total'] += decay
-                if pred_sig == results[j]: signal_stats[name]['wins'] += decay
-        except Exception: continue
+                signal_stats[hist_regime][name]['total'] += decay
+                if pred_sig == results[j]:
+                    signal_stats[hist_regime][name]['wins'] += decay
+        except Exception:
+            continue
+
     signals = analyze_full_bridge(results, dice_sums, include_patterns64=True)
-    if not signals: return results[0], 52, []
-    st = sx = 0.0; detail = []
+    if not signals:
+        return _predict_result(results[0], 52, [], cur_regime, cur_regime_info, 0, 0)
+
+    st = sx = 0.0
+    detail = []
+
     for pred_sig, weight, name in signals:
-        s = signal_stats[name]
-        if s['total'] >= 3:
+        s = signal_stats[cur_regime].get(name)
+        regime_used = cur_regime
+        if s is None or s['total'] < 3:
+            s = signal_stats['normal'].get(name)
+            regime_used = 'normal'
+        if s is None or s['total'] < 3:
+            agg_w = agg_t = 0.0
+            for reg in signal_stats:
+                entry = signal_stats[reg].get(name)
+                if entry:
+                    agg_w += entry['wins']
+                    agg_t += entry['total']
+            if agg_t >= 3:
+                s = {'wins': agg_w, 'total': agg_t}
+                regime_used = 'global'
+
+        if s is not None and s['total'] >= 3:
             alpha = 2.0
             acc = (s['wins'] + alpha * 0.5) / (s['total'] + alpha)
             samples = int(s['total'])
-        else: acc, samples = 0.5, int(s['total'])
+        else:
+            acc, samples = 0.5, 0
+
         accuracy_mult = 0.4 + max(0.0, min(1.8, (acc - 0.3) * 3.0))
         adjusted = weight * accuracy_mult
+
         if pred_sig == "Tài": st += adjusted
         else: sx += adjusted
-        detail.append({'name': name, 'pred': pred_sig, 'base_weight': weight,
-                       'accuracy': round(acc, 3), 'samples': samples,
-                       'adjusted_weight': round(adjusted, 2)})
+
+        detail.append({
+            'name': name, 'pred': pred_sig, 'base_weight': weight,
+            'accuracy': round(acc, 3), 'samples': samples,
+            'adjusted_weight': round(adjusted, 2),
+            'regime_used': regime_used,
+        })
+
     total = st + sx
-    if total == 0: return results[0], 50, detail
-    if st > sx: pred, ratio = "Tài", st / total
-    elif sx > st: pred, ratio = "Xỉu", sx / total
-    else: return _opp(results[0]), 50, detail
+    if total == 0:
+        return _predict_result(results[0], 50, detail, cur_regime, cur_regime_info, st, sx)
+
+    if st > sx:
+        pred, ratio = "Tài", st / total
+    elif sx > st:
+        pred, ratio = "Xỉu", sx / total
+    else:
+        return _predict_result(_opp(results[0]), 50, detail, cur_regime, cur_regime_info, st, sx)
+
     base_conf = 50 + (ratio - 0.5) * 100
     evidence = min(1.0, total / 60.0)
     conf = 50 + (base_conf - 50) * evidence
@@ -682,7 +783,12 @@ def full_bridge_predict_adaptive(results, replay_n=80, dice_sums=None):
     if ratio >= 0.80 and len(signals) >= 5: conf += 6
     if len(signals) >= 8 and ratio >= 0.65: conf += 3
     if len(signals) < 4: conf -= 5
-    return pred, int(max(50, min(95, conf))), detail
+    edge = (max(st, sx) - min(st, sx)) / total if total > 0 else 0
+
+    return _predict_result(
+        pred, int(max(50, min(95, conf))), detail,
+        cur_regime, cur_regime_info, st, sx, edge,
+    )
 
 
 # =====================================================================
@@ -692,7 +798,8 @@ def get_prediction_for(valid, i):
     key = valid[i]['phien']
     if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
     if key <= RESET_ID:
-        PREDICTION_CACHE[key] = ("-", 50, None); return PREDICTION_CACHE[key]
+        PREDICTION_CACHE[key] = ("-", 50, None)
+        return PREDICTION_CACHE[key]
     if key in LAST_PREDICTIONS:
         pred, conf = LAST_PREDICTIONS[key]
     else:
@@ -704,6 +811,7 @@ def get_prediction_for(valid, i):
     if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE: PREDICTION_CACHE.clear()
     PREDICTION_CACHE[key] = result
     return result
+
 
 def compute_performance(valid, window=30):
     if not valid: return 0, 0.5, 0
@@ -726,15 +834,9 @@ def compute_performance(valid, window=30):
 
 
 # =====================================================================
-# ⭐ SMART CONTEXT-AWARE FLIP (CORE UPGRADE)
+# 🆕 SMART FLIP v2 (score-based, multi-factor)
 # =====================================================================
 def _classify_last_bet(valid):
-    """
-    Phân loại bet vừa thực hiện cho valid[-1]:
-    - 'continue': đặt cửa giống kết quả liền trước (BỆT)
-    - 'break'   : đặt cửa ngược kết quả liền trước (BẺ)
-    - None      : không xác định
-    """
     if len(valid) < 2: return None
     try:
         last_idx = len(valid) - 1
@@ -760,84 +862,106 @@ def _classify_last_bet(valid):
         return None
 
 
-def smart_context_flip(base_pred, base_conf, valid):
+def apply_auto_adjust_v2(base_pred, base_conf, valid, regime='normal', signal_detail=None):
     """
-    Đảo thông minh dựa trên:
-    1. Thua BỆT   → BẺ NGAY (kể cả 1 lần thua)
-    2. Thua BẺ    → về BỆT lại
-    3. Thua 2+ lần liên tiếp → đảo mạnh
-    4. Accuracy 30 phiên < 42% → đảo
+    Pipeline điều chỉnh v2 — score-based.
+    Thua 2-3 tay → tự đụng dự đoán nếu đủ điểm.
+
+    Score factors:
+      loss_streak      : +0.5 / +2.0 / +3.0 / +4.0 / +5.0
+      bet context fail : +1.5 (continue) / +1.0 (break)
+      accuracy window  : +2.5 / +1.8 / +0.9 (bad) | -0.8 (good)
+      regime tension   : +1.8 / +1.5 / +0.8
+      signal disagree  : +1.2
+      dice tension     : +0.8
+
+    Decision:
+      score >= 4.0 → HARD flip
+      score >= 2.5 → SOFT flip
+      score >= 1.5 → PENALTY (giảm conf)
+      else          → giữ nguyên
     """
     if len(valid) < 3:
-        return base_pred, base_conf, False, None
+        return {'pred': base_pred, 'conf': base_conf, 'flipped': False,
+                'reason': None, 'loss_streak': 0, 'recent_acc': 0.5,
+                'score': 0.0, 'score_reasons': []}
 
-    # Đếm loss streak
-    end = len(valid) - 1
-    loss_streak = 0
-    for i in range(end, max(-1, end - 10) - 1, -1):
-        _, _, ok = get_prediction_for(valid, i)
-        if ok is None: break
-        if ok: break
-        loss_streak += 1
+    loss_streak, recent_acc, recent_total = compute_performance(valid, window=25)
+    bet_ctx = _classify_last_bet(valid)
 
-    if loss_streak == 0:
-        return base_pred, base_conf, False, None
+    score = 0.0
+    reasons = []
 
-    bet_context = _classify_last_bet(valid)
+    # 1. Loss streak
+    if loss_streak >= 5: score += 5.0; reasons.append(f's{loss_streak}')
+    elif loss_streak == 4: score += 4.0; reasons.append('s4')
+    elif loss_streak == 3: score += 3.0; reasons.append('s3')
+    elif loss_streak == 2: score += 2.0; reasons.append('s2')
+    elif loss_streak == 1: score += 0.5; reasons.append('s1')
 
-    # TH1: Thua trên cầu BỆT → BẺ NGAY
-    if bet_context == 'continue':
-        new_conf = min(95, base_conf + 10 + loss_streak * 3)
-        return _opp(base_pred), new_conf, True, f'bet_fail_flip_{loss_streak}'
+    # 2. Bet context (thua trên bệt/bẻ)
+    if bet_ctx == 'continue': score += 1.5; reasons.append('bet_fail')
+    elif bet_ctx == 'break': score += 1.0; reasons.append('break_fail')
 
-    # TH2: Thua trên cầu BẺ → về BỆT (continue lại)
-    if bet_context == 'break':
-        new_conf = min(95, base_conf + 8 + loss_streak * 3)
-        return _opp(base_pred), new_conf, True, f'break_fail_flip_{loss_streak}'
+    # 3. Accuracy window
+    if recent_total >= 15:
+        if recent_acc < 0.38: score += 2.5; reasons.append('acc_crit')
+        elif recent_acc < 0.43: score += 1.8; reasons.append('acc_low')
+        elif recent_acc < 0.48: score += 0.9; reasons.append('acc_soft')
+        elif recent_acc > 0.62: score -= 0.8; reasons.append('acc_good')
 
-    # TH3: Không rõ context, thua 3+ → đảo mạnh
-    if loss_streak >= 3:
-        new_conf = min(96, base_conf + 8 + loss_streak * 2)
-        return _opp(base_pred), new_conf, True, f'streak{loss_streak}_flip'
+    # 4. Regime tension
+    if regime == 'bet_strong' and bet_ctx == 'continue':
+        score += 1.8; reasons.append('regime_bet_break')
+    elif regime == 'alt_strong' and bet_ctx == 'break':
+        score += 1.5; reasons.append('regime_alt_break')
+    elif regime == 'bet_friendly' and bet_ctx == 'continue':
+        score += 0.8; reasons.append('regime_bet_ready')
 
-    # TH4: Thua 2 lần, conf còn thấp → đảo
-    if loss_streak == 2 and base_conf < 78:
-        new_conf = min(92, base_conf + 6)
-        return _opp(base_pred), new_conf, True, 'streak2_low_conf_flip'
+    # 5. Signal disagreement
+    if signal_detail:
+        tw = sum(s['adjusted_weight'] for s in signal_detail if s['pred'] == 'Tài')
+        xw = sum(s['adjusted_weight'] for s in signal_detail if s['pred'] == 'Xỉu')
+        tot = tw + xw
+        if tot > 0:
+            maj_pred = 'Tài' if tw > xw else 'Xỉu'
+            maj_ratio = max(tw, xw) / tot
+            if maj_pred != base_pred and maj_ratio > 0.68:
+                score += 1.2; reasons.append('sig_disagree')
 
-    return base_pred, base_conf, False, None
+    # 6. Dice-sum tension (orthogonal)
+    if len(valid) >= 5:
+        dice_sums = [_dice_sum_from_str(v['dice']) for v in valid[-5:]][::-1]
+        valid_dice = [s for s in dice_sums if s is not None]
+        if len(valid_dice) >= 3:
+            avg_dice = sum(valid_dice) / len(valid_dice)
+            if avg_dice > 12.5 and base_pred == 'Tài':
+                score += 0.8; reasons.append('dice_high_tension')
+            elif avg_dice < 9.0 and base_pred == 'Xỉu':
+                score += 0.8; reasons.append('dice_low_tension')
 
+    base = {'loss_streak': loss_streak, 'recent_acc': recent_acc,
+            'score': round(score, 2), 'score_reasons': reasons}
 
-def apply_auto_adjust(base_pred, base_conf, valid):
-    """
-    Pipeline điều chỉnh cuối cùng:
-    1. Smart Context Flip (bệt/bẻ/streak) - ưu tiên cao nhất
-    2. Các rule fallback cũ
-    """
-    # BƯỚC 1: Smart flip
-    pred, conf, flipped, reason = smart_context_flip(base_pred, base_conf, valid)
-    loss_streak, recent_acc, recent_total = compute_performance(valid)
-    if flipped:
-        return (pred, conf, True, reason, loss_streak, recent_acc)
-
-    # BƯỚC 2: Fallback rules
-    if recent_total >= 15 and recent_acc < 0.42:
-        return (_opp(base_pred), min(90, base_conf + 8), True, "flip_low_accuracy", loss_streak, recent_acc)
-    if loss_streak >= 5:
-        return (_opp(base_pred), min(96, base_conf + 18), True, "flip_streak_5plus", loss_streak, recent_acc)
-    if loss_streak == 4:
-        return (_opp(base_pred), min(95, base_conf + 14), True, "flip_streak_4", loss_streak, recent_acc)
-    if loss_streak == 3:
-        return (_opp(base_pred), min(94, base_conf + 10), True, "flip_streak_3", loss_streak, recent_acc)
-    if loss_streak == 2:
-        if base_conf < 75:
-            return (_opp(base_pred), min(93, base_conf + 6), True, "flip_streak_2", loss_streak, recent_acc)
-        return (base_pred, max(50, base_conf - 10), False, "penalty_streak_2", loss_streak, recent_acc)
-    if loss_streak == 1:
-        return (base_pred, max(50, base_conf - 5), False, "penalty_streak_1", loss_streak, recent_acc)
-    if recent_total >= 15 and recent_acc > 0.60:
-        return (base_pred, min(95, base_conf + 5), False, "boost_good_acc", loss_streak, recent_acc)
-    return base_pred, base_conf, False, None, loss_streak, recent_acc
+    # Decision
+    if score >= 4.0:
+        return {**base, 'pred': _opp(base_pred),
+                'conf': min(96, base_conf + 12 + loss_streak * 2),
+                'flipped': True, 'reason': 'HARD:' + '+'.join(reasons)}
+    if score >= 2.5:
+        return {**base, 'pred': _opp(base_pred),
+                'conf': min(93, base_conf + 7),
+                'flipped': True, 'reason': 'SOFT:' + '+'.join(reasons)}
+    if score >= 1.5:
+        return {**base, 'pred': base_pred,
+                'conf': max(50, base_conf - 10),
+                'flipped': False, 'reason': 'PENALTY:' + '+'.join(reasons)}
+    if recent_total >= 15 and recent_acc > 0.60 and loss_streak == 0:
+        return {**base, 'pred': base_pred,
+                'conf': min(95, base_conf + 5),
+                'flipped': False, 'reason': 'boost_good_acc'}
+    return {**base, 'pred': base_pred, 'conf': base_conf,
+            'flipped': False, 'reason': None}
 
 
 def _store_last_prediction(phien, pred, conf):
@@ -865,23 +989,39 @@ def _extract_dice_sums(valid_slice):
 @app.route('/')
 def index(): return render_template_string(HTML_TEMPLATE)
 
+
 @app.route('/api/history')
 def history():
     try:
         valid, success = _sync_history()
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            base_pred, base_conf, _ = full_bridge_predict_adaptive([])
-            next_pred, next_conf, flipped, reason, ls, acc = apply_auto_adjust(base_pred, base_conf, [])
-            return jsonify({'rows': [{'phien': RESET_ID + 1, 'is_next': True, 'prediction': next_pred, 'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'conf': next_conf, 'recovery_flipped': flipped}], 'stats': {'total': 0, 'correct': 0}})
+            base = full_bridge_predict_adaptive_v2([])
+            adj = apply_auto_adjust_v2(base['pred'], base['conf'], [], base['regime'], base['detail'])
+            return jsonify({'rows': [{
+                'phien': RESET_ID + 1, 'is_next': True, 'prediction': adj['pred'],
+                'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None,
+                'conf': adj['conf'], 'recovery_flipped': adj['flipped'],
+                'regime': base['regime'],
+            }], 'stats': {'total': 0, 'correct': 0}})
+
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
         dice_for_next = _extract_dice_sums(valid)[::-1]
-        base_pred, base_conf, _ = full_bridge_predict_adaptive(history_for_next, dice_sums=dice_for_next)
-        next_pred, next_conf, flipped, reason, loss_streak, recent_acc = apply_auto_adjust(base_pred, base_conf, valid)
-        _store_last_prediction(next_phien, next_pred, next_conf)
-        out = [{'phien': next_phien, 'is_next': True, 'prediction': next_pred, 'result': 'Chờ...', 'dice': "? + ? + ?", 'is_correct': None, 'conf': next_conf, 'recovery_flipped': flipped, 'flip_reason': reason}]
+
+        base = full_bridge_predict_adaptive_v2(history_for_next, dice_sums=dice_for_next)
+        adj = apply_auto_adjust_v2(base['pred'], base['conf'], valid, base['regime'], base['detail'])
+        _store_last_prediction(next_phien, adj['pred'], adj['conf'])
+
+        out = [{
+            'phien': next_phien, 'is_next': True,
+            'prediction': adj['pred'], 'result': 'Chờ...', 'dice': "? + ? + ?",
+            'is_correct': None, 'conf': adj['conf'],
+            'recovery_flipped': adj['flipped'], 'flip_reason': adj['reason'],
+            'regime': base['regime'],
+        }]
+
         correct_count = 0; total_past = 0
         scan_limit = min(len(valid), 200)
         for i in range(len(valid) - 1, len(valid) - scan_limit - 1, -1):
@@ -891,42 +1031,61 @@ def history():
             pred, conf, is_correct = get_prediction_for(valid, i)
             if is_correct is not None: total_past += 1
             if is_correct: correct_count += 1
-            out.append({'phien': current_session['phien'], 'is_next': False, 'prediction': pred, 'result': current_session['result'], 'dice': current_session['dice'], 'is_correct': is_correct, 'conf': conf, 'recovery_flipped': False})
+            out.append({
+                'phien': current_session['phien'], 'is_next': False,
+                'prediction': pred, 'result': current_session['result'],
+                'dice': current_session['dice'], 'is_correct': is_correct,
+                'conf': conf, 'recovery_flipped': False, 'regime': None,
+            })
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
-        traceback.print_exc(); return jsonify({'error': str(e)}), 500
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/predict')
 def predict():
     try:
         valid, success = _sync_history()
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
+
         results = [v['result'] for v in valid][::-1] if valid else []
         dice_sums = _extract_dice_sums(valid)[::-1] if valid else []
-        base_pred, base_conf, detail = full_bridge_predict_adaptive(results, dice_sums=dice_sums if dice_sums else None)
-        pred, conf, flipped, reason, loss_streak, recent_acc = apply_auto_adjust(base_pred, base_conf, valid)
+
+        base = full_bridge_predict_adaptive_v2(results, dice_sums=dice_sums if dice_sums else None)
+        adj = apply_auto_adjust_v2(base['pred'], base['conf'], valid, base['regime'], base['detail'])
+
         next_phien = (valid[-1]['phien'] + 1) if valid else (RESET_ID + 1)
-        if valid: _store_last_prediction(next_phien, pred, conf)
+        if valid: _store_last_prediction(next_phien, adj['pred'], adj['conf'])
         last = valid[-1] if valid else None
+
         return jsonify({
             'last_phien': last['phien'] if last else None,
             'next_phien': next_phien,
             'last_result': last['result'] if last else None,
             'last_dice': last['dice'] if last else None,
-            'prediction': pred, 'confidence': conf,
-            'base_prediction': base_pred, 'base_confidence': base_conf,
-            'was_flipped': flipped, 'flip_reason': reason,
-            'loss_streak': loss_streak,
-            'recent_accuracy': round(recent_acc * 100, 1),
+
+            'prediction': adj['pred'], 'confidence': adj['conf'],
+            'base_prediction': base['pred'], 'base_confidence': base['conf'],
+            'was_flipped': adj['flipped'], 'flip_reason': adj['reason'],
+            'flip_score': adj['score'], 'flip_score_reasons': adj['score_reasons'],
+            'flip_decision': 'HARD' if adj['flipped'] and adj['score'] >= 4.0
+                            else ('SOFT' if adj['flipped'] else ('PENALTY' if adj['reason'] and adj['reason'].startswith('PENALTY') else 'NONE')),
+
+            'regime': base['regime'], 'regime_info': base['regime_info'],
+            'loss_streak': adj['loss_streak'],
+            'recent_accuracy': round(adj['recent_acc'] * 100, 1),
+            'edge': base['edge'],
+
+            'tai_score': base['tai_score'], 'xiu_score': base['xiu_score'],
+            'signal_count': len(base['detail']), 'signals': base['detail'],
             'total_sessions': len(valid),
-            'signals': detail,
-            'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
-            'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
-            'signal_count': len(detail),
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
         })
     except Exception as e:
-        traceback.print_exc(); return jsonify({'error': str(e)}), 500
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/lc79')
 def lc79():
@@ -935,26 +1094,29 @@ def lc79():
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
         results = [v['result'] for v in valid][::-1] if valid else []
         dice_sums = _extract_dice_sums(valid)[::-1] if valid else []
-        base_pred, base_conf, detail = full_bridge_predict_adaptive(results, dice_sums=dice_sums if dice_sums else None)
-        pred, conf, flipped, reason, loss_streak, recent_acc = apply_auto_adjust(base_pred, base_conf, valid)
+        base = full_bridge_predict_adaptive_v2(results, dice_sums=dice_sums if dice_sums else None)
+        adj = apply_auto_adjust_v2(base['pred'], base['conf'], valid, base['regime'], base['detail'])
         next_phien = (valid[-1]['phien'] + 1) if valid else (RESET_ID + 1)
-        if valid: _store_last_prediction(next_phien, pred, conf)
+        if valid: _store_last_prediction(next_phien, adj['pred'], adj['conf'])
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         last = valid[-1] if valid else None
         return jsonify({
-            'Id': 'le minh v91 - 64P + SmartFlip',
+            'Id': 'le minh v91 - 64P + SmartFlip v2',
             'Phien': str(next_phien),
             'Ket_qua': last['result'].lower() if last else None,
             'Lich_su': lich_su,
-            'Du_doan': pred, 'Do_tin_cay': f"{conf}%",
-            'Base_du_doan': base_pred, 'Was_flipped': flipped,
-            'Flip_reason': reason,
-            'Chuoi_thua': loss_streak,
-            'Accuracy_30': round(recent_acc * 100, 1),
+            'Du_doan': adj['pred'], 'Do_tin_cay': f"{adj['conf']}%",
+            'Base_du_doan': base['pred'], 'Was_flipped': adj['flipped'],
+            'Flip_reason': adj['reason'], 'Flip_score': adj['score'],
+            'Regime': base['regime'],
+            'Chuoi_thua': adj['loss_streak'],
+            'Accuracy_25': round(adj['recent_acc'] * 100, 1),
         })
     except Exception as e:
-        traceback.print_exc(); return jsonify({'error': str(e)}), 500
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/patterns64')
 def patterns64():
@@ -962,7 +1124,7 @@ def patterns64():
         valid, success = _sync_history()
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
         results = [v['result'] for v in valid][::-1] if valid else []
-        dice_sums = [_dice_sum_from_str(v['dice']) for v in valid][::-1] if valid else []
+        dice_sums = _extract_dice_sums(valid)[::-1] if valid else []
         prs = analyze_64_patterns(results, dice_sums if dice_sums else None)
         tai = sum(p['weight'] for p in prs if p['matched'] and p['pred'] == 'Tài')
         xiu = sum(p['weight'] for p in prs if p['matched'] and p['pred'] == 'Xỉu')
@@ -985,19 +1147,22 @@ def patterns64():
                 group_summary[g]['matched'] += 1
         last = valid[-1] if valid else None
         next_phien = (valid[-1]['phien'] + 1) if valid else (RESET_ID + 1)
+        regime, regime_info = detect_regime(results)
         return jsonify({
-            'algorithm': 'LE MINH 64-Pattern + SmartFlip', 'version': '3.0',
+            'algorithm': 'LE MINH 64-Pattern + SmartFlip v2', 'version': '4.0',
             'next_phien': next_phien, 'last_phien': last['phien'] if last else None,
             'last_result': last['result'] if last else None,
             'prediction': pred, 'confidence': conf,
             'tai_score': round(tai, 2), 'xiu_score': round(xiu, 2),
             'ratio': round(ratio, 3), 'total_matched': matched_count,
-            'total_patterns': 64,
+            'total_patterns': 64, 'regime': regime, 'regime_info': regime_info,
             'group_summary': {k: dict(v) for k, v in group_summary.items()},
-            'patterns': prs, 'timestamp': datetime.now().isoformat()
+            'patterns': prs, 'timestamp': datetime.now().isoformat(),
         })
     except Exception as e:
-        traceback.print_exc(); return jsonify({'error': str(e)}), 500
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/patterns64/summary')
 def patterns64_summary():
@@ -1005,7 +1170,7 @@ def patterns64_summary():
         valid, success = _sync_history()
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
         results = [v['result'] for v in valid][::-1] if valid else []
-        dice_sums = [_dice_sum_from_str(v['dice']) for v in valid][::-1] if valid else []
+        dice_sums = _extract_dice_sums(valid)[::-1] if valid else []
         prs = analyze_64_patterns(results, dice_sums if dice_sums else None)
         matched = [p for p in prs if p['matched']]
         tai = sum(p['weight'] for p in matched if p['pred'] == 'Tài')
@@ -1018,21 +1183,68 @@ def patterns64_summary():
             evidence = min(1.0, total / 150.0)
             conf = int(max(50, min(95, 50 + (ratio - 0.5) * 100 * evidence)))
         last = valid[-1] if valid else None
+        regime, regime_info = detect_regime(results)
         return jsonify({
             'next_phien': (valid[-1]['phien'] + 1) if valid else (RESET_ID + 1),
             'last_result': last['result'] if last else None,
             'prediction': pred, 'confidence': conf,
             'tai_score': round(tai, 2), 'xiu_score': round(xiu, 2),
             'matched_count': len(matched),
-            'matched_patterns': [{'id': p['id'], 'name': p['name'], 'group': p['group'], 'pred': p['pred'], 'weight': p['weight']} for p in matched],
+            'regime': regime, 'regime_info': regime_info,
+            'matched_patterns': [{'id': p['id'], 'name': p['name'], 'group': p['group'],
+                                  'pred': p['pred'], 'weight': p['weight']} for p in matched],
         })
     except Exception as e:
-        traceback.print_exc(); return jsonify({'error': str(e)}), 500
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/full')
+def full():
+    """Comprehensive — everything in one call."""
+    try:
+        valid, success = _sync_history()
+        if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
+        results = [v['result'] for v in valid][::-1] if valid else []
+        dice_sums = _extract_dice_sums(valid)[::-1] if valid else []
+        base = full_bridge_predict_adaptive_v2(results, dice_sums=dice_sums if dice_sums else None)
+        adj = apply_auto_adjust_v2(base['pred'], base['conf'], valid, base['regime'], base['detail'])
+        next_phien = (valid[-1]['phien'] + 1) if valid else (RESET_ID + 1)
+        if valid: _store_last_prediction(next_phien, adj['pred'], adj['conf'])
+        last = valid[-1] if valid else None
+        return jsonify({
+            'next_phien': next_phien,
+            'last_phien': last['phien'] if last else None,
+            'last_result': last['result'] if last else None,
+            'last_dice': last['dice'] if last else None,
+
+            'prediction': adj['pred'], 'confidence': adj['conf'],
+            'base_prediction': base['pred'], 'base_confidence': base['conf'],
+            'was_flipped': adj['flipped'],
+            'flip_decision': 'HARD' if adj['flipped'] and adj['score'] >= 4.0
+                            else ('SOFT' if adj['flipped'] else ('PENALTY' if adj['reason'] and adj['reason'].startswith('PENALTY') else 'NONE')),
+            'flip_reason': adj['reason'],
+            'flip_score': adj['score'],
+            'flip_score_reasons': adj['score_reasons'],
+
+            'regime': base['regime'], 'regime_info': base['regime_info'],
+            'loss_streak': adj['loss_streak'],
+            'recent_accuracy': round(adj['recent_acc'] * 100, 1),
+            'recent_accuracy_samples': 25,
+            'edge': base['edge'],
+
+            'tai_score': base['tai_score'], 'xiu_score': base['xiu_score'],
+            'signal_count': len(base['detail']), 'signals': base['detail'],
+            'total_sessions': len(valid),
+            'timestamp': datetime.now().isoformat(),
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/debug/flip')
 def debug_flip():
-    """API debug: xem chi tiết tại sao API flip/không flip"""
     try:
         valid, success = _sync_history()
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
@@ -1040,45 +1252,114 @@ def debug_flip():
             return jsonify({'error': 'Chưa đủ dữ liệu (cần >=3 phiên)'})
         results = [v['result'] for v in valid][::-1]
         dice = _extract_dice_sums(valid)[::-1]
-        base_pred, base_conf, detail = full_bridge_predict_adaptive(results, dice_sums=dice)
-
-        # Chuỗi thua
-        loss_streak, recent_acc, recent_total = compute_performance(valid)
-        # Phân loại bet vừa thua
-        bet_context = _classify_last_bet(valid)
-        # Pipeline cuối
-        pred, conf, flipped, reason, ls2, acc2 = apply_auto_adjust(base_pred, base_conf, valid)
-
-        # 5 phiên gần nhất với prediction đã đưa ra
+        base = full_bridge_predict_adaptive_v2(results, dice_sums=dice)
+        bet_ctx = _classify_last_bet(valid)
+        adj = apply_auto_adjust_v2(base['pred'], base['conf'], valid, base['regime'], base['detail'])
         recent_log = []
         for i in range(max(0, len(valid) - 5), len(valid)):
             p, c, ok = get_prediction_for(valid, i)
             recent_log.append({
-                'phien': valid[i]['phien'],
-                'result': valid[i]['result'],
-                'predicted': p,
-                'conf': c,
-                'correct': ok,
-                'bet_type': 'continue' if (i > 0 and p == valid[i-1]['result']) else ('break' if (i > 0 and p == _opp(valid[i-1]['result'])) else '?')
+                'phien': valid[i]['phien'], 'result': valid[i]['result'],
+                'predicted': p, 'conf': c, 'correct': ok,
+                'bet_type': 'continue' if (i > 0 and p == valid[i-1]['result'])
+                            else ('break' if (i > 0 and p == _opp(valid[i-1]['result'])) else '?'),
             })
         last = valid[-1]
         return jsonify({
             'next_phien': last['phien'] + 1,
             'last_result': last['result'],
-            'base_prediction': base_pred,
-            'base_confidence': base_conf,
-            'last_bet_context': bet_context,  # 'continue'=bệt | 'break'=bẻ | None
-            'loss_streak': loss_streak,
-            'recent_accuracy_30': round(recent_acc * 100, 1),
-            'final_prediction': pred,
-            'final_confidence': conf,
-            'was_flipped': flipped,
-            'flip_reason': reason,
+            'base_prediction': base['pred'], 'base_confidence': base['conf'],
+            'last_bet_context': bet_ctx,
+            'loss_streak': adj['loss_streak'],
+            'recent_accuracy_25': round(adj['recent_acc'] * 100, 1),
+            'final_prediction': adj['pred'], 'final_confidence': adj['conf'],
+            'was_flipped': adj['flipped'],
+            'flip_decision': 'HARD' if adj['flipped'] and adj['score'] >= 4.0 else ('SOFT' if adj['flipped'] else 'NONE'),
+            'flip_score': adj['score'], 'flip_score_reasons': adj['score_reasons'],
+            'flip_reason': adj['reason'],
+            'regime': base['regime'], 'regime_info': base['regime_info'],
             'recent_log': recent_log,
-            'signals': detail
+            'signals': base['detail'],
         })
     except Exception as e:
-        traceback.print_exc(); return jsonify({'error': str(e)}), 500
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/sample')
+def sample():
+    """Static sample — no live data needed. Mẫu response cho mọi endpoint."""
+    return jsonify({
+        'note': 'Static sample responses — không cần live data',
+        'samples': {
+            '/api/full': {
+                'next_phien': 123456, 'last_phien': 123455,
+                'last_result': 'Tài', 'last_dice': '4 + 5 + 6',
+                'prediction': 'Xỉu', 'confidence': 78,
+                'base_prediction': 'Tài', 'base_confidence': 62,
+                'was_flipped': True, 'flip_decision': 'SOFT',
+                'flip_reason': 'SOFT:s2+bet_fail+regime_bet_break',
+                'flip_score': 5.3,
+                'flip_score_reasons': ['s2', 'bet_fail', 'regime_bet_break'],
+                'regime': 'bet_strong',
+                'regime_info': {'cur_streak': 5, 'avg_group_len': 2.4, 'alt_rate': 0.35, 'groups_count': 12},
+                'loss_streak': 2, 'recent_accuracy': 58.0, 'recent_accuracy_samples': 25,
+                'edge': 0.234, 'signal_count': 9,
+                'signals': [{
+                    'name': 'bet_3_def', 'pred': 'Xỉu',
+                    'base_weight': 9, 'accuracy': 0.62, 'samples': 38,
+                    'adjusted_weight': 10.4, 'regime_used': 'bet_strong',
+                }],
+                'tai_score': 42.1, 'xiu_score': 68.5,
+                'total_sessions': 240, 'timestamp': '2025-01-01T12:00:00',
+            },
+            '/lc79': {
+                'Id': 'le minh v91 - 64P + SmartFlip v2',
+                'Phien': '123456', 'Ket_qua': 'tài',
+                'Lich_su': '-5-3-2-4', 'Du_doan': 'Xỉu',
+                'Do_tin_cay': '78%', 'Base_du_doan': 'Tài',
+                'Was_flipped': True, 'Flip_reason': 'SOFT:s2+bet_fail+regime_bet_break',
+                'Flip_score': 5.3, 'Regime': 'bet_strong',
+                'Chuoi_thua': 2, 'Accuracy_25': 58.0,
+            },
+            '/api/predict': {
+                'last_phien': 123455, 'next_phien': 123456,
+                'last_result': 'Tài', 'last_dice': '4 + 5 + 6',
+                'prediction': 'Xỉu', 'confidence': 78,
+                'base_prediction': 'Tài', 'base_confidence': 62,
+                'was_flipped': True, 'flip_reason': 'SOFT:s2+bet_fail',
+                'flip_score': 5.3, 'flip_decision': 'SOFT',
+                'regime': 'bet_strong', 'loss_streak': 2,
+                'recent_accuracy': 58.0, 'edge': 0.234,
+                'tai_score': 42.1, 'xiu_score': 68.5,
+                'signal_count': 9,
+            },
+            '/api/history': {
+                'rows': [
+                    {'phien': 123456, 'is_next': True, 'prediction': 'Xỉu',
+                     'result': 'Chờ...', 'dice': '? + ? + ?',
+                     'is_correct': None, 'conf': 78,
+                     'recovery_flipped': True, 'flip_reason': 'SOFT:s2+bet_fail',
+                     'regime': 'bet_strong'},
+                    {'phien': 123455, 'is_next': False, 'prediction': 'Tài',
+                     'result': 'Tài', 'dice': '4 + 5 + 6',
+                     'is_correct': True, 'conf': 62,
+                     'recovery_flipped': False, 'regime': None},
+                ],
+                'stats': {'total': 1, 'correct': 1},
+            },
+            '/api/patterns64/summary': {
+                'next_phien': 123456, 'last_result': 'Tài',
+                'prediction': 'Xỉu', 'confidence': 71,
+                'tai_score': 34.0, 'xiu_score': 52.0,
+                'matched_count': 7, 'regime': 'bet_strong',
+                'matched_patterns': [
+                    {'id': 'bet_5', 'name': 'Bệt 5', 'group': 'bet', 'pred': 'Xỉu', 'weight': 18},
+                    {'id': 'seq3_TTT', 'name': '3 mẫu TTT', 'group': 'seq3', 'pred': 'Xỉu', 'weight': 14},
+                ],
+            },
+        },
+    })
 
 
 @app.route('/api/reset', methods=['POST'])
@@ -1102,7 +1383,8 @@ def reset_api():
             return jsonify({'status': 'success', 'reset_to': RESET_ID + 1, 'note': 'Offline reset'})
         return jsonify({'status': 'error', 'message': 'Không có kết nối mạng và không có dữ liệu cache'}), 400
     except Exception as e:
-        traceback.print_exc(); return jsonify({'status': 'error', 'message': str(e)}), 500
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 if __name__ == '__main__':
