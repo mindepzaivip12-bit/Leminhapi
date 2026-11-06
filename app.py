@@ -2,6 +2,8 @@ import os
 import random
 import traceback
 import time
+import json
+import hashlib
 from datetime import datetime
 from collections import Counter, defaultdict
 import requests
@@ -19,24 +21,54 @@ API_URL_MD5 = (
 HISTORY_CACHE = {}
 RESET_ID = 0
 PREDICTION_LOG = {}
-MAX_LOG_SIZE = 500
+MAX_LOG_SIZE = 2000
+
+LOG_FILE = "prediction_log.json"
+
+# =====================================================================
+# PERSISTENCE
+# =====================================================================
+def _load_log():
+    global PREDICTION_LOG, RESET_ID
+    if not os.path.exists(LOG_FILE):
+        return
+    try:
+        with open(LOG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        PREDICTION_LOG = {int(k): v for k, v in data.get('log', {}).items()}
+        RESET_ID = int(data.get('reset_id', 0))
+        print(f"[LOG] Loaded {len(PREDICTION_LOG)} predictions from file")
+    except Exception as e:
+        print(f"[LOG] Load failed: {e}")
+
+
+def _save_log():
+    try:
+        with open(LOG_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'log': PREDICTION_LOG, 'reset_id': RESET_ID}, f)
+    except Exception as e:
+        print(f"[LOG] Save failed: {e}")
 
 
 # =====================================================================
-# MULTI-STRATEGY PREDICTOR v6 — nâng cấp
+# DETERMINISTIC PREDICTOR v7
 # =====================================================================
 class MultiStrategyPredictor:
 
     @staticmethod
+    def _deterministic_choice(options, seed_str):
+        """Chọn deterministic dựa trên hash — cùng input = cùng output."""
+        h = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
+        return options[h % len(options)]
+
+    @staticmethod
     def _markov_order2(valid):
-        """Markov bậc 2: P(next | prev2, prev1)."""
         if len(valid) < 15:
             return None, 0, 0
         trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
         for i in range(len(valid) - 2):
             key = (valid[i]['result'], valid[i + 1]['result'])
-            nxt = valid[i + 2]['result']
-            trans[key][nxt] += 1
+            trans[key][valid[i + 2]['result']] += 1
         key = (valid[-2]['result'], valid[-1]['result'])
         counts = trans[key]
         total = counts['Tài'] + counts['Xỉu']
@@ -144,7 +176,6 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _alternation(valid, window=12):
-        """Phát hiện T-X-T-X (alternating pattern)."""
         recent = [v['result'] for v in valid[-window:]]
         if len(recent) < 6:
             return None, 0, 0
@@ -158,7 +189,6 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _momentum(valid, window=10):
-        """Đà ngắn hạn 10 phiên gần."""
         recent = [v['result'] for v in valid[-window:]]
         if len(recent) < 6:
             return None, 0, 0
@@ -172,14 +202,12 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _recency_streak(valid):
-        """Chuỗi gần nhất nặng hơn chuỗi cũ."""
         if len(valid) < 10:
             return None, 0, 0
         weights = {'Tài': 0.0, 'Xỉu': 0.0}
         for i in range(len(valid) - 10, len(valid)):
-            v = valid[i]
             w = (i - (len(valid) - 10) + 1) / 10
-            weights[v['result']] += w
+            weights[valid[i]['result']] += w
         total = weights['Tài'] + weights['Xỉu']
         if total == 0:
             return None, 0, 0
@@ -192,26 +220,29 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _entropy(results):
-        """Entropy của chuỗi — cao = hỗn loạn, không nên tin tín hiệu."""
         if len(results) < 5:
             return 0.0
+        import math
         c = Counter(results)
         total = len(results)
         h = 0.0
         for v in c.values():
             p = v / total
             if p > 0:
-                import math
                 h -= p * math.log2(p)
-        return h  # 0 = đồng nhất, 1 = cân bằng hoàn toàn
+        return h
 
     @classmethod
     def predict(cls, valid):
-        if not valid:
-            return {'prediction': random.choice(['Tài', 'Xỉu']), 'confidence': 50,
-                    'method': 'random', 'signals': [], 'reason': 'Chưa có dữ liệu'}
+        """DETERMINISTIC — cùng lịch sử → cùng dự đoán."""
+        # Seed từ phiên cuối để deterministic
+        seed = str(valid[-1]['phien']) if valid else "0"
 
-        # Fallback khi ít data
+        if not valid:
+            return {'prediction': cls._deterministic_choice(['Tài', 'Xỉu'], seed),
+                    'confidence': 50, 'method': 'random', 'signals': [],
+                    'reason': 'Chưa có dữ liệu'}
+
         if len(valid) < 5:
             last = valid[-1]['result']
             streak = 1
@@ -223,7 +254,7 @@ class MultiStrategyPredictor:
             opp = 'Xỉu' if last == 'Tài' else 'Tài'
             conf = min(50 + streak * 5, 65)
             return {'prediction': opp, 'confidence': conf, 'method': 'streak_fallback',
-                    'signals': [], 'reason': f'Ít dữ liệu — bẻ chuỗi {streak} {last}'}
+                    'signals': [], 'reason': f'Ít dữ liệu — bẻ chuỗi {streak}'}
 
         strategies = [
             ('markov2', cls._markov_order2(valid)),
@@ -250,14 +281,13 @@ class MultiStrategyPredictor:
             signals.append({'name': name, 'prediction': pred,
                             'confidence': conf, 'weight': weight})
 
-        # Entropy filter: nếu chuỗi quá cân bằng và ít tín hiệu → giảm confidence
         recent = [v['result'] for v in valid[-20:]]
         entropy = cls._entropy(recent)
 
         if not signals or (tai_score == 0 and xiu_score == 0):
-            pick = random.choice(['Tài', 'Xỉu'])
+            pick = cls._deterministic_choice(['Tài', 'Xỉu'], seed)
             return {'prediction': pick, 'confidence': 50, 'method': 'random',
-                    'signals': [], 'reason': 'Không có tín hiệu rõ'}
+                    'signals': [], 'reason': 'Không có tín hiệu'}
 
         total_score = tai_score + xiu_score
         if tai_score > xiu_score:
@@ -267,7 +297,6 @@ class MultiStrategyPredictor:
             pred = 'Xỉu'
             raw_conf = int((xiu_score / total_score) * 100)
 
-        # Penalize confidence nếu entropy cao (hỗn loạn)
         if entropy > 0.9:
             final_conf = max(50, raw_conf - 8)
         elif entropy > 0.7:
@@ -331,9 +360,17 @@ def _sync_history():
 
 
 def _update_prediction_log(valid):
+    """
+    1. Điền actual/correct cho log đã có.
+    2. Retroactive: phiên chưa có log → dự đoán lại từ dữ liệu TRƯỚC nó.
+    """
     if not valid:
         return
+
     by_phien = {v['phien']: v for v in valid}
+    phien_list = sorted(by_phien.keys())
+
+    # Bước 1: cập nhật actual cho log đã có
     for phien, entry in list(PREDICTION_LOG.items()):
         if entry.get('actual') is not None:
             continue
@@ -341,14 +378,46 @@ def _update_prediction_log(valid):
             actual = by_phien[phien]['result']
             entry['actual'] = actual
             entry['correct'] = (entry['prediction'] == actual)
+
+    # Bước 2: retroactive prediction cho phiên chưa có log
+    changed = False
+    for i, phien in enumerate(phien_list):
+        if phien in PREDICTION_LOG:
+            continue
+        if phien <= RESET_ID:
+            continue
+
+        history_before = [by_phien[p] for p in phien_list[:i]]
+        if len(history_before) < 3:
+            continue
+
+        pred = MultiStrategyPredictor.predict(history_before)
+        actual = by_phien[phien]['result']
+        PREDICTION_LOG[phien] = {
+            'prediction': pred['prediction'],
+            'confidence': pred['confidence'],
+            'method': pred['method'],
+            'actual': actual,
+            'correct': (pred['prediction'] == actual),
+            'logged_at': datetime.now().isoformat(),
+            'retroactive': True,
+        }
+        changed = True
+
+    # Bước 3: giới hạn kích thước
     if len(PREDICTION_LOG) > MAX_LOG_SIZE:
         keys = sorted(PREDICTION_LOG.keys())[:len(PREDICTION_LOG) - MAX_LOG_SIZE]
         for k in keys:
             del PREDICTION_LOG[k]
+        changed = True
+
+    if changed:
+        _save_log()
 
 
 def _log_prediction(phien, pred_result):
-    if phien in PREDICTION_LOG and PREDICTION_LOG[phien].get('prediction') == pred_result['prediction']:
+    """Log dự đoán cho phiên tới — không ghi đè retroactive nếu đã có."""
+    if phien in PREDICTION_LOG:
         return
     PREDICTION_LOG[phien] = {
         'prediction': pred_result['prediction'],
@@ -357,7 +426,9 @@ def _log_prediction(phien, pred_result):
         'actual': None,
         'correct': None,
         'logged_at': datetime.now().isoformat(),
+        'retroactive': False,
     }
+    _save_log()
 
 
 def _honest_stats(valid):
@@ -374,6 +445,10 @@ def _log_stats():
     pending = sum(1 for e in PREDICTION_LOG.values() if e.get('actual') is None)
     return {'correct': correct, 'wrong': wrong, 'pending': pending,
             'evaluated': len(evaluated)}
+
+
+# Load log khi khởi động
+_load_log()
 
 
 # =====================================================================
@@ -401,14 +476,12 @@ body{background:linear-gradient(135deg,#0f172a,#1e1b4b);color:var(--text);min-he
 
 .wrap{max-width:760px;margin:0 auto;padding:12px}
 
-/* Score bar: ĐÚNG / SAI / CHỜ (đã xoá Winrate) */
 .scorebar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
 .sc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center}
 .sc-l{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:4px;letter-spacing:.5px}
 .sc-v{font-size:22px;font-weight:800}
 .sc-v.ok{color:var(--ok)}.sc-v.fail{color:var(--fail)}.sc-v.warn{color:var(--warn)}
 
-/* Table */
 .tbl{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-height:74vh;overflow-y:auto}
 table{width:100%;border-collapse:separate;border-spacing:0}
 th{background:var(--card2);color:var(--muted);font-size:10px;font-weight:700;padding:11px 6px;text-align:center;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;text-transform:uppercase}
@@ -445,7 +518,6 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </div>
 
 <div class="wrap">
-    <!-- Score bar: chỉ ĐÚNG / SAI / CHỜ -->
     <div class="scorebar">
         <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="sc-correct">0</div></div>
         <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="sc-wrong">0</div></div>
@@ -457,7 +529,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
             <thead>
                 <tr>
                     <th>Phiên</th>
-                    <th>dự đoán</th>
+                    <th>Dự đoán</th>
                     <th>Kết quả</th>
                     <th>Đúng / Sai</th>
                 </tr>
@@ -494,7 +566,6 @@ function renderTable(rows){
     rows.forEach(row => {
         const trCls = row.is_next ? 'class="row-next"' : '';
 
-        // AI dự đoán (cột 2)
         let predCell = '<span class="badge b-none">—</span>';
         if(row.ai_prediction){
             const cls = row.ai_prediction === 'Tài' ? 'tai' : 'xiu';
@@ -502,14 +573,12 @@ function renderTable(rows){
                         <br><span style="font-size:9px;color:var(--muted)">${row.ai_confidence||0}%</span>`;
         }
 
-        // Kết quả thực (cột 3)
         let resBadge = '<span class="badge b-none">—</span>';
         if(row.result === 'Tài') resBadge = '<span class="badge b-tai">TÀI</span>';
         if(row.result === 'Xỉu') resBadge = '<span class="badge b-xiu">XỈU</span>';
         let dice = '';
         if(row.dice && row.dice !== '? + ? + ?') dice = `<span class="dice">${row.dice} · ${row.total}</span>`;
 
-        // Đúng / Sai (cột 4)
         let evalCell = '<span class="badge b-none">—</span>';
         if(row.ai_correct === true) evalCell = '<span class="badge b-ok">✓ ĐÚNG</span>';
         else if(row.ai_correct === false) evalCell = '<span class="badge b-fail">✗ SAI</span>';
@@ -581,9 +650,7 @@ def history():
         stats = _honest_stats(valid)
         ai_stats = _log_stats()
 
-        out = []
-        # Phiên tới (NEXT) đặt đầu
-        out.append({
+        out = [{
             'phien': next_phien,
             'is_next': True,
             'result': 'Chờ...',
@@ -592,7 +659,7 @@ def history():
             'ai_prediction': pred['prediction'],
             'ai_confidence': pred['confidence'],
             'ai_correct': None,
-        })
+        }]
 
         for v in reversed(valid[-200:]):
             if v['phien'] <= RESET_ID:
@@ -656,7 +723,7 @@ def lc79():
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'le minh ai v6', 'Phien': None, 'Du_doan': None})
+            return jsonify({'Id': 'le minh ai v7', 'Phien': None, 'Du_doan': None})
 
         last = valid[-1]
         next_phien = last['phien'] + 1
@@ -666,7 +733,7 @@ def lc79():
         ai_stats = _log_stats()
 
         return jsonify({
-            'Id': 'le minh ai v6',
+            'Id': 'le minh ai v7',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
@@ -712,7 +779,8 @@ def prediction_log():
         out = [{
             'phien': p, 'prediction': e['prediction'], 'confidence': e['confidence'],
             'method': e['method'], 'actual': e.get('actual'),
-            'correct': e.get('correct'), 'logged_at': e.get('logged_at'),
+            'correct': e.get('correct'), 'retroactive': e.get('retroactive', False),
+            'logged_at': e.get('logged_at'),
         } for p, e in items]
         return jsonify({'stats': _log_stats(), 'predictions': out})
     except Exception as e:
@@ -731,11 +799,13 @@ def reset_api():
                 RESET_ID = valid[-1]['phien']
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
                 PREDICTION_LOG = {}
+                _save_log()
                 return jsonify({'status': 'success', 'reset_to': RESET_ID + 1})
         elif HISTORY_CACHE:
             RESET_ID = max(HISTORY_CACHE.keys())
             HISTORY_CACHE = {RESET_ID: HISTORY_CACHE[RESET_ID]}
             PREDICTION_LOG = {}
+            _save_log()
             return jsonify({'status': 'success', 'reset_to': RESET_ID + 1})
         return jsonify({'status': 'error', 'message': 'Không có dữ liệu để reset'}), 400
     except Exception as e:
