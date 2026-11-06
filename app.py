@@ -2,9 +2,8 @@ import os
 import random
 import traceback
 import time
-import json
 from datetime import datetime
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -19,32 +18,16 @@ API_URL_MD5 = (
 
 HISTORY_CACHE = {}
 RESET_ID = 0
-
-# =====================================================================
-# PREDICTION TRACKING — lưu dự đoán và đánh giá đúng/sai
-# =====================================================================
-PREDICTION_LOG = {}   # {phien: {'prediction': 'Tài'/'Xỉu', 'confidence': int, 'method': str, 'actual': 'Tài'/'Xỉu'/None, 'correct': bool/None}}
+PREDICTION_LOG = {}
 MAX_LOG_SIZE = 500
-
-DISCLAIMER = (
-    "⚠️ Dự đoán dựa trên phân tích pattern lịch sử. "
-    "Xúc xắc là ngẫu nhiên thực sự — không thuật toán nào đảm bảo thắng. "
-    "Hãy xem đây là công cụ tham khảo, không phải lời khuyên đầu tư."
-)
 
 
 # =====================================================================
 # MULTI-STRATEGY PREDICTOR
 # =====================================================================
 class MultiStrategyPredictor:
-    """
-    Kết hợp nhiều chiến lược phân tích pattern.
-    Mỗi chiến lược trả về (prediction, confidence 0-100, weight).
-    """
-
     @staticmethod
     def _markov(valid):
-        """Markov chain: P(next | last)."""
         if len(valid) < 10:
             return None, 0, 0
         trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
@@ -66,7 +49,6 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _streak_break(valid):
-        """Nếu streak >= 3, dự đoán bẻ streak (mean reversion)."""
         if len(valid) < 4:
             return None, 0, 0
         last = valid[-1]['result']
@@ -83,7 +65,6 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _pattern_match(valid):
-        """Tìm mẫu 3-5 phiên cuối trong lịch sử, xem phiên tiếp theo là gì."""
         if len(valid) < 20:
             return None, 0, 0
         results = [v['result'] for v in valid]
@@ -111,7 +92,6 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _weighted_freq(valid, window=30):
-        """Tần suất có trọng số: phiên gần đây quan trọng hơn."""
         recent = valid[-window:]
         if len(recent) < 10:
             return None, 0, 0
@@ -135,13 +115,11 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _dice_sum_bias(valid, window=50):
-        """Phân tích phân bố tổng điểm gần đây (nếu Tài/Xỉu lệch)."""
         recent = [v for v in valid[-window:] if v.get('total')]
         if len(recent) < 15:
             return None, 0, 0
         tais = sum(1 for v in recent if v['result'] == 'Tài')
         ratio = tais / len(recent)
-        # Không dùng để dự đoán hướng đi tiếp, nhưng nếu lệch mạnh → mean reversion
         if ratio > 0.62:
             return 'Xỉu', int(ratio * 100), 0.6
         elif ratio < 0.38:
@@ -150,17 +128,10 @@ class MultiStrategyPredictor:
 
     @classmethod
     def predict(cls, valid):
-        """Ensemble voting từ tất cả chiến lược."""
         if len(valid) < 5:
-            # Không đủ dữ liệu → ngẫu nhiên có ghi chú
             pick = random.choice(['Tài', 'Xỉu'])
-            return {
-                'prediction': pick,
-                'confidence': 50,
-                'method': 'random',
-                'signals': [],
-                'reason': 'Chưa đủ dữ liệu — dự đoán ngẫu nhiên',
-            }
+            return {'prediction': pick, 'confidence': 50, 'method': 'random',
+                    'signals': [], 'reason': 'Chưa đủ dữ liệu'}
 
         strategies = [
             ('markov', cls._markov(valid)),
@@ -169,7 +140,6 @@ class MultiStrategyPredictor:
             ('weighted_freq', cls._weighted_freq(valid)),
             ('dice_bias', cls._dice_sum_bias(valid)),
         ]
-
         tai_score = 0.0
         xiu_score = 0.0
         signals = []
@@ -181,44 +151,24 @@ class MultiStrategyPredictor:
                 tai_score += score
             else:
                 xiu_score += score
-            signals.append({
-                'name': name,
-                'prediction': pred,
-                'confidence': conf,
-                'weight': weight,
-            })
+            signals.append({'name': name, 'prediction': pred,
+                            'confidence': conf, 'weight': weight})
 
         if tai_score == 0 and xiu_score == 0:
             pick = random.choice(['Tài', 'Xỉu'])
-            return {
-                'prediction': pick,
-                'confidence': 50,
-                'method': 'random',
-                'signals': [],
-                'reason': 'Không có tín hiệu rõ ràng — dự đoán ngẫu nhiên',
-            }
+            return {'prediction': pick, 'confidence': 50, 'method': 'random',
+                    'signals': [], 'reason': 'Không có tín hiệu'}
 
         if tai_score > xiu_score:
             pred = 'Tài'
-            total = tai_score + xiu_score
-            conf = int((tai_score / total) * 100)
+            conf = int((tai_score / (tai_score + xiu_score)) * 100)
         else:
             pred = 'Xỉu'
-            total = tai_score + xiu_score
-            conf = int((xiu_score / total) * 100)
+            conf = int((xiu_score / (tai_score + xiu_score)) * 100)
 
-        method = '+'.join(s['name'] for s in signals)
-        reason = f"Kết hợp {len(signals)} tín hiệu: " + ", ".join(
-            f"{s['name']}({s['prediction']}@{s['confidence']}%)" for s in signals
-        )
-
-        return {
-            'prediction': pred,
-            'confidence': conf,
-            'method': method or 'ensemble',
-            'signals': signals,
-            'reason': reason,
-        }
+        method = '+'.join(s['name'] for s in signals) or 'ensemble'
+        return {'prediction': pred, 'confidence': conf, 'method': method,
+                'signals': signals, 'reason': f"Kết hợp {len(signals)} tín hiệu"}
 
 
 # =====================================================================
@@ -239,13 +189,11 @@ def fetch_sessions():
                     for item in data['list']:
                         res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
                         dices = item.get('dices', [0, 0, 0])
-                        dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
-                        total = item.get('point', sum(dices))
                         rows.append({
                             'phien': int(item['id']),
                             'result': res,
-                            'dice': dice_str,
-                            'total': total,
+                            'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
+                            'total': item.get('point', sum(dices)),
                         })
                     return rows, True
         except Exception as e:
@@ -269,7 +217,6 @@ def _sync_history():
 
 
 def _update_prediction_log(valid):
-    """Cập nhật log dự đoán: đánh giá đúng/sai khi có kết quả thực."""
     if not valid:
         return
     by_phien = {v['phien']: v for v in valid}
@@ -280,7 +227,6 @@ def _update_prediction_log(valid):
             actual = by_phien[phien]['result']
             entry['actual'] = actual
             entry['correct'] = (entry['prediction'] == actual)
-    # Giới hạn kích thước
     if len(PREDICTION_LOG) > MAX_LOG_SIZE:
         keys = sorted(PREDICTION_LOG.keys())[:len(PREDICTION_LOG) - MAX_LOG_SIZE]
         for k in keys:
@@ -288,83 +234,44 @@ def _update_prediction_log(valid):
 
 
 def _log_prediction(phien, pred_result):
-    """Ghi nhận dự đoán cho phiên tới."""
     if phien in PREDICTION_LOG and PREDICTION_LOG[phien].get('prediction') == pred_result['prediction']:
-        return  # Đã log cùng dự đoán
+        return
     PREDICTION_LOG[phien] = {
         'prediction': pred_result['prediction'],
         'confidence': pred_result['confidence'],
         'method': pred_result['method'],
-        'reason': pred_result['reason'],
-        'signals': pred_result['signals'],
         'actual': None,
         'correct': None,
         'logged_at': datetime.now().isoformat(),
     }
 
 
-def _log_stats():
-    """Thống kê đúng/sai của thuật toán."""
-    total = len(PREDICTION_LOG)
-    evaluated = [e for e in PREDICTION_LOG.values() if e.get('actual') is not None]
-    correct = sum(1 for e in evaluated if e.get('correct'))
-    wrong = len(evaluated) - correct
-    winrate = round(correct / len(evaluated) * 100, 1) if evaluated else 0
-
-    # Streak hiện tại
-    streak = 0
-    streak_type = None
-    sorted_evals = sorted(
-        [e for e in evaluated if e.get('logged_at')],
-        key=lambda x: x.get('logged_at', ''),
-        reverse=True,
-    )
-    for e in sorted_evals:
-        if streak == 0:
-            streak = 1
-            streak_type = e['correct']
-        elif e['correct'] == streak_type:
-            streak += 1
-        else:
-            break
-
-    # Winrate 20 gần nhất
-    last20 = [e for e in sorted_evals[:20] if e.get('correct') is not None]
-    winrate20 = round(sum(1 for e in last20 if e['correct']) / len(last20) * 100, 1) if last20 else 0
-
-    return {
-        'total_predictions': total,
-        'evaluated': len(evaluated),
-        'correct': correct,
-        'wrong': wrong,
-        'winrate': winrate,
-        'winrate_last20': winrate20,
-        'current_streak': streak,
-        'streak_type': 'win' if streak_type else None,
-    }
-
-
 def _honest_stats(valid):
     total = len(valid)
     tai = sum(1 for v in valid if v['result'] == 'Tài')
-    xiu = total - tai
-    return {
-        'total': total,
-        'tai': tai,
-        'xiu': xiu,
-        'ratio_tai': round(tai / total, 3) if total else 0,
-    }
+    return {'total': total, 'tai': tai, 'xiu': total - tai,
+            'ratio_tai': round(tai / total, 3) if total else 0}
+
+
+def _log_stats():
+    evaluated = [e for e in PREDICTION_LOG.values() if e.get('actual') is not None]
+    correct = sum(1 for e in evaluated if e.get('correct'))
+    wrong = len(evaluated) - correct
+    pending = sum(1 for e in PREDICTION_LOG.values() if e.get('actual') is None)
+    winrate = round(correct / len(evaluated) * 100, 1) if evaluated else 0
+    return {'correct': correct, 'wrong': wrong, 'pending': pending,
+            'evaluated': len(evaluated), 'winrate': winrate}
 
 
 # =====================================================================
-# HTML — UI gọn
+# HTML — gọn, xoá disclaimer/hero, có ĐÚNG/SAI rõ
 # =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 — AI Predictor</title>
+<title>LE MINH MD5 — AI Tracking</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -379,55 +286,45 @@ body{background:linear-gradient(135deg,#0f172a,#1e1b4b);color:var(--text);min-he
 .btn{background:var(--card);color:var(--text);border:1px solid var(--border);padding:7px 12px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer}
 .btn-reset{background:rgba(248,113,113,.15);color:#f87171;border-color:rgba(248,113,113,.4)}
 
-.wrap{max-width:760px;margin:0 auto;padding:0 12px}
-.disc{margin:12px 0;padding:10px 14px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.25);border-radius:10px;color:var(--warn);font-size:11px;line-height:1.5}
+.wrap{max-width:760px;margin:0 auto;padding:12px}
 
-/* Prediction hero */
-.hero{margin:12px 0;background:linear-gradient(135deg,rgba(56,189,248,.12),rgba(244,114,182,.12));border:1px solid var(--border);border-radius:14px;padding:16px;text-align:center}
-.hero-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:6px}
-.hero-pred{font-size:36px;font-weight:800;letter-spacing:1px;margin:4px 0}
-.hero-pred.tai{color:var(--tai)}.hero-pred.xiu{color:var(--xiu)}
-.hero-conf{font-size:12px;color:var(--muted);font-weight:600}
-.hero-reason{font-size:10px;color:var(--muted);margin-top:8px;font-style:italic;line-height:1.4;opacity:.85}
-.hero-phien{font-size:11px;color:var(--muted);margin-top:4px}
-
-/* Stats row */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
-.stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 6px;text-align:center}
-.stat-l{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:3px;letter-spacing:.5px}
-.stat-v{font-size:16px;font-weight:800}
-.stat-v.tai{color:var(--tai)}.stat-v.xiu{color:var(--xiu)}.stat-v.ok{color:var(--ok)}.stat-v.fail{color:var(--fail)}
+/* Score bar: ĐÚNG / SAI / CHỜ */
+.scorebar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.sc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center}
+.sc-l{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:4px;letter-spacing:.5px}
+.sc-v{font-size:20px;font-weight:800}
+.sc-v.ok{color:var(--ok)}.sc-v.fail{color:var(--fail)}.sc-v.warn{color:var(--warn)}.sc-v.tai{color:var(--tai)}
 
 /* Table */
-.tbl{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-height:62vh;overflow-y:auto}
+.tbl{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-height:74vh;overflow-y:auto}
 table{width:100%;border-collapse:separate;border-spacing:0}
-th{background:var(--card2);color:var(--muted);font-size:10px;font-weight:700;padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;text-transform:uppercase}
-td{padding:9px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:12px;font-weight:600}
+th{background:var(--card2);color:var(--muted);font-size:10px;font-weight:700;padding:11px 6px;text-align:center;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;text-transform:uppercase}
+td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:12px;font-weight:600}
 .row-next{background:rgba(56,189,248,.08);border-left:3px solid var(--tai)}
-.badge{display:inline-block;padding:3px 9px;border-radius:14px;font-size:10px;font-weight:800;min-width:52px;text-align:center}
+.badge{display:inline-block;padding:3px 10px;border-radius:14px;font-size:10px;font-weight:800;min-width:52px;text-align:center}
 .b-tai{background:rgba(56,189,248,.18);color:var(--tai);border:1px solid rgba(56,189,248,.3)}
 .b-xiu{background:rgba(244,114,182,.18);color:var(--xiu);border:1px solid rgba(244,114,182,.3)}
-.b-ok{background:rgba(34,197,94,.18);color:var(--ok);border:1px solid rgba(34,197,94,.3);font-size:9px;padding:2px 7px}
-.b-fail{background:rgba(239,68,68,.18);color:var(--fail);border:1px solid rgba(239,68,68,.3);font-size:9px;padding:2px 7px}
-.b-pending{background:rgba(251,191,36,.18);color:var(--warn);border:1px solid rgba(251,191,36,.3);font-size:9px;padding:2px 7px}
 .b-none{background:rgba(255,255,255,.05);color:var(--muted)}
+.b-ok{background:rgba(34,197,94,.2);color:var(--ok);border:1px solid rgba(34,197,94,.4);font-size:10px;padding:4px 10px;font-weight:800}
+.b-fail{background:rgba(239,68,68,.2);color:var(--fail);border:1px solid rgba(239,68,68,.4);font-size:10px;padding:4px 10px;font-weight:800}
+.b-pending{background:rgba(251,191,36,.2);color:var(--warn);border:1px solid rgba(251,191,36,.4);font-size:10px;padding:4px 10px;font-weight:800}
 .dice{font-size:10px;color:var(--muted);display:block;margin-top:2px}
+.pred-mini{font-size:11px;font-weight:800}
+.pred-mini.tai{color:var(--tai)}.pred-mini.xiu{color:var(--xiu)}
 .loading{text-align:center;padding:30px;color:var(--tai);font-weight:600}
-.pred-cell{display:flex;flex-direction:column;gap:2px;align-items:center}
-.pred-small{font-size:10px;font-weight:800}
-.pred-small.tai{color:var(--tai)}.pred-small.xiu{color:var(--xiu)}
+.res-cell{display:flex;flex-direction:column;gap:2px;align-items:center}
 @media(max-width:520px){
-  .stats{grid-template-columns:repeat(2,1fr)}
-  th,td{padding:7px 4px;font-size:11px}
-  .hero-pred{font-size:30px}
+  .scorebar{grid-template-columns:repeat(2,1fr)}
+  th,td{padding:8px 4px;font-size:11px}
   .clock{display:none}
   .badge{min-width:44px;font-size:9px}
+  .b-ok,.b-fail,.b-pending{font-size:9px;padding:3px 7px}
 }
 </style>
 </head>
 <body>
 <div class="header">
-    <div class="logo">LE MINH <span>AI v4</span></div>
+    <div class="logo">LE MINH <span>AI TRACK</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="fetchData()">↻</button>
@@ -436,28 +333,24 @@ td{padding:9px 6px;text-align:center;border-bottom:1px solid var(--border);font-
 </div>
 
 <div class="wrap">
-    <div class="disc" id="disc">Đang tải...</div>
-
-    <!-- Prediction hero -->
-    <div class="hero" id="hero">
-        <div class="hero-label">🎯 Dự đoán phiên tới</div>
-        <div class="hero-pred" id="hero-pred">...</div>
-        <div class="hero-conf" id="hero-conf">Độ tin cậy: --</div>
-        <div class="hero-phien" id="hero-phien">Phiên #--</div>
-        <div class="hero-reason" id="hero-reason"></div>
-    </div>
-
-    <!-- Stats: tổng quan + thuật toán -->
-    <div class="stats">
-        <div class="stat"><div class="stat-l">Tổng phiên</div><div class="stat-v" id="s-total">0</div></div>
-        <div class="stat"><div class="stat-l">Tài / Xỉu</div><div class="stat-v"><span class="tai" id="s-tai">0</span> <span style="color:var(--muted)">/</span> <span class="xiu" id="s-xiu">0</span></div></div>
-        <div class="stat"><div class="stat-l">AI đúng / tổng</div><div class="stat-v"><span class="ok" id="s-correct">0</span> <span style="color:var(--muted)">/</span> <span id="s-eval">0</span></div></div>
-        <div class="stat"><div class="stat-l">Winrate AI</div><div class="stat-v ok" id="s-winrate">0%</div></div>
+    <!-- Score bar: ĐÚNG / SAI / CHỜ / TỔNG -->
+    <div class="scorebar">
+        <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="sc-correct">0</div></div>
+        <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="sc-wrong">0</div></div>
+        <div class="sc"><div class="sc-l">⏳ Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
+        <div class="sc"><div class="sc-l">Winrate</div><div class="sc-v tai" id="sc-winrate">0%</div></div>
     </div>
 
     <div class="tbl">
         <table>
-            <thead><tr><th>Phiên</th><th>Kết quả</th><th>Dự đoán AI</th><th>Đúng/Sai</th></tr></thead>
+            <thead>
+                <tr>
+                    <th>Phiên</th>
+                    <th>Kết quả</th>
+                    <th>AI dự đoán</th>
+                    <th>Đúng / Sai</th>
+                </tr>
+            </thead>
             <tbody id="tbody"><tr><td colspan="4" class="loading">Đang kết nối...</td></tr></tbody>
         </table>
     </div>
@@ -472,35 +365,19 @@ async function fetchData(){
         const r = await fetch('/api/history', {cache:'no-store'});
         const data = await r.json();
         document.getElementById('clock').innerText = new Date().toLocaleTimeString('vi-VN');
-        document.getElementById('disc').innerText = data.disclaimer || '';
-        renderHero(data.prediction);
-        renderStats(data.stats, data.ai_stats);
+        renderScore(data.ai_stats || {});
         renderTable(data.rows || []);
     }catch(e){ console.error(e); }
 }
 
-function renderHero(p){
-    const el = document.getElementById('hero-pred');
-    if(!p){ el.innerText='...'; return; }
-    el.innerText = p.prediction || '...';
-    el.className = 'hero-pred ' + (p.prediction === 'Tài' ? 'tai' : 'xiu');
-    document.getElementById('hero-conf').innerText = `Độ tin cậy: ${p.confidence || 0}% · PP: ${p.method || '--'}`;
-    document.getElementById('hero-phien').innerText = `Phiên #${p.phien || '--'}`;
-    document.getElementById('hero-reason').innerText = p.reason || '';
-}
-
-function renderStats(stats, ai){
-    document.getElementById('s-total').innerText = stats.total || 0;
-    document.getElementById('s-tai').innerText = stats.tai || 0;
-    document.getElementById('s-xiu').innerText = stats.xiu || 0;
-    if(ai){
-        document.getElementById('s-correct').innerText = ai.correct || 0;
-        document.getElementById('s-eval').innerText = ai.evaluated || 0;
-        const wr = ai.winrate || 0;
-        const el = document.getElementById('s-winrate');
-        el.innerText = wr + '%';
-        el.className = 'stat-v ' + (wr >= 55 ? 'ok' : wr >= 45 ? '' : 'fail');
-    }
+function renderScore(ai){
+    document.getElementById('sc-correct').innerText = ai.correct || 0;
+    document.getElementById('sc-wrong').innerText = ai.wrong || 0;
+    document.getElementById('sc-pending').innerText = ai.pending || 0;
+    const wr = ai.winrate || 0;
+    const el = document.getElementById('sc-winrate');
+    el.innerText = wr + '%';
+    el.className = 'sc-v ' + (wr >= 55 ? 'ok' : wr >= 45 ? 'tai' : 'fail');
 }
 
 function renderTable(rows){
@@ -509,29 +386,31 @@ function renderTable(rows){
     let html = '';
     rows.forEach(row => {
         const trCls = row.is_next ? 'class="row-next"' : '';
-        let rh = '<span class="badge b-none">—</span>';
-        if(row.result === 'Tài') rh = '<span class="badge b-tai">TÀI</span>';
-        if(row.result === 'Xỉu') rh = '<span class="badge b-xiu">XỈU</span>';
 
+        // Kết quả thực
+        let resBadge = '<span class="badge b-none">—</span>';
+        if(row.result === 'Tài') resBadge = '<span class="badge b-tai">TÀI</span>';
+        if(row.result === 'Xỉu') resBadge = '<span class="badge b-xiu">XỈU</span>';
         let dice = '';
         if(row.dice && row.dice !== '? + ? + ?') dice = `<span class="dice">${row.dice} · ${row.total}</span>`;
 
-        // Dự đoán AI cho phiên này
+        // AI dự đoán
         let predCell = '<span class="badge b-none">—</span>';
         if(row.ai_prediction){
             const cls = row.ai_prediction === 'Tài' ? 'tai' : 'xiu';
-            predCell = `<div class="pred-cell"><span class="pred-small ${cls}">${row.ai_prediction}</span><span style="font-size:9px;color:var(--muted)">${row.ai_confidence||0}%</span></div>`;
+            predCell = `<span class="pred-mini ${cls}">${row.ai_prediction}</span>
+                        <br><span style="font-size:9px;color:var(--muted)">${row.ai_confidence||0}%</span>`;
         }
 
-        // Đúng/Sai
+        // ĐÚNG / SAI
         let evalCell = '<span class="badge b-none">—</span>';
         if(row.ai_correct === true) evalCell = '<span class="badge b-ok">✓ ĐÚNG</span>';
         else if(row.ai_correct === false) evalCell = '<span class="badge b-fail">✗ SAI</span>';
-        else if(row.ai_prediction && row.ai_correct === null) evalCell = '<span class="badge b-pending">⏳</span>';
+        else if(row.ai_prediction && row.ai_correct === null) evalCell = '<span class="badge b-pending">⏳ CHỜ</span>';
 
         html += `<tr ${trCls}>
             <td>#${row.phien}${row.is_next ? '<br><span style="font-size:9px;color:var(--tai)">NEXT</span>' : ''}</td>
-            <td>${rh}${dice}</td>
+            <td><div class="res-cell">${resBadge}${dice}</div></td>
             <td>${predCell}</td>
             <td>${evalCell}</td>
         </tr>`;
@@ -583,37 +462,19 @@ def history():
     try:
         valid, success = _sync_history()
         if not success:
-            return jsonify({'error': 'Không thể kết nối API', 'disclaimer': DISCLAIMER}), 500
+            return jsonify({'error': 'Không thể kết nối API'}), 500
 
         if not valid:
-            return jsonify({
-                'disclaimer': DISCLAIMER,
-                'rows': [],
-                'stats': {'total': 0, 'tai': 0, 'xiu': 0},
-                'ai_stats': _log_stats(),
-                'prediction': None,
-            })
+            return jsonify({'rows': [], 'stats': {'total': 0, 'tai': 0, 'xiu': 0},
+                            'ai_stats': _log_stats()})
 
         next_phien = valid[-1]['phien'] + 1
-
-        # Dự đoán cho phiên tới
         pred = MultiStrategyPredictor.predict(valid)
         _log_prediction(next_phien, pred)
-
         stats = _honest_stats(valid)
         ai_stats = _log_stats()
 
-        out = [{
-            'phien': next_phien,
-            'is_next': True,
-            'result': 'Chờ...',
-            'dice': '? + ? + ?',
-            'total': None,
-            'ai_prediction': pred['prediction'],
-            'ai_confidence': pred['confidence'],
-            'ai_correct': None,
-        }]
-
+        out = []
         for v in reversed(valid[-200:]):
             if v['phien'] <= RESET_ID:
                 continue
@@ -629,20 +490,19 @@ def history():
                 'ai_correct': log['correct'] if log else None,
             })
 
-        return jsonify({
-            'disclaimer': DISCLAIMER,
-            'rows': out,
-            'stats': stats,
-            'ai_stats': ai_stats,
-            'prediction': {
-                'phien': next_phien,
-                'prediction': pred['prediction'],
-                'confidence': pred['confidence'],
-                'method': pred['method'],
-                'reason': pred['reason'],
-                'signals': pred['signals'],
-            },
+        # Phiên tới (chưa có kết quả) — đặt lên đầu
+        out.insert(0, {
+            'phien': next_phien,
+            'is_next': True,
+            'result': 'Chờ...',
+            'dice': '? + ? + ?',
+            'total': None,
+            'ai_prediction': pred['prediction'],
+            'ai_confidence': pred['confidence'],
+            'ai_correct': None,
         })
+
+        return jsonify({'rows': out, 'stats': stats, 'ai_stats': ai_stats})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -650,43 +510,31 @@ def history():
 
 @app.route('/api/predict')
 def predict():
-    """Dự đoán chi tiết với đầy đủ tín hiệu + thống kê đúng/sai."""
     try:
         valid, success = _sync_history()
         if not success:
-            return jsonify({'error': 'Không thể kết nối API', 'disclaimer': DISCLAIMER}), 500
-
+            return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({
-                'disclaimer': DISCLAIMER,
-                'prediction': None,
-                'ai_stats': _log_stats(),
-            })
+            return jsonify({'prediction': None, 'ai_stats': _log_stats()})
 
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid)
         _log_prediction(next_phien, pred)
-        stats = _honest_stats(valid)
-        ai_stats = _log_stats()
 
         return jsonify({
-            'disclaimer': DISCLAIMER,
             'last_phien': last['phien'],
             'next_phien': next_phien,
             'last_result': last['result'],
             'last_dice': last['dice'],
             'last_total': last['total'],
-
             'prediction': pred['prediction'],
             'confidence': pred['confidence'],
             'method': pred['method'],
             'reason': pred['reason'],
             'signals': pred['signals'],
-
-            'stats': stats,
-            'ai_stats': ai_stats,
-            'total_sessions': len(valid),
+            'stats': _honest_stats(valid),
+            'ai_stats': _log_stats(),
             'timestamp': datetime.now().isoformat(),
         })
     except Exception as e:
@@ -696,14 +544,12 @@ def predict():
 
 @app.route('/lc79')
 def lc79():
-    """Endpoint gọn cho tích hợp ngoài."""
     try:
         valid, success = _sync_history()
         if not success:
-            return jsonify({'error': 'Không thể kết nối API', 'disclaimer': DISCLAIMER}), 500
-
+            return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'le minh ai', 'Phien': None, 'Du_doan': None, 'Disclaimer': DISCLAIMER})
+            return jsonify({'Id': 'le minh ai', 'Phien': None, 'Du_doan': None})
 
         last = valid[-1]
         next_phien = last['phien'] + 1
@@ -713,22 +559,19 @@ def lc79():
         ai_stats = _log_stats()
 
         return jsonify({
-            'Id': 'le minh ai v4',
+            'Id': 'le minh ai v5',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
             'Do_tin_cay': f"{pred['confidence']}%",
             'Phuong_phap': pred['method'],
-            'Ly_do': pred['reason'],
             'Tong_phien': stats['total'],
             'So_Tai': stats['tai'],
             'So_Xiu': stats['xiu'],
-            'Ty_le_Tai': f"{stats['ratio_tai']*100:.1f}%",
             'AI_dung': ai_stats['correct'],
-            'AI_da_danh_gia': ai_stats['evaluated'],
+            'AI_sai': ai_stats['wrong'],
+            'AI_cho': ai_stats['pending'],
             'AI_winrate': f"{ai_stats['winrate']}%",
-            'AI_streak': ai_stats['current_streak'],
-            'Disclaimer': DISCLAIMER,
         })
     except Exception as e:
         traceback.print_exc()
@@ -740,18 +583,14 @@ def stats_only():
     try:
         valid, success = _sync_history()
         if not success:
-            return jsonify({'error': 'Không thể kết nối API', 'disclaimer': DISCLAIMER}), 500
-        stats = _honest_stats(valid)
-        ai_stats = _log_stats()
+            return jsonify({'error': 'Không thể kết nối API'}), 500
         last = valid[-1] if valid else None
         return jsonify({
-            'disclaimer': DISCLAIMER,
-            'stats': stats,
-            'ai_stats': ai_stats,
+            'stats': _honest_stats(valid),
+            'ai_stats': _log_stats(),
             'last_result': last['result'] if last else None,
             'last_phien': last['phien'] if last else None,
             'last_dice': last['dice'] if last else None,
-            'total_sessions': len(valid),
             'timestamp': datetime.now().isoformat(),
         })
     except Exception as e:
@@ -761,26 +600,15 @@ def stats_only():
 
 @app.route('/api/prediction_log')
 def prediction_log():
-    """Xem log đầy đủ các dự đoán để tự kiểm chứng."""
     try:
-        _sync_history()  # cập nhật
+        _sync_history()
         items = sorted(PREDICTION_LOG.items(), key=lambda x: x[0], reverse=True)[:100]
-        out = []
-        for phien, entry in items:
-            out.append({
-                'phien': phien,
-                'prediction': entry['prediction'],
-                'confidence': entry['confidence'],
-                'method': entry['method'],
-                'actual': entry.get('actual'),
-                'correct': entry.get('correct'),
-                'logged_at': entry.get('logged_at'),
-            })
-        return jsonify({
-            'disclaimer': DISCLAIMER,
-            'stats': _log_stats(),
-            'predictions': out,
-        })
+        out = [{
+            'phien': p, 'prediction': e['prediction'], 'confidence': e['confidence'],
+            'method': e['method'], 'actual': e.get('actual'),
+            'correct': e.get('correct'), 'logged_at': e.get('logged_at'),
+        } for p, e in items]
+        return jsonify({'stats': _log_stats(), 'predictions': out})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -802,7 +630,7 @@ def reset_api():
             RESET_ID = max(HISTORY_CACHE.keys())
             HISTORY_CACHE = {RESET_ID: HISTORY_CACHE[RESET_ID]}
             PREDICTION_LOG = {}
-            return jsonify({'status': 'success', 'reset_to': RESET_ID + 1, 'note': 'Offline reset'})
+            return jsonify({'status': 'success', 'reset_to': RESET_ID + 1})
         return jsonify({'status': 'error', 'message': 'Không có dữ liệu để reset'}), 400
     except Exception as e:
         traceback.print_exc()
