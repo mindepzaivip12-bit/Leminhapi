@@ -28,7 +28,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 V2</title>
+<title>LE MINH MD5 V1</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -71,7 +71,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span>V2</span></div>
+    <div class="header-title">LE MINH <span>V1</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -981,114 +981,6 @@ def _sync_history():
 
 def _extract_dice_sums(valid_slice):
     return [_dice_sum_from_str(v['dice']) for v in valid_slice]
-
-
-# =====================================================================
-# SEQUENCE ANALYTICS - THỐNG KÊ LỊCH SỬ (KHÔNG DỰ ĐOÁN)
-# Bổ sung độc lập, không thay đổi HTML/CSS hoặc các endpoint cũ.
-# =====================================================================
-def sequence_analytics(results):
-    """Thống kê chuỗi kết quả đã xảy ra; không dự đoán phiên kế tiếp."""
-    seq = []
-    for value in results:
-        text = str(value or '').strip().casefold()
-        if text in ('tài', 'tai'):
-            seq.append('TAI')
-        elif text in ('xỉu', 'xiu'):
-            seq.append('XIU')
-
-    total = len(seq)
-    if total == 0:
-        return {
-            'total': 0, 'tai_count': 0, 'xiu_count': 0,
-            'tai_rate': 0.0, 'xiu_rate': 0.0,
-            'longest_run': 0, 'current_run': 0,
-            'current_run_result': None,
-            'transitions': {'TAI_TAI': 0, 'TAI_XIU': 0,
-                            'XIU_TAI': 0, 'XIU_XIU': 0},
-            'entropy': 0.0, 'windows': {}
-        }
-
-    tai = seq.count('TAI')
-    xiu = total - tai
-
-    # Các đoạn kết quả liên tiếp
-    runs = []
-    current_value = seq[0]
-    current_length = 1
-    for value in seq[1:]:
-        if value == current_value:
-            current_length += 1
-        else:
-            runs.append({'result': current_value, 'length': current_length})
-            current_value = value
-            current_length = 1
-    runs.append({'result': current_value, 'length': current_length})
-
-    transitions = {
-        'TAI_TAI': 0, 'TAI_XIU': 0,
-        'XIU_TAI': 0, 'XIU_XIU': 0
-    }
-    for previous, current in zip(seq, seq[1:]):
-        transitions[f'{previous}_{current}'] += 1
-
-    # Tỷ lệ mô tả theo các cửa sổ lịch sử
-    windows = {}
-    for size in (10, 20, 50, 100):
-        part = seq[-size:]
-        count = len(part)
-        part_tai = part.count('TAI')
-        part_xiu = count - part_tai
-        windows[str(size)] = {
-            'samples': count,
-            'tai': part_tai,
-            'xiu': part_xiu,
-            'tai_rate': round(part_tai / count * 100, 2) if count else 0.0,
-            'xiu_rate': round(part_xiu / count * 100, 2) if count else 0.0
-        }
-
-    # Entropy Shannon mô tả mức phân bố của dữ liệu
-    entropy = 0.0
-    for count in (tai, xiu):
-        probability = count / total
-        if probability > 0:
-            entropy -= probability * math.log2(probability)
-
-    return {
-        'total': total,
-        'tai_count': tai,
-        'xiu_count': xiu,
-        'tai_rate': round(tai / total * 100, 2),
-        'xiu_rate': round(xiu / total * 100, 2),
-        'longest_run': max(run['length'] for run in runs),
-        'current_run': runs[-1]['length'],
-        'current_run_result': runs[-1]['result'],
-        'transitions': transitions,
-        'entropy': round(entropy, 4),
-        'windows': windows,
-        'updated_at': datetime.now().isoformat()
-    }
-
-
-@app.route('/api/sequence-stats')
-def sequence_stats():
-    """Endpoint thống kê lịch sử, không tạo dự đoán hay khuyến nghị cược."""
-    try:
-        valid, success = _sync_history()
-        if not success:
-            return jsonify({
-                'success': False,
-                'error': 'Không thể kết nối API dữ liệu'
-            }), 500
-
-        results = [row.get('result') for row in valid]
-        return jsonify({
-            'success': True,
-            'analysis': sequence_analytics(results)
-        })
-    except Exception as exc:
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(exc)}), 500
 
 
 # =====================================================================
