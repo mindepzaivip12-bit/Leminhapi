@@ -384,7 +384,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 — AI Tracking</title>
+<title>LE MINH MD5 </title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -436,7 +436,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </head>
 <body>
 <div class="header">
-    <div class="logo">LE MINH <span>AI v6</span></div>
+    <div class="logo">LE MINH <span>v1</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="fetchData()">↻</button>
@@ -449,7 +449,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
     <div class="scorebar">
         <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="sc-correct">0</div></div>
         <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="sc-wrong">0</div></div>
-        <div class="sc"><div class="sc-l">⏳ Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
+        <div class="sc"><div class="sc-l"> Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
     </div>
 
     <div class="tbl">
@@ -457,7 +457,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
             <thead>
                 <tr>
                     <th>Phiên</th>
-                    <th>AI dự đoán</th>
+                    <th>dự đoán</th>
                     <th>Kết quả</th>
                     <th>Đúng / Sai</th>
                 </tr>
