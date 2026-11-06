@@ -23,33 +23,53 @@ MAX_LOG_SIZE = 500
 
 
 # =====================================================================
-# MULTI-STRATEGY PREDICTOR
+# MULTI-STRATEGY PREDICTOR v6 — nâng cấp
 # =====================================================================
 class MultiStrategyPredictor:
+
     @staticmethod
-    def _markov(valid):
-        if len(valid) < 10:
+    def _markov_order2(valid):
+        """Markov bậc 2: P(next | prev2, prev1)."""
+        if len(valid) < 15:
+            return None, 0, 0
+        trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
+        for i in range(len(valid) - 2):
+            key = (valid[i]['result'], valid[i + 1]['result'])
+            nxt = valid[i + 2]['result']
+            trans[key][nxt] += 1
+        key = (valid[-2]['result'], valid[-1]['result'])
+        counts = trans[key]
+        total = counts['Tài'] + counts['Xỉu']
+        if total < 3:
+            return None, 0, 0
+        p_tai = counts['Tài'] / total
+        if p_tai > 0.58:
+            return 'Tài', int(p_tai * 100), 1.3
+        elif p_tai < 0.42:
+            return 'Xỉu', int((1 - p_tai) * 100), 1.3
+        return None, 0, 0
+
+    @staticmethod
+    def _markov_order1(valid):
+        if len(valid) < 8:
             return None, 0, 0
         trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
         for i in range(len(valid) - 1):
-            a = valid[i]['result']
-            b = valid[i + 1]['result']
-            trans[a][b] += 1
-        last = valid[-1]['result']
-        counts = trans[last]
+            trans[valid[i]['result']][valid[i + 1]['result']] += 1
+        counts = trans[valid[-1]['result']]
         total = counts['Tài'] + counts['Xỉu']
-        if total < 5:
+        if total < 4:
             return None, 0, 0
         p_tai = counts['Tài'] / total
-        if p_tai > 0.55:
+        if p_tai > 0.56:
             return 'Tài', int(p_tai * 100), 1.2
-        elif p_tai < 0.45:
+        elif p_tai < 0.44:
             return 'Xỉu', int((1 - p_tai) * 100), 1.2
         return None, 0, 0
 
     @staticmethod
     def _streak_break(valid):
-        if len(valid) < 4:
+        if len(valid) < 3:
             return None, 0, 0
         last = valid[-1]['result']
         streak = 1
@@ -58,65 +78,61 @@ class MultiStrategyPredictor:
                 streak += 1
             else:
                 break
-        if streak >= 4:
+        if streak >= 3:
             opp = 'Xỉu' if last == 'Tài' else 'Tài'
-            return opp, min(50 + streak * 8, 75), 1.0
+            return opp, min(55 + streak * 7, 78), 1.0
         return None, 0, 0
 
     @staticmethod
     def _pattern_match(valid):
-        if len(valid) < 20:
+        if len(valid) < 15:
             return None, 0, 0
         results = [v['result'] for v in valid]
-        best_hit = None
-        best_confidence = 0
-        for plen in (5, 4, 3):
-            if len(results) < plen + 5:
+        best_hit, best_conf = None, 0
+        for plen in (6, 5, 4, 3):
+            if len(results) < plen + 4:
                 continue
             pattern = tuple(results[-plen:])
             matches = []
             for i in range(len(results) - plen):
-                if tuple(results[i:i + plen]) == pattern:
-                    if i + plen < len(results):
-                        matches.append(results[i + plen])
-            if len(matches) >= 3:
+                if tuple(results[i:i + plen]) == pattern and i + plen < len(results):
+                    matches.append(results[i + plen])
+            if len(matches) >= 2:
                 c = Counter(matches)
                 top, count = c.most_common(1)[0]
                 conf = int(count / len(matches) * 100)
-                if conf > best_confidence and conf >= 55:
-                    best_hit = top
-                    best_confidence = conf
+                if conf > best_conf and conf >= 55:
+                    best_hit, best_conf = top, conf
         if best_hit:
-            return best_hit, best_confidence, 1.5
+            return best_hit, best_conf, 1.5
         return None, 0, 0
 
     @staticmethod
     def _weighted_freq(valid, window=30):
         recent = valid[-window:]
-        if len(recent) < 10:
+        if len(recent) < 8:
             return None, 0, 0
-        tai_score = 0
-        xiu_score = 0
+        tai, xiu = 0.0, 0.0
         for i, v in enumerate(recent):
             w = (i + 1) / len(recent)
             if v['result'] == 'Tài':
-                tai_score += w
+                tai += w
             else:
-                xiu_score += w
-        total = tai_score + xiu_score
+                xiu += w
+        total = tai + xiu
         if total == 0:
             return None, 0, 0
-        p_tai = tai_score / total
-        if p_tai > 0.58:
-            return 'Tài', int(p_tai * 100), 0.8
-        elif p_tai < 0.42:
-            return 'Xỉu', int((1 - p_tai) * 100), 0.8
+        p = tai / total
+        if p > 0.58:
+            return 'Tài', int(p * 100), 0.8
+        elif p < 0.42:
+            return 'Xỉu', int((1 - p) * 100), 0.8
         return None, 0, 0
 
     @staticmethod
-    def _dice_sum_bias(valid, window=50):
+    def _dice_bias(valid, window=50):
         recent = [v for v in valid[-window:] if v.get('total')]
-        if len(recent) < 15:
+        if len(recent) < 10:
             return None, 0, 0
         tais = sum(1 for v in recent if v['result'] == 'Tài')
         ratio = tais / len(recent)
@@ -126,22 +142,102 @@ class MultiStrategyPredictor:
             return 'Tài', int((1 - ratio) * 100), 0.6
         return None, 0, 0
 
+    @staticmethod
+    def _alternation(valid, window=12):
+        """Phát hiện T-X-T-X (alternating pattern)."""
+        recent = [v['result'] for v in valid[-window:]]
+        if len(recent) < 6:
+            return None, 0, 0
+        alt = sum(1 for i in range(1, len(recent)) if recent[i] != recent[i - 1])
+        alt_ratio = alt / (len(recent) - 1)
+        if alt_ratio >= 0.7:
+            last = recent[-1]
+            nxt = 'Xỉu' if last == 'Tài' else 'Tài'
+            return nxt, int(alt_ratio * 100), 1.4
+        return None, 0, 0
+
+    @staticmethod
+    def _momentum(valid, window=10):
+        """Đà ngắn hạn 10 phiên gần."""
+        recent = [v['result'] for v in valid[-window:]]
+        if len(recent) < 6:
+            return None, 0, 0
+        tai = sum(1 for r in recent if r == 'Tài')
+        p = tai / len(recent)
+        if p >= 0.7:
+            return 'Tài', int(p * 100), 0.9
+        elif p <= 0.3:
+            return 'Xỉu', int((1 - p) * 100), 0.9
+        return None, 0, 0
+
+    @staticmethod
+    def _recency_streak(valid):
+        """Chuỗi gần nhất nặng hơn chuỗi cũ."""
+        if len(valid) < 10:
+            return None, 0, 0
+        weights = {'Tài': 0.0, 'Xỉu': 0.0}
+        for i in range(len(valid) - 10, len(valid)):
+            v = valid[i]
+            w = (i - (len(valid) - 10) + 1) / 10
+            weights[v['result']] += w
+        total = weights['Tài'] + weights['Xỉu']
+        if total == 0:
+            return None, 0, 0
+        p = weights['Tài'] / total
+        if p > 0.6:
+            return 'Tài', int(p * 100), 1.1
+        elif p < 0.4:
+            return 'Xỉu', int((1 - p) * 100), 1.1
+        return None, 0, 0
+
+    @staticmethod
+    def _entropy(results):
+        """Entropy của chuỗi — cao = hỗn loạn, không nên tin tín hiệu."""
+        if len(results) < 5:
+            return 0.0
+        c = Counter(results)
+        total = len(results)
+        h = 0.0
+        for v in c.values():
+            p = v / total
+            if p > 0:
+                import math
+                h -= p * math.log2(p)
+        return h  # 0 = đồng nhất, 1 = cân bằng hoàn toàn
+
     @classmethod
     def predict(cls, valid):
+        if not valid:
+            return {'prediction': random.choice(['Tài', 'Xỉu']), 'confidence': 50,
+                    'method': 'random', 'signals': [], 'reason': 'Chưa có dữ liệu'}
+
+        # Fallback khi ít data
         if len(valid) < 5:
-            pick = random.choice(['Tài', 'Xỉu'])
-            return {'prediction': pick, 'confidence': 50, 'method': 'random',
-                    'signals': [], 'reason': 'Chưa đủ dữ liệu'}
+            last = valid[-1]['result']
+            streak = 1
+            for i in range(len(valid) - 2, -1, -1):
+                if valid[i]['result'] == last:
+                    streak += 1
+                else:
+                    break
+            opp = 'Xỉu' if last == 'Tài' else 'Tài'
+            conf = min(50 + streak * 5, 65)
+            return {'prediction': opp, 'confidence': conf, 'method': 'streak_fallback',
+                    'signals': [], 'reason': f'Ít dữ liệu — bẻ chuỗi {streak} {last}'}
 
         strategies = [
-            ('markov', cls._markov(valid)),
-            ('streak_break', cls._streak_break(valid)),
-            ('pattern_match', cls._pattern_match(valid)),
-            ('weighted_freq', cls._weighted_freq(valid)),
-            ('dice_bias', cls._dice_sum_bias(valid)),
+            ('markov2', cls._markov_order2(valid)),
+            ('markov1', cls._markov_order1(valid)),
+            ('streak', cls._streak_break(valid)),
+            ('pattern', cls._pattern_match(valid)),
+            ('weighted', cls._weighted_freq(valid)),
+            ('dice', cls._dice_bias(valid)),
+            ('alternation', cls._alternation(valid)),
+            ('momentum', cls._momentum(valid)),
+            ('recency', cls._recency_streak(valid)),
         ]
-        tai_score = 0.0
-        xiu_score = 0.0
+
+        tai_score, xiu_score = 0.0, 0.0
         signals = []
         for name, (pred, conf, weight) in strategies:
             if pred is None or weight == 0:
@@ -154,21 +250,39 @@ class MultiStrategyPredictor:
             signals.append({'name': name, 'prediction': pred,
                             'confidence': conf, 'weight': weight})
 
-        if tai_score == 0 and xiu_score == 0:
+        # Entropy filter: nếu chuỗi quá cân bằng và ít tín hiệu → giảm confidence
+        recent = [v['result'] for v in valid[-20:]]
+        entropy = cls._entropy(recent)
+
+        if not signals or (tai_score == 0 and xiu_score == 0):
             pick = random.choice(['Tài', 'Xỉu'])
             return {'prediction': pick, 'confidence': 50, 'method': 'random',
-                    'signals': [], 'reason': 'Không có tín hiệu'}
+                    'signals': [], 'reason': 'Không có tín hiệu rõ'}
 
+        total_score = tai_score + xiu_score
         if tai_score > xiu_score:
             pred = 'Tài'
-            conf = int((tai_score / (tai_score + xiu_score)) * 100)
+            raw_conf = int((tai_score / total_score) * 100)
         else:
             pred = 'Xỉu'
-            conf = int((xiu_score / (tai_score + xiu_score)) * 100)
+            raw_conf = int((xiu_score / total_score) * 100)
+
+        # Penalize confidence nếu entropy cao (hỗn loạn)
+        if entropy > 0.9:
+            final_conf = max(50, raw_conf - 8)
+        elif entropy > 0.7:
+            final_conf = max(50, raw_conf - 3)
+        else:
+            final_conf = min(raw_conf, 85)
 
         method = '+'.join(s['name'] for s in signals) or 'ensemble'
-        return {'prediction': pred, 'confidence': conf, 'method': method,
-                'signals': signals, 'reason': f"Kết hợp {len(signals)} tín hiệu"}
+        return {
+            'prediction': pred,
+            'confidence': final_conf,
+            'method': method,
+            'signals': signals,
+            'reason': f"{len(signals)} tín hiệu · entropy={entropy:.2f}",
+        }
 
 
 # =====================================================================
@@ -258,13 +372,12 @@ def _log_stats():
     correct = sum(1 for e in evaluated if e.get('correct'))
     wrong = len(evaluated) - correct
     pending = sum(1 for e in PREDICTION_LOG.values() if e.get('actual') is None)
-    winrate = round(correct / len(evaluated) * 100, 1) if evaluated else 0
     return {'correct': correct, 'wrong': wrong, 'pending': pending,
-            'evaluated': len(evaluated), 'winrate': winrate}
+            'evaluated': len(evaluated)}
 
 
 # =====================================================================
-# HTML — gọn, xoá disclaimer/hero, có ĐÚNG/SAI rõ
+# HTML
 # =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
@@ -288,12 +401,12 @@ body{background:linear-gradient(135deg,#0f172a,#1e1b4b);color:var(--text);min-he
 
 .wrap{max-width:760px;margin:0 auto;padding:12px}
 
-/* Score bar: ĐÚNG / SAI / CHỜ */
-.scorebar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+/* Score bar: ĐÚNG / SAI / CHỜ (đã xoá Winrate) */
+.scorebar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
 .sc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center}
 .sc-l{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:4px;letter-spacing:.5px}
-.sc-v{font-size:20px;font-weight:800}
-.sc-v.ok{color:var(--ok)}.sc-v.fail{color:var(--fail)}.sc-v.warn{color:var(--warn)}.sc-v.tai{color:var(--tai)}
+.sc-v{font-size:22px;font-weight:800}
+.sc-v.ok{color:var(--ok)}.sc-v.fail{color:var(--fail)}.sc-v.warn{color:var(--warn)}
 
 /* Table */
 .tbl{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-height:74vh;overflow-y:auto}
@@ -312,19 +425,18 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 .pred-mini{font-size:11px;font-weight:800}
 .pred-mini.tai{color:var(--tai)}.pred-mini.xiu{color:var(--xiu)}
 .loading{text-align:center;padding:30px;color:var(--tai);font-weight:600}
-.res-cell{display:flex;flex-direction:column;gap:2px;align-items:center}
 @media(max-width:520px){
-  .scorebar{grid-template-columns:repeat(2,1fr)}
   th,td{padding:8px 4px;font-size:11px}
   .clock{display:none}
   .badge{min-width:44px;font-size:9px}
   .b-ok,.b-fail,.b-pending{font-size:9px;padding:3px 7px}
+  .sc-v{font-size:18px}
 }
 </style>
 </head>
 <body>
 <div class="header">
-    <div class="logo">LE MINH <span>AI TRACK</span></div>
+    <div class="logo">LE MINH <span>AI v6</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="fetchData()">↻</button>
@@ -333,12 +445,11 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </div>
 
 <div class="wrap">
-    <!-- Score bar: ĐÚNG / SAI / CHỜ / TỔNG -->
+    <!-- Score bar: chỉ ĐÚNG / SAI / CHỜ -->
     <div class="scorebar">
         <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="sc-correct">0</div></div>
         <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="sc-wrong">0</div></div>
         <div class="sc"><div class="sc-l">⏳ Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
-        <div class="sc"><div class="sc-l">Winrate</div><div class="sc-v tai" id="sc-winrate">0%</div></div>
     </div>
 
     <div class="tbl">
@@ -346,8 +457,8 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
             <thead>
                 <tr>
                     <th>Phiên</th>
-                    <th>Kết quả</th>
                     <th>AI dự đoán</th>
+                    <th>Kết quả</th>
                     <th>Đúng / Sai</th>
                 </tr>
             </thead>
@@ -374,10 +485,6 @@ function renderScore(ai){
     document.getElementById('sc-correct').innerText = ai.correct || 0;
     document.getElementById('sc-wrong').innerText = ai.wrong || 0;
     document.getElementById('sc-pending').innerText = ai.pending || 0;
-    const wr = ai.winrate || 0;
-    const el = document.getElementById('sc-winrate');
-    el.innerText = wr + '%';
-    el.className = 'sc-v ' + (wr >= 55 ? 'ok' : wr >= 45 ? 'tai' : 'fail');
 }
 
 function renderTable(rows){
@@ -387,14 +494,7 @@ function renderTable(rows){
     rows.forEach(row => {
         const trCls = row.is_next ? 'class="row-next"' : '';
 
-        // Kết quả thực
-        let resBadge = '<span class="badge b-none">—</span>';
-        if(row.result === 'Tài') resBadge = '<span class="badge b-tai">TÀI</span>';
-        if(row.result === 'Xỉu') resBadge = '<span class="badge b-xiu">XỈU</span>';
-        let dice = '';
-        if(row.dice && row.dice !== '? + ? + ?') dice = `<span class="dice">${row.dice} · ${row.total}</span>`;
-
-        // AI dự đoán
+        // AI dự đoán (cột 2)
         let predCell = '<span class="badge b-none">—</span>';
         if(row.ai_prediction){
             const cls = row.ai_prediction === 'Tài' ? 'tai' : 'xiu';
@@ -402,7 +502,14 @@ function renderTable(rows){
                         <br><span style="font-size:9px;color:var(--muted)">${row.ai_confidence||0}%</span>`;
         }
 
-        // ĐÚNG / SAI
+        // Kết quả thực (cột 3)
+        let resBadge = '<span class="badge b-none">—</span>';
+        if(row.result === 'Tài') resBadge = '<span class="badge b-tai">TÀI</span>';
+        if(row.result === 'Xỉu') resBadge = '<span class="badge b-xiu">XỈU</span>';
+        let dice = '';
+        if(row.dice && row.dice !== '? + ? + ?') dice = `<span class="dice">${row.dice} · ${row.total}</span>`;
+
+        // Đúng / Sai (cột 4)
         let evalCell = '<span class="badge b-none">—</span>';
         if(row.ai_correct === true) evalCell = '<span class="badge b-ok">✓ ĐÚNG</span>';
         else if(row.ai_correct === false) evalCell = '<span class="badge b-fail">✗ SAI</span>';
@@ -410,8 +517,8 @@ function renderTable(rows){
 
         html += `<tr ${trCls}>
             <td>#${row.phien}${row.is_next ? '<br><span style="font-size:9px;color:var(--tai)">NEXT</span>' : ''}</td>
-            <td><div class="res-cell">${resBadge}${dice}</div></td>
             <td>${predCell}</td>
+            <td>${resBadge}${dice}</td>
             <td>${evalCell}</td>
         </tr>`;
     });
@@ -475,6 +582,18 @@ def history():
         ai_stats = _log_stats()
 
         out = []
+        # Phiên tới (NEXT) đặt đầu
+        out.append({
+            'phien': next_phien,
+            'is_next': True,
+            'result': 'Chờ...',
+            'dice': '? + ? + ?',
+            'total': None,
+            'ai_prediction': pred['prediction'],
+            'ai_confidence': pred['confidence'],
+            'ai_correct': None,
+        })
+
         for v in reversed(valid[-200:]):
             if v['phien'] <= RESET_ID:
                 continue
@@ -489,18 +608,6 @@ def history():
                 'ai_confidence': log['confidence'] if log else None,
                 'ai_correct': log['correct'] if log else None,
             })
-
-        # Phiên tới (chưa có kết quả) — đặt lên đầu
-        out.insert(0, {
-            'phien': next_phien,
-            'is_next': True,
-            'result': 'Chờ...',
-            'dice': '? + ? + ?',
-            'total': None,
-            'ai_prediction': pred['prediction'],
-            'ai_confidence': pred['confidence'],
-            'ai_correct': None,
-        })
 
         return jsonify({'rows': out, 'stats': stats, 'ai_stats': ai_stats})
     except Exception as e:
@@ -549,7 +656,7 @@ def lc79():
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'le minh ai', 'Phien': None, 'Du_doan': None})
+            return jsonify({'Id': 'le minh ai v6', 'Phien': None, 'Du_doan': None})
 
         last = valid[-1]
         next_phien = last['phien'] + 1
@@ -559,7 +666,7 @@ def lc79():
         ai_stats = _log_stats()
 
         return jsonify({
-            'Id': 'le minh ai v5',
+            'Id': 'le minh ai v6',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
@@ -571,7 +678,6 @@ def lc79():
             'AI_dung': ai_stats['correct'],
             'AI_sai': ai_stats['wrong'],
             'AI_cho': ai_stats['pending'],
-            'AI_winrate': f"{ai_stats['winrate']}%",
         })
     except Exception as e:
         traceback.print_exc()
