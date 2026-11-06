@@ -4,6 +4,7 @@ import traceback
 import time
 import json
 import hashlib
+import math
 from datetime import datetime
 from collections import Counter, defaultdict
 import requests
@@ -51,56 +52,71 @@ def _save_log():
 
 
 # =====================================================================
-# DETERMINISTIC PREDICTOR v7
+# DETERMINISTIC PREDICTOR v7 (nâng cấp — giữ nguyên tên class)
 # =====================================================================
 class MultiStrategyPredictor:
+    """
+    Ensemble predictor v7 nâng cấp:
+    - Bayesian-weighted combination (log-odds)
+    - Adaptive per-strategy weights dựa trên rolling accuracy (backtest 60 phiên)
+    - Streak/pattern analysis mạnh hơn
+    - Confidence calibration chống overconfident
+    - Vẫn DETERMINISTIC: cùng lịch sử → cùng kết quả
+    """
+
+    _STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
 
     @staticmethod
     def _deterministic_choice(options, seed_str):
-        """Chọn deterministic dựa trên hash — cùng input = cùng output."""
         h = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
         return options[h % len(options)]
 
+    # =================================================================
+    # STRATEGY SIGNALS
+    # =================================================================
+
     @staticmethod
-    def _markov_order2(valid):
+    def _markov_order2(valid, window=None):
         if len(valid) < 15:
             return None, 0, 0
+        data = valid[-window:] if window and len(valid) > window else valid
         trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
-        for i in range(len(valid) - 2):
-            key = (valid[i]['result'], valid[i + 1]['result'])
-            trans[key][valid[i + 2]['result']] += 1
-        key = (valid[-2]['result'], valid[-1]['result'])
+        for i in range(len(data) - 2):
+            key = (data[i]['result'], data[i + 1]['result'])
+            trans[key][data[i + 2]['result']] += 1
+        key = (data[-2]['result'], data[-1]['result'])
         counts = trans[key]
         total = counts['Tài'] + counts['Xỉu']
         if total < 3:
             return None, 0, 0
-        p_tai = counts['Tài'] / total
-        if p_tai > 0.58:
-            return 'Tài', int(p_tai * 100), 1.3
-        elif p_tai < 0.42:
-            return 'Xỉu', int((1 - p_tai) * 100), 1.3
+        p_tai_s = (counts['Tài'] + 1) / (total + 2)
+        if p_tai_s > 0.58:
+            return 'Tài', int(p_tai_s * 100), 1.35
+        elif p_tai_s < 0.42:
+            return 'Xỉu', int((1 - p_tai_s) * 100), 1.35
         return None, 0, 0
 
     @staticmethod
-    def _markov_order1(valid):
+    def _markov_order1(valid, window=None):
         if len(valid) < 8:
             return None, 0, 0
+        data = valid[-window:] if window and len(valid) > window else valid
         trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
-        for i in range(len(valid) - 1):
-            trans[valid[i]['result']][valid[i + 1]['result']] += 1
-        counts = trans[valid[-1]['result']]
+        for i in range(len(data) - 1):
+            trans[data[i]['result']][data[i + 1]['result']] += 1
+        counts = trans[data[-1]['result']]
         total = counts['Tài'] + counts['Xỉu']
         if total < 4:
             return None, 0, 0
-        p_tai = counts['Tài'] / total
+        p_tai = (counts['Tài'] + 1) / (total + 2)
         if p_tai > 0.56:
-            return 'Tài', int(p_tai * 100), 1.2
+            return 'Tài', int(p_tai * 100), 1.20
         elif p_tai < 0.44:
-            return 'Xỉu', int((1 - p_tai) * 100), 1.2
+            return 'Xỉu', int((1 - p_tai) * 100), 1.20
         return None, 0, 0
 
     @staticmethod
-    def _streak_break(valid):
+    def _streak_break(valid, window=None):
         if len(valid) < 3:
             return None, 0, 0
         last = valid[-1]['result']
@@ -110,33 +126,61 @@ class MultiStrategyPredictor:
                 streak += 1
             else:
                 break
-        if streak >= 3:
-            opp = 'Xỉu' if last == 'Tài' else 'Tài'
-            return opp, min(55 + streak * 7, 78), 1.0
-        return None, 0, 0
+        if streak < 3:
+            return None, 0, 0
+
+        breaks, continues = 0, 0
+        run = 1
+        for i in range(1, len(valid)):
+            if valid[i]['result'] == valid[i - 1]['result']:
+                run += 1
+            else:
+                if run >= 3:
+                    breaks += 1
+                run = 1
+        if run >= 3:
+            continues += 1
+
+        opp = 'Xỉu' if last == 'Tài' else 'Tài'
+        total_obs = breaks + continues
+        if total_obs >= 3:
+            p_break = breaks / total_obs
+            prior = min(0.5 + streak * 0.04, 0.72)
+            p_break = 0.6 * p_break + 0.4 * prior
+        else:
+            p_break = min(0.52 + streak * 0.05, 0.72)
+
+        conf = int(p_break * 100)
+        if conf < 55:
+            return None, 0, 0
+        weight = 1.0 + (streak - 3) * 0.15
+        return opp, conf, min(weight, 1.6)
 
     @staticmethod
-    def _pattern_match(valid):
+    def _pattern_match(valid, window=None):
         if len(valid) < 15:
             return None, 0, 0
         results = [v['result'] for v in valid]
-        best_hit, best_conf = None, 0
-        for plen in (6, 5, 4, 3):
-            if len(results) < plen + 4:
+        best_hit, best_conf, best_len = None, 0, 0
+        for plen in (7, 6, 5, 4, 3):
+            if len(results) < plen + 5:
                 continue
             pattern = tuple(results[-plen:])
             matches = []
             for i in range(len(results) - plen):
                 if tuple(results[i:i + plen]) == pattern and i + plen < len(results):
                     matches.append(results[i + plen])
-            if len(matches) >= 2:
+            if len(matches) >= 3:
                 c = Counter(matches)
                 top, count = c.most_common(1)[0]
                 conf = int(count / len(matches) * 100)
-                if conf > best_conf and conf >= 55:
-                    best_hit, best_conf = top, conf
+                bonus = min(plen * 2, 10)
+                conf_adj = min(conf + bonus, 88)
+                if conf_adj > best_conf and conf >= 55:
+                    best_hit, best_conf, best_len = top, conf_adj, plen
         if best_hit:
-            return best_hit, best_conf, 1.5
+            weight = 1.2 + best_len * 0.08
+            return best_hit, best_conf, min(weight, 1.8)
         return None, 0, 0
 
     @staticmethod
@@ -147,6 +191,7 @@ class MultiStrategyPredictor:
         tai, xiu = 0.0, 0.0
         for i, v in enumerate(recent):
             w = (i + 1) / len(recent)
+            w = w ** 1.5
             if v['result'] == 'Tài':
                 tai += w
             else:
@@ -156,9 +201,9 @@ class MultiStrategyPredictor:
             return None, 0, 0
         p = tai / total
         if p > 0.58:
-            return 'Tài', int(p * 100), 0.8
+            return 'Tài', int(p * 100), 0.85
         elif p < 0.42:
-            return 'Xỉu', int((1 - p) * 100), 0.8
+            return 'Xỉu', int((1 - p) * 100), 0.85
         return None, 0, 0
 
     @staticmethod
@@ -169,9 +214,11 @@ class MultiStrategyPredictor:
         tais = sum(1 for v in recent if v['result'] == 'Tài')
         ratio = tais / len(recent)
         if ratio > 0.62:
-            return 'Xỉu', int(ratio * 100), 0.6
+            conf = int(min((ratio - 0.5) * 200, 75))
+            return 'Xỉu', max(conf, 55), 0.65
         elif ratio < 0.38:
-            return 'Tài', int((1 - ratio) * 100), 0.6
+            conf = int(min((0.5 - ratio) * 200, 75))
+            return 'Tài', max(conf, 55), 0.65
         return None, 0, 0
 
     @staticmethod
@@ -184,7 +231,8 @@ class MultiStrategyPredictor:
         if alt_ratio >= 0.7:
             last = recent[-1]
             nxt = 'Xỉu' if last == 'Tài' else 'Tài'
-            return nxt, int(alt_ratio * 100), 1.4
+            conf = min(int(alt_ratio * 100) + 5, 85)
+            return nxt, conf, 1.45
         return None, 0, 0
 
     @staticmethod
@@ -195,9 +243,9 @@ class MultiStrategyPredictor:
         tai = sum(1 for r in recent if r == 'Tài')
         p = tai / len(recent)
         if p >= 0.7:
-            return 'Tài', int(p * 100), 0.9
+            return 'Tài', int(p * 100), 0.95
         elif p <= 0.3:
-            return 'Xỉu', int((1 - p) * 100), 0.9
+            return 'Xỉu', int((1 - p) * 100), 0.95
         return None, 0, 0
 
     @staticmethod
@@ -205,24 +253,25 @@ class MultiStrategyPredictor:
         if len(valid) < 10:
             return None, 0, 0
         weights = {'Tài': 0.0, 'Xỉu': 0.0}
-        for i in range(len(valid) - 10, len(valid)):
-            w = (i - (len(valid) - 10) + 1) / 10
+        n = 10
+        for i in range(len(valid) - n, len(valid)):
+            w = (i - (len(valid) - n) + 1) / n
+            w = w ** 2
             weights[valid[i]['result']] += w
         total = weights['Tài'] + weights['Xỉu']
         if total == 0:
             return None, 0, 0
         p = weights['Tài'] / total
         if p > 0.6:
-            return 'Tài', int(p * 100), 1.1
+            return 'Tài', int(p * 100), 1.15
         elif p < 0.4:
-            return 'Xỉu', int((1 - p) * 100), 1.1
+            return 'Xỉu', int((1 - p) * 100), 1.15
         return None, 0, 0
 
     @staticmethod
     def _entropy(results):
         if len(results) < 5:
             return 0.0
-        import math
         c = Counter(results)
         total = len(results)
         h = 0.0
@@ -232,10 +281,68 @@ class MultiStrategyPredictor:
                 h -= p * math.log2(p)
         return h
 
+    # =================================================================
+    # ADAPTIVE WEIGHTS
+    # =================================================================
+    @classmethod
+    def _get_adaptive_weight(cls, name, base_weight):
+        tr = cls._STRATEGY_TRACK.get(name)
+        if not tr:
+            return base_weight
+        n = tr['hit'] + tr['miss']
+        if n < 5:
+            return base_weight
+        acc = tr['hit'] / n
+        factor = 0.6 + (acc - 0.5) * 2.6
+        factor = max(0.45, min(factor, 1.6))
+        return base_weight * factor
+
+    @classmethod
+    def _update_track(cls, name, pred, actual):
+        if pred is None:
+            return
+        tr = cls._STRATEGY_TRACK[name]
+        if pred == actual:
+            tr['hit'] += 1
+        else:
+            tr['miss'] += 1
+
+    @classmethod
+    def _sync_track_from_history(cls, valid):
+        if not valid:
+            return
+        cur_len = len(valid)
+        if cls._STRATEGY_TRACK.get('__len__', {}).get('last_len') == cur_len:
+            return
+        cls._STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
+        start = max(10, len(valid) - 60)
+        for i in range(start, len(valid) - 1):
+            history = valid[:i]
+            actual = valid[i]['result']
+            for fname, fn in (
+                ('markov2', cls._markov_order2),
+                ('markov1', cls._markov_order1),
+                ('streak', cls._streak_break),
+                ('pattern', cls._pattern_match),
+                ('weighted', cls._weighted_freq),
+                ('dice', cls._dice_bias),
+                ('alternation', cls._alternation),
+                ('momentum', cls._momentum),
+                ('recency', cls._recency_streak),
+            ):
+                try:
+                    p, c, w = fn(history)
+                    if p is not None:
+                        cls._update_track(fname, p, actual)
+                except Exception:
+                    pass
+        cls._STRATEGY_TRACK['__len__'] = {'last_len': cur_len}
+
+    # =================================================================
+    # MAIN PREDICT
+    # =================================================================
     @classmethod
     def predict(cls, valid):
-        """DETERMINISTIC — cùng lịch sử → cùng dự đoán."""
-        # Seed từ phiên cuối để deterministic
         seed = str(valid[-1]['phien']) if valid else "0"
 
         if not valid:
@@ -253,64 +360,100 @@ class MultiStrategyPredictor:
                     break
             opp = 'Xỉu' if last == 'Tài' else 'Tài'
             conf = min(50 + streak * 5, 65)
-            return {'prediction': opp, 'confidence': conf, 'method': 'streak_fallback',
-                    'signals': [], 'reason': f'Ít dữ liệu — bẻ chuỗi {streak}'}
+            return {'prediction': opp, 'confidence': conf,
+                    'method': 'streak_fallback', 'signals': [],
+                    'reason': f'Ít dữ liệu — bẻ chuỗi {streak}'}
 
-        strategies = [
-            ('markov2', cls._markov_order2(valid)),
-            ('markov1', cls._markov_order1(valid)),
-            ('streak', cls._streak_break(valid)),
-            ('pattern', cls._pattern_match(valid)),
-            ('weighted', cls._weighted_freq(valid)),
-            ('dice', cls._dice_bias(valid)),
-            ('alternation', cls._alternation(valid)),
-            ('momentum', cls._momentum(valid)),
-            ('recency', cls._recency_streak(valid)),
+        cls._sync_track_from_history(valid)
+
+        strategy_defs = [
+            ('markov2',     lambda v: cls._markov_order2(v)),
+            ('markov1',     lambda v: cls._markov_order1(v)),
+            ('streak',      lambda v: cls._streak_break(v)),
+            ('pattern',     lambda v: cls._pattern_match(v)),
+            ('weighted',    lambda v: cls._weighted_freq(v)),
+            ('dice',        lambda v: cls._dice_bias(v)),
+            ('alternation', lambda v: cls._alternation(v)),
+            ('momentum',    lambda v: cls._momentum(v)),
+            ('recency',     lambda v: cls._recency_streak(v)),
         ]
 
-        tai_score, xiu_score = 0.0, 0.0
+        log_odds = 0.0
         signals = []
-        for name, (pred, conf, weight) in strategies:
+        total_weight = 0.0
+
+        for name, fn in strategy_defs:
+            try:
+                pred, conf, weight = fn(valid)
+            except Exception:
+                continue
             if pred is None or weight == 0:
                 continue
-            score = (conf / 100.0) * weight
-            if pred == 'Tài':
-                tai_score += score
-            else:
-                xiu_score += score
-            signals.append({'name': name, 'prediction': pred,
-                            'confidence': conf, 'weight': weight})
 
-        recent = [v['result'] for v in valid[-20:]]
-        entropy = cls._entropy(recent)
+            weight = cls._get_adaptive_weight(name, weight)
 
-        if not signals or (tai_score == 0 and xiu_score == 0):
+            p = max(0.51, min(conf / 100.0, 0.92))
+            lr = p / (1 - p)
+            if pred == 'Xỉu':
+                lr = 1.0 / lr
+
+            contrib = weight * (1.0 if pred == 'Tài' else -1.0) * (lr - 1.0)
+            log_odds += contrib
+            total_weight += weight
+            signals.append({
+                'name': name, 'prediction': pred,
+                'confidence': conf, 'weight': round(weight, 2),
+            })
+
+        if not signals or total_weight == 0:
             pick = cls._deterministic_choice(['Tài', 'Xỉu'], seed)
             return {'prediction': pick, 'confidence': 50, 'method': 'random',
                     'signals': [], 'reason': 'Không có tín hiệu'}
 
-        total_score = tai_score + xiu_score
-        if tai_score > xiu_score:
+        scaled = log_odds / max(total_weight, 1.0) * 1.8
+        p_tai = 1.0 / (1.0 + math.exp(-scaled))
+        if p_tai >= 0.5:
             pred = 'Tài'
-            raw_conf = int((tai_score / total_score) * 100)
+            raw_conf = int(p_tai * 100)
         else:
             pred = 'Xỉu'
-            raw_conf = int((xiu_score / total_score) * 100)
+            raw_conf = int((1 - p_tai) * 100)
 
-        if entropy > 0.9:
-            final_conf = max(50, raw_conf - 8)
-        elif entropy > 0.7:
-            final_conf = max(50, raw_conf - 3)
-        else:
-            final_conf = min(raw_conf, 85)
+        recent = [v['result'] for v in valid[-20:]]
+        entropy = cls._entropy(recent)
 
-        method = '+'.join(s['name'] for s in signals) or 'ensemble'
+        votes_tai = sum(1 for s in signals if s['prediction'] == 'Tài')
+        votes_xiu = len(signals) - votes_tai
+        agreement = max(votes_tai, votes_xiu) / len(signals)
+
+        penalty = 0
+        if entropy > 0.95:
+            penalty += 10
+        elif entropy > 0.85:
+            penalty += 6
+        elif entropy > 0.70:
+            penalty += 3
+        if agreement < 0.6:
+            penalty += 8
+        elif agreement < 0.75:
+            penalty += 4
+
+        bonus = 4 if agreement >= 0.9 and entropy < 0.6 else 0
+
+        final_conf = raw_conf - penalty + bonus
+        final_conf = max(50, min(final_conf, 88))
+
+        method = '+'.join(s['name'] for s in signals[:4]) or 'ensemble'
+        if len(signals) > 4:
+            method += f'+{len(signals) - 4}'
+
         return {
             'prediction': pred,
             'confidence': final_conf,
             'method': method,
             'signals': signals,
-            'reason': f"{len(signals)} tín hiệu · entropy={entropy:.2f}",
+            'reason': (f"{len(signals)} tín hiệu · entropy={entropy:.2f} · "
+                       f"đồng thuận={agreement:.0%}"),
         }
 
 
@@ -360,17 +503,12 @@ def _sync_history():
 
 
 def _update_prediction_log(valid):
-    """
-    1. Điền actual/correct cho log đã có.
-    2. Retroactive: phiên chưa có log → dự đoán lại từ dữ liệu TRƯỚC nó.
-    """
     if not valid:
         return
 
     by_phien = {v['phien']: v for v in valid}
     phien_list = sorted(by_phien.keys())
 
-    # Bước 1: cập nhật actual cho log đã có
     for phien, entry in list(PREDICTION_LOG.items()):
         if entry.get('actual') is not None:
             continue
@@ -379,7 +517,6 @@ def _update_prediction_log(valid):
             entry['actual'] = actual
             entry['correct'] = (entry['prediction'] == actual)
 
-    # Bước 2: retroactive prediction cho phiên chưa có log
     changed = False
     for i, phien in enumerate(phien_list):
         if phien in PREDICTION_LOG:
@@ -404,7 +541,6 @@ def _update_prediction_log(valid):
         }
         changed = True
 
-    # Bước 3: giới hạn kích thước
     if len(PREDICTION_LOG) > MAX_LOG_SIZE:
         keys = sorted(PREDICTION_LOG.keys())[:len(PREDICTION_LOG) - MAX_LOG_SIZE]
         for k in keys:
@@ -416,7 +552,6 @@ def _update_prediction_log(valid):
 
 
 def _log_prediction(phien, pred_result):
-    """Log dự đoán cho phiên tới — không ghi đè retroactive nếu đã có."""
     if phien in PREDICTION_LOG:
         return
     PREDICTION_LOG[phien] = {
@@ -447,7 +582,6 @@ def _log_stats():
             'evaluated': len(evaluated)}
 
 
-# Load log khi khởi động
 _load_log()
 
 
@@ -799,12 +933,19 @@ def reset_api():
                 RESET_ID = valid[-1]['phien']
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
                 PREDICTION_LOG = {}
+                # reset tracking để tránh leak state giữa các lần reset
+                MultiStrategyPredictor._STRATEGY_TRACK = defaultdict(
+                    lambda: {'hit': 0, 'miss': 0, 'last_len': 0}
+                )
                 _save_log()
                 return jsonify({'status': 'success', 'reset_to': RESET_ID + 1})
         elif HISTORY_CACHE:
             RESET_ID = max(HISTORY_CACHE.keys())
             HISTORY_CACHE = {RESET_ID: HISTORY_CACHE[RESET_ID]}
             PREDICTION_LOG = {}
+            MultiStrategyPredictor._STRATEGY_TRACK = defaultdict(
+                lambda: {'hit': 0, 'miss': 0, 'last_len': 0}
+            )
             _save_log()
             return jsonify({'status': 'success', 'reset_to': RESET_ID + 1})
         return jsonify({'status': 'error', 'message': 'Không có dữ liệu để reset'}), 400
