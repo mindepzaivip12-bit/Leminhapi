@@ -52,18 +52,11 @@ def _save_log():
 
 
 # =====================================================================
-# DETERMINISTIC PREDICTOR v7 (nâng cấp — giữ nguyên tên class)
+# DETERMINISTIC PREDICTOR v8
+# - Thêm: đảo cầu (invert), xu hướng (trend), cầu nghiêng (bias run)
+# - Ensemble Bayesian log-odds + adaptive weight + calibration
 # =====================================================================
 class MultiStrategyPredictor:
-    """
-    Ensemble predictor v7 nâng cấp:
-    - Bayesian-weighted combination (log-odds)
-    - Adaptive per-strategy weights dựa trên rolling accuracy (backtest 60 phiên)
-    - Streak/pattern analysis mạnh hơn
-    - Confidence calibration chống overconfident
-    - Vẫn DETERMINISTIC: cùng lịch sử → cùng kết quả
-    """
-
     _STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
 
     @staticmethod
@@ -268,6 +261,131 @@ class MultiStrategyPredictor:
             return 'Xỉu', int((1 - p) * 100), 1.15
         return None, 0, 0
 
+    # =================================================================
+    # NEW STRATEGIES v8
+    # =================================================================
+
+    @staticmethod
+    def _invert_cau(valid):
+        """
+        Đảo cầu: nếu cầu 1-1 (T-X-T-X...) đang chạy mạnh → giữ nhịp đảo.
+        Nếu cầu 2-2, 3-3 ổn định → bám pattern đảo theo block.
+        Nếu kết quả gần nhất vừa phá cầu (streak 1, trước đó là chuỗi dài)
+        → có xu hướng đảo lại (mean-revert).
+        """
+        if len(valid) < 12:
+            return None, 0, 0
+        r = [v['result'] for v in valid[-16:]]
+
+        # Cầu 1-1 (alternating)
+        alt = sum(1 for i in range(1, len(r)) if r[i] != r[i - 1])
+        alt_ratio = alt / (len(r) - 1)
+        if alt_ratio >= 0.65:
+            nxt = 'Xỉu' if r[-1] == 'Tài' else 'Tài'
+            conf = min(56 + int(alt_ratio * 30), 82)
+            return nxt, conf, 1.30
+
+        # Cầu block 2-2 (T T X X T T ...)
+        block2_hits = 0
+        block2_total = 0
+        for i in range(2, len(r)):
+            if r[i] == r[i - 2] and r[i] != r[i - 1]:
+                block2_hits += 1
+            if r[i] != r[i - 1]:
+                block2_total += 1
+        if block2_total >= 4 and block2_hits / block2_total >= 0.7:
+            # đoán theo block 2
+            tail_run = 1
+            for i in range(len(r) - 2, -1, -1):
+                if r[i] == r[-1]:
+                    tail_run += 1
+                else:
+                    break
+            nxt = r[-2] if tail_run == 1 else ('Xỉu' if r[-1] == 'Tài' else 'Tài')
+            return nxt, 68, 1.25
+
+        # Mean-revert sau cầu dài vừa gãy
+        run = 1
+        for i in range(len(r) - 2, -1, -1):
+            if r[i] == r[-1]:
+                run += 1
+            else:
+                break
+        if run == 1 and len(r) >= 6:
+            # xem trước khi gãy có chuỗi dài không
+            prev = r[-2]
+            prev_run = 1
+            for i in range(len(r) - 3, -1, -1):
+                if r[i] == prev:
+                    prev_run += 1
+                else:
+                    break
+            if prev_run >= 4:
+                # vừa gãy chuỗi dài → xu hướng đảo tiếp
+                return r[-1], 62, 1.15
+        return None, 0, 0
+
+    @staticmethod
+    def _trend(valid):
+        """
+        Xu hướng: so sánh tỷ lệ Tài trong 3 khung thời gian
+        (gần 10, 20, 40) — nếu cùng chiều & chênh lệch đủ lớn → theo xu hướng.
+        """
+        if len(valid) < 20:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+
+        def tai_ratio(win):
+            seg = r[-win:]
+            return sum(1 for x in seg if x == 'Tài') / len(seg)
+
+        p10 = tai_ratio(10)
+        p20 = tai_ratio(20) if len(r) >= 20 else p10
+        p40 = tai_ratio(40) if len(r) >= 40 else p20
+
+        # Cùng chiều tăng (Tài)
+        if p10 > 0.55 and p20 > 0.52 and p10 >= p20 - 0.05 and p10 - p40 >= 0.05:
+            conf = min(int((p10 - 0.5) * 200 + 52), 78)
+            return 'Tài', conf, 1.20
+        # Cùng chiều giảm (Xỉu)
+        if p10 < 0.45 and p20 < 0.48 and p10 <= p20 + 0.05 and p40 - p10 >= 0.05:
+            conf = min(int((0.5 - p10) * 200 + 52), 78)
+            return 'Xỉu', conf, 1.20
+        return None, 0, 0
+
+    @staticmethod
+    def _bias_run(valid):
+        """
+        Cầu nghiêng: một bên chiếm ưu thế trong cửa sổ trượt,
+        nhưng KHÔNG phải do streak — mà do tần suất nửa gần đây cao.
+        Đây là biến thể khác weighted_freq: tính trên 2 nửa cửa sổ 24 phiên.
+        """
+        if len(valid) < 24:
+            return None, 0, 0
+        r = [v['result'] for v in valid[-24:]]
+        first = r[:12]
+        second = r[12:]
+
+        t_first = sum(1 for x in first if x == 'Tài')
+        t_second = sum(1 for x in second if x == 'Tài')
+        r_first = t_first / 12
+        r_second = t_second / 12
+
+        # Nghiêng tăng dần về Tài (nửa sau > nửa đầu đáng kể)
+        if r_second - r_first >= 0.25 and r_second >= 0.60:
+            conf = min(int((r_second - 0.5) * 180 + 55), 80)
+            return 'Tài', conf, 1.15
+        # Nghiêng tăng dần về Xỉu
+        if r_first - r_second >= 0.25 and (1 - r_second) >= 0.60:
+            conf = min(int((r_second - 0.5) * -180 + 55), 80)
+            return 'Xỉu', conf, 1.15
+        # Nghiêng mạnh một bên ở nửa sau
+        if r_second >= 0.75:
+            return 'Tài', 65, 1.00
+        if r_second <= 0.25:
+            return 'Xỉu', 65, 1.00
+        return None, 0, 0
+
     @staticmethod
     def _entropy(results):
         if len(results) < 5:
@@ -315,7 +433,7 @@ class MultiStrategyPredictor:
         if cls._STRATEGY_TRACK.get('__len__', {}).get('last_len') == cur_len:
             return
         cls._STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
-        start = max(10, len(valid) - 60)
+        start = max(15, len(valid) - 60)
         for i in range(start, len(valid) - 1):
             history = valid[:i]
             actual = valid[i]['result']
@@ -329,6 +447,9 @@ class MultiStrategyPredictor:
                 ('alternation', cls._alternation),
                 ('momentum', cls._momentum),
                 ('recency', cls._recency_streak),
+                ('invert', cls._invert_cau),
+                ('trend', cls._trend),
+                ('bias_run', cls._bias_run),
             ):
                 try:
                     p, c, w = fn(history)
@@ -376,6 +497,9 @@ class MultiStrategyPredictor:
             ('alternation', lambda v: cls._alternation(v)),
             ('momentum',    lambda v: cls._momentum(v)),
             ('recency',     lambda v: cls._recency_streak(v)),
+            ('invert',      lambda v: cls._invert_cau(v)),
+            ('trend',       lambda v: cls._trend(v)),
+            ('bias_run',    lambda v: cls._bias_run(v)),
         ]
 
         log_odds = 0.0
@@ -586,7 +710,7 @@ _load_log()
 
 
 # =====================================================================
-# HTML
+# HTML (giữ nguyên giao diện)
 # =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
@@ -643,7 +767,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </head>
 <body>
 <div class="header">
-    <div class="logo">LE MINH <span>v1</span></div>
+    <div class="logo">LE MINH <span>v8</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="fetchData()">↻</button>
@@ -760,7 +884,7 @@ setInterval(fetchData, 5000);
 
 
 # =====================================================================
-# ROUTES
+# ROUTES (giữ nguyên)
 # =====================================================================
 @app.route('/')
 def index():
@@ -857,7 +981,7 @@ def lc79():
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'le minh ai v7', 'Phien': None, 'Du_doan': None})
+            return jsonify({'Id': 'le minh ai v8', 'Phien': None, 'Du_doan': None})
 
         last = valid[-1]
         next_phien = last['phien'] + 1
@@ -867,7 +991,7 @@ def lc79():
         ai_stats = _log_stats()
 
         return jsonify({
-            'Id': 'le minh ai v7',
+            'Id': 'le minh ai v8',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
@@ -933,7 +1057,6 @@ def reset_api():
                 RESET_ID = valid[-1]['phien']
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
                 PREDICTION_LOG = {}
-                # reset tracking để tránh leak state giữa các lần reset
                 MultiStrategyPredictor._STRATEGY_TRACK = defaultdict(
                     lambda: {'hit': 0, 'miss': 0, 'last_len': 0}
                 )
