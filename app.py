@@ -136,7 +136,6 @@ class MultiStrategyPredictor:
         if streak < 3:
             return None, 0, 0
 
-        # Streak >=8: để exhaustion xử lý
         if streak >= 8:
             return None, 0, 0
 
@@ -706,25 +705,18 @@ class MultiStrategyPredictor:
 # 80 MẪU TEST PATTERN
 # =====================================================================
 TEST_PATTERNS = [
-    # ---- CẦU 1-1 (alternating) ----
     {"name": "1-1_clean", "seq": "T X T X T X T X T X T X T X T X T X", "expect_note": "bẻ theo nhịp"},
     {"name": "1-1_start_X", "seq": "X T X T X T X T X T X T X T X T X T", "expect_note": "bẻ theo nhịp"},
     {"name": "1-1_mixed_short", "seq": "T X T X T X T X T", "expect_note": "bẻ"},
     {"name": "1-1_long", "seq": "T X " * 12, "expect_note": "theo nhịp"},
     {"name": "1-1_with_noise", "seq": "T X T X T X T T X T X T X T X T X", "expect_note": "bẻ"},
-
-    # ---- CẦU 2-2 (block) ----
     {"name": "2-2_clean", "seq": "T T X X T T X X T T X X T T X X", "expect_note": "đảo block"},
     {"name": "2-2_start_X", "seq": "X X T T X X T T X X T T X X T T", "expect_note": "đảo block"},
     {"name": "2-2_mixed", "seq": "T T X X T T X X T T X T T X X", "expect_note": "đảo"},
     {"name": "2-2_long", "seq": "T T X X " * 6, "expect_note": "đảo block"},
-
-    # ---- CẦU 3-3 (block) ----
     {"name": "3-3_clean", "seq": "T T T X X X T T T X X X T T T", "expect_note": "đảo block"},
     {"name": "3-3_short", "seq": "T T T X X X T T T", "expect_note": "đảo block"},
     {"name": "3-3_start_X", "seq": "X X X T T T X X X T T T", "expect_note": "đảo block"},
-
-    # ---- CẦU BỆT TÀI dài ----
     {"name": "all_tai_3", "seq": "T T T", "expect_note": "bẻ nhẹ"},
     {"name": "all_tai_4", "seq": "T T T T", "expect_note": "bẻ"},
     {"name": "all_tai_5", "seq": "T T T T T", "expect_note": "theo cầu"},
@@ -735,98 +727,56 @@ TEST_PATTERNS = [
     {"name": "all_tai_12", "seq": "T " * 12, "expect_note": "kiệt cực mạnh"},
     {"name": "all_tai_15", "seq": "T " * 15, "expect_note": "siêu kiệt"},
     {"name": "all_tai_20", "seq": "T " * 20, "expect_note": "dominance flip"},
-
-    # ---- CẦU BỆT XỈU dài ----
     {"name": "all_xiu_3", "seq": "X X X", "expect_note": "bẻ nhẹ"},
     {"name": "all_xiu_5", "seq": "X X X X X", "expect_note": "theo cầu"},
     {"name": "all_xiu_8", "seq": "X X X X X X X X", "expect_note": "kiệt — bẻ"},
     {"name": "all_xiu_10", "seq": "X " * 10, "expect_note": "kiệt"},
     {"name": "all_xiu_12", "seq": "X " * 12, "expect_note": "kiệt mạnh"},
     {"name": "all_xiu_20", "seq": "X " * 20, "expect_note": "dominance flip"},
-
-    # ---- LỆCH CỰC ĐOAN ----
     {"name": "85pct_tai", "seq": "T " * 17 + "X X X", "expect_note": "lệch — bẻ"},
     {"name": "85pct_xiu", "seq": "X " * 17 + "T T T", "expect_note": "lệch — bẻ"},
     {"name": "75pct_tai", "seq": "T T T X " * 5, "expect_note": "nghiêng Tài"},
     {"name": "75pct_xiu", "seq": "X X X T " * 5, "expect_note": "nghiêng Xỉu"},
-
-    # ---- XU HƯỚNG TĂNG ----
     {"name": "trend_up", "seq": "X X X X X T T T T T T T T T T", "expect_note": "theo Tài"},
     {"name": "trend_up_recent", "seq": "X X T X T T T T T T T", "expect_note": "theo Tài"},
     {"name": "trend_down", "seq": "T T T T T X X X X X X X X X X", "expect_note": "theo Xỉu"},
     {"name": "trend_down_recent", "seq": "T T X T X X X X X X X", "expect_note": "theo Xỉu"},
-
-    # ---- ĐẢO CẦU SAU CHUỖI DÀI ----
     {"name": "break_after_5tai", "seq": "T T T T T X", "expect_note": "đảo lại Tài"},
     {"name": "break_after_5xiu", "seq": "X X X X X T", "expect_note": "đảo lại Xỉu"},
     {"name": "break_after_6tai", "seq": "T T T T T T X", "expect_note": "đảo lại Tài"},
     {"name": "break_after_7xiu", "seq": "X X X X X X X T", "expect_note": "đảo lại Xỉu"},
-
-    # ---- CẦU GẤP KHÚC ----
     {"name": "zigzag_1", "seq": "T X X T T X X T T X", "expect_note": "theo nhịp"},
     {"name": "zigzag_2", "seq": "T T X T T X T T X", "expect_note": "theo nhịp"},
     {"name": "zigzag_3", "seq": "X T T X T T X T", "expect_note": "theo nhịp"},
-
-    # ---- CẦU 1-2 ----
     {"name": "1-2_clean", "seq": "T X X T X X T X X T X X", "expect_note": "đảo block"},
     {"name": "1-2_start_X", "seq": "X T T X T T X T T X T T", "expect_note": "đảo block"},
-
-    # ---- CẦU 2-1 ----
     {"name": "2-1_clean", "seq": "T T X T T X T T X T T X", "expect_note": "đảo block"},
     {"name": "2-1_start_X", "seq": "X X T X X T X X T X X T", "expect_note": "đảo block"},
-
-    # ---- CẦU 1-3 ----
     {"name": "1-3_clean", "seq": "T X X X T X X X T X X X", "expect_note": "đảo block"},
-
-    # ---- CẦU 3-1 ----
     {"name": "3-1_clean", "seq": "T T T X T T T X T T T X", "expect_note": "đảo block"},
-
-    # ---- CẦU 2-2-1 ----
     {"name": "2-2-1", "seq": "T T X X T T T X X T T T X X", "expect_note": "pattern"},
-
-    # ---- NHIỄU ----
     {"name": "noisy_1", "seq": "T X T T X X T X X T T X T X", "expect_note": "không chắc"},
     {"name": "noisy_2", "seq": "T T X T X T T X X T X T X X", "expect_note": "không chắc"},
     {"name": "noisy_3", "seq": "X T X X T T X T X X T X T T", "expect_note": "không chắc"},
     {"name": "random", "seq": "T X X T T X T T X X T X T T X X T", "expect_note": "không chắc"},
-
-    # ---- ĐẶC BIỆT ----
     {"name": "symmetry", "seq": "T T T X X X X X X T T T", "expect_note": "đảo block"},
     {"name": "reverse_symmetry", "seq": "X X X T T T T T T X X X", "expect_note": "đảo block"},
     {"name": "sandwich", "seq": "T X X T T X X T T X X T", "expect_note": "theo nhịp"},
     {"name": "double_sandwich", "seq": "T T X X X X T T T T X X X X", "expect_note": "đảo block"},
-
-    # ---- TREND + KIỆT ----
     {"name": "trend_to_exhaust", "seq": "X T T T T T T T T T", "expect_note": "kiệt Tài"},
     {"name": "trend_to_exhaust_xiu", "seq": "T X X X X X X X X X", "expect_note": "kiệt Xỉu"},
-
-    # ---- ĐẢO NHANH ----
     {"name": "fast_flip", "seq": "T T T X X X T T T X X X T", "expect_note": "đảo block"},
     {"name": "slow_flip", "seq": "T T T T T X X X X X T T T T", "expect_note": "đảo block"},
-
-    # ---- BẺ CẦU CHUẨN ----
     {"name": "classic_break", "seq": "T T T X", "expect_note": "vừa bẻ"},
     {"name": "classic_break_xiu", "seq": "X X X T", "expect_note": "vừa bẻ"},
-
-    # ---- HỖN HỢP ----
     {"name": "mix_1", "seq": "T T X X T T T X X X T T T T", "expect_note": "tăng dần block"},
     {"name": "mix_2", "seq": "X X T T X X X T T T X X X X", "expect_note": "tăng dần block"},
     {"name": "mix_3", "seq": "T X X T T T X X X X T T T T T", "expect_note": "tăng dần block"},
-
-    # ---- CẦU 4-4 ----
     {"name": "4-4", "seq": "T T T T X X X X T T T T X X X X", "expect_note": "đảo block"},
-
-    # ---- CẦU 5-5 ----
     {"name": "5-5", "seq": "T T T T T X X X X X T T T T T", "expect_note": "đảo block"},
-
-    # ---- ĐUÔI DÀI + ĐẢO ----
     {"name": "tail_dai_break", "seq": "X X T T T T T T X", "expect_note": "đảo lại Tài"},
     {"name": "tail_dai_break_xiu", "seq": "T T X X X X X X T", "expect_note": "đảo lại Xỉu"},
-
-    # ---- ENTROPY CAO ----
     {"name": "high_entropy", "seq": "T X T T X X T X X T T X X T X T", "expect_note": "không chắc"},
-
-    # ---- ENTROPY THẤP ----
     {"name": "low_entropy", "seq": "T T T T T T T T T T T T T T T", "expect_note": "kiệt"},
 ]
 
@@ -842,6 +792,147 @@ def _seq_to_valid(seq_str, start_phien=1000):
             'total': 0,
         })
     return valid
+
+
+# =====================================================================
+# BỘ MẪU CẦU TEST ALL — KHÔNG RANDOM
+# =====================================================================
+def _build_all_cau_tests():
+    """
+    Sinh mẫu cầu quy luật rõ ràng để test.
+    Trả list dict: {name, history, actual, expect}
+    """
+    tests = []
+
+    def add(name, history_str, actual_char, expect_char):
+        h = _seq_to_valid(history_str)
+        if len(h) < 4:
+            return
+        actual = 'Tài' if actual_char.upper() == 'T' else 'Xỉu'
+        expect = 'Tài' if expect_char.upper() == 'T' else 'Xỉu'
+        tests.append({
+            'name': name,
+            'history': history_str,
+            'actual': actual,
+            'expect': expect,
+        })
+
+    # ---- CẦU 1-1 ----
+    for i in range(6, 15):
+        seq = ' '.join(['T' if j % 2 == 0 else 'X' for j in range(i)])
+        nxt = 'T' if i % 2 == 0 else 'X'
+        add(f'1-1_len{i}', seq, nxt, nxt)
+
+    # ---- CẦU 2-2 ----
+    for i in range(6, 15):
+        seq = ' '.join(['T' if (j // 2) % 2 == 0 else 'X' for j in range(i)])
+        nxt = 'T' if (i // 2) % 2 == 0 else 'X'
+        add(f'2-2_len{i}', seq, nxt, nxt)
+
+    # ---- CẦU 3-3 ----
+    for i in range(6, 15):
+        seq = ' '.join(['T' if (j // 3) % 2 == 0 else 'X' for j in range(i)])
+        nxt = 'T' if (i // 3) % 2 == 0 else 'X'
+        add(f'3-3_len{i}', seq, nxt, nxt)
+
+    # ---- CẦU BỆT TÀI (test bẻ) ----
+    for n in (3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 18, 20):
+        add(f'bet_tai_{n}', ' '.join(['T'] * n), 'X', 'X')
+
+    # ---- CẦU BỆT XỈU ----
+    for n in (3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 18, 20):
+        add(f'bet_xiu_{n}', ' '.join(['X'] * n), 'T', 'T')
+
+    # ---- CẦU 1-2 ----
+    for i in range(6, 15):
+        seq = []
+        j = 0
+        toggle = True
+        while len(seq) < i:
+            if toggle:
+                seq.append('T')
+            else:
+                seq.extend(['X', 'X'])
+            toggle = not toggle
+        seq = seq[:i]
+        j = i
+        toggle = True
+        cnt = 0
+        phase = 0
+        while cnt < j:
+            size = 1 if phase % 2 == 0 else 2
+            cnt += size
+            phase += 1
+        nxt = 'T' if (phase - 1) % 2 == 0 else 'X'
+        add(f'1-2_len{i}', ' '.join(seq), nxt, nxt)
+
+    # ---- CẦU 2-1 ----
+    for i in range(6, 15):
+        seq = []
+        toggle = True
+        while len(seq) < i:
+            if toggle:
+                seq.extend(['T', 'T'])
+            else:
+                seq.append('X')
+            toggle = not toggle
+        seq = seq[:i]
+        phase = 0
+        cnt = 0
+        while cnt < i:
+            size = 2 if phase % 2 == 0 else 1
+            cnt += size
+            phase += 1
+        nxt = 'T' if (phase - 1) % 2 == 0 else 'X'
+        add(f'2-1_len{i}', ' '.join(seq), nxt, nxt)
+
+    # ---- CẦU 4-4 ----
+    for i in range(8, 15):
+        seq = ' '.join(['T' if (j // 4) % 2 == 0 else 'X' for j in range(i)])
+        nxt = 'T' if (i // 4) % 2 == 0 else 'X'
+        add(f'4-4_len{i}', seq, nxt, nxt)
+
+    # ---- CẦU 5-5 ----
+    for i in range(10, 16):
+        seq = ' '.join(['T' if (j // 5) % 2 == 0 else 'X' for j in range(i)])
+        nxt = 'T' if (i // 5) % 2 == 0 else 'X'
+        add(f'5-5_len{i}', seq, nxt, nxt)
+
+    # ---- XU HƯỚNG TĂNG ----
+    add('trend_up', 'X X X X X T T T T T T T T T T', 'T', 'T')
+    add('trend_down', 'T T T T T X X X X X X X X X X', 'X', 'X')
+    add('trend_up_short', 'X X X T T T T T T', 'T', 'T')
+    add('trend_down_short', 'T T T X X X X X X', 'X', 'X')
+
+    # ---- ĐẢO CẦU SAU CHUỖI DÀI ----
+    add('break_5tai', 'T T T T T X', 'T', 'T')
+    add('break_5xiu', 'X X X X X T', 'X', 'X')
+    add('break_6tai', 'T T T T T T X', 'T', 'T')
+    add('break_6xiu', 'X X X X X X T', 'X', 'X')
+    add('break_7tai', 'T T T T T T T X', 'T', 'T')
+    add('break_7xiu', 'X X X X X X X T', 'X', 'X')
+
+    # ---- CẦU GẤP KHÚC ----
+    add('zigzag_1', 'T X X T T X X T T X', 'T', 'T')
+    add('zigzag_2', 'T T X T T X T T X', 'T', 'T')
+
+    # ---- 2-2-1 ----
+    add('2-2-1_1', 'T T X X T T X X T', 'T', 'T')
+    add('2-2-1_2', 'T T X X T T T X X T T T X X', 'T', 'T')
+
+    # ---- SYMMETRY ----
+    add('symmetry', 'T T T X X X X X X T T T', 'X', 'X')
+    add('reverse_symmetry', 'X X X T T T T T T X X X', 'T', 'T')
+
+    # ---- TĂNG DẦN BLOCK ----
+    add('mix_1', 'T T X X T T T X X X T T T T', 'X', 'X')
+    add('mix_2', 'X X T T X X X T T T X X X X', 'T', 'T')
+
+    # ---- CLASSIC BREAK ----
+    add('classic_break', 'T T T X', 'X', 'X')
+    add('classic_break_xiu', 'X X X T', 'T', 'T')
+
+    return tests
 
 
 # =====================================================================
@@ -1341,7 +1432,7 @@ def reset_api():
 
 
 # =====================================================================
-# API TEST 80 MẪU
+# API TEST 80 MẪU PATTERN
 # =====================================================================
 @app.route('/api/test_patterns')
 def test_patterns():
@@ -1361,7 +1452,6 @@ def test_patterns():
             if len(tokens) < 5:
                 continue
 
-            # Dùng N-1 phiên làm history, phiên cuối là actual để test
             history_tokens = tokens[:-1]
             actual_tok = tokens[-1].upper()
             actual = 'Tài' if actual_tok == 'T' else 'Xỉu'
@@ -1411,6 +1501,98 @@ def test_patterns():
             'total': total,
             'correct': correct,
             'accuracy': acc,
+            'results': results,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+# =====================================================================
+# API TEST TẤT CẢ CẦU — KHÔNG RANDOM
+# =====================================================================
+@app.route('/api/test_all_cau')
+def test_all_cau():
+    """
+    Test exhaustive qua TẤT CẢ mẫu cầu deterministic.
+    - Không random
+    - So sánh prediction vs expect (kỳ vọng của pattern)
+    - Trả thống kê theo từng nhóm cầu
+
+    GET /api/test_all_cau            → JSON
+    GET /api/test_all_cau?format=txt → text
+    """
+    try:
+        tests = _build_all_cau_tests()
+        results = []
+        correct = 0
+        total = 0
+        by_group = defaultdict(lambda: {'correct': 0, 'total': 0})
+
+        for t in tests:
+            valid = _seq_to_valid(t['history'])
+            if len(valid) < 4:
+                continue
+
+            pred = MultiStrategyPredictor.predict(valid)
+            is_correct = (pred['prediction'] == t['expect'])
+            total += 1
+            if is_correct:
+                correct += 1
+
+            group = t['name'].split('_')[0]
+            by_group[group]['total'] += 1
+            if is_correct:
+                by_group[group]['correct'] += 1
+
+            results.append({
+                'name': t['name'],
+                'history_len': len(valid),
+                'history_tail': ' '.join(
+                    ['T' if v['result'] == 'Tài' else 'X' for v in valid[-8:]]
+                ),
+                'prediction': pred['prediction'],
+                'confidence': pred['confidence'],
+                'expect': t['expect'],
+                'actual_result': t['actual'],
+                'correct_vs_expect': is_correct,
+                'correct_vs_actual': (pred['prediction'] == t['actual']),
+                'method': pred['method'],
+                'flipped': pred.get('flipped', False),
+            })
+
+        acc = round(correct / total * 100, 2) if total > 0 else 0
+        group_stats = {
+            k: {'correct': v['correct'], 'total': v['total'],
+                'accuracy': round(v['correct'] / v['total'] * 100, 2) if v['total'] else 0}
+            for k, v in sorted(by_group.items())
+        }
+
+        fmt = request.args.get('format', 'json').lower()
+        if fmt == 'txt':
+            lines = [f"=== TEST ALL CẦU v10 (NO RANDOM) ===",
+                     f"Tổng: {total} mẫu | Đúng kỳ vọng: {correct} ({acc}%)", ""]
+            lines.append("--- THEO NHÓM ---")
+            for k, v in group_stats.items():
+                lines.append(f"  {k:<15} {v['correct']}/{v['total']} ({v['accuracy']}%)")
+            lines.append("")
+            lines.append("--- CHI TIẾT ---")
+            for r in results:
+                mark = '✓' if r['correct_vs_expect'] else '✗'
+                flip = ' [FLIP]' if r['flipped'] else ''
+                lines.append(
+                    f"{mark} {r['name']:<20} hist={r['history_tail']:<24} "
+                    f"pred={r['prediction']:<5}({r['confidence']}%) "
+                    f"expect={r['expect']:<5} actual={r['actual_result']:<5}{flip}"
+                )
+            return '\n'.join(lines), 200, {'Content-Type': 'text/plain; charset=utf-8'}
+
+        return jsonify({
+            'version': 'v10',
+            'total': total,
+            'correct': correct,
+            'accuracy': acc,
+            'group_stats': group_stats,
             'results': results,
         })
     except Exception as e:
