@@ -1,5 +1,4 @@
 import os
-import random
 import traceback
 import time
 import json
@@ -53,16 +52,11 @@ def _save_log():
 
 
 # =====================================================================
-# CAU DETECTOR v11 — NHẬN DIỆN 20+ LOẠI CẦU
+# CAU DETECTOR v11 — NHẬN DIỆN 26+ LOẠI CẦU
 # =====================================================================
 class CauDetector:
-    """
-    Nhận diện cầu dựa trên pattern matching có kiểm chứng.
-    Trả về: dict {name, prediction, confidence, weight, info}
-    """
-
     CAU_TEMPLATES = {
-        # Cầu 2 block
+        # 2-block
         '1-1':   [1, 1],
         '2-2':   [2, 2],
         '3-3':   [3, 3],
@@ -76,7 +70,7 @@ class CauDetector:
         '3-2':   [3, 2],
         '1-4':   [1, 4],
         '4-1':   [4, 1],
-        # Cầu 3 block
+        # 3-block
         '1-1-1': [1, 1, 1],
         '1-2-1': [1, 2, 1],
         '1-2-2': [1, 2, 2],
@@ -88,7 +82,7 @@ class CauDetector:
         '2-3-1': [2, 3, 1],
         '1-1-2': [1, 1, 2],
         '2-1-2': [2, 1, 2],
-        # Cầu 4 block
+        # 4-block
         '1-1-1-1': [1, 1, 1, 1],
         '1-2-1-2': [1, 2, 1, 2],
         '2-1-2-1': [2, 1, 2, 1],
@@ -144,7 +138,6 @@ class CauDetector:
     def detect(cls, valid):
         if len(valid) < 8:
             return None
-
         results = [v['result'] for v in valid]
         last = results[-1]
         opp = 'Xỉu' if last == 'Tài' else 'Tài'
@@ -199,11 +192,7 @@ class CauDetector:
         for name, template in cls.CAU_TEMPLATES.items():
             cycles, tail = cls._match_template(runs, template, min_cycles=2)
             if cycles > 0:
-                found.append({
-                    'name': name,
-                    'cycles': cycles,
-                    'tail': tail,
-                })
+                found.append({'name': name, 'cycles': cycles, 'tail': tail})
         return found
 
 
@@ -218,9 +207,7 @@ class MultiStrategyPredictor:
         h = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
         return options[h % len(options)]
 
-    # =================================================================
-    # CORE SIGNALS
-    # =================================================================
+    # ==================== SIGNALS ====================
     @staticmethod
     def _markov_order2(valid, window=None):
         if len(valid) < 15:
@@ -272,7 +259,6 @@ class MultiStrategyPredictor:
                 streak += 1
             else:
                 break
-
         opp = 'Xỉu' if last == 'Tài' else 'Tài'
 
         if streak == 1 and len(valid) >= 6:
@@ -308,8 +294,7 @@ class MultiStrategyPredictor:
                 p_break = 0.5 * p_break + 0.5 * min(0.52 + streak * 0.03, 0.65)
             else:
                 p_break = min(0.55 + streak * 0.02, 0.65)
-            target = opp
-            conf = int(p_break * 100)
+            target, conf = opp, int(p_break * 100)
         elif streak <= 7:
             if total_obs < 2:
                 return None, 0, 0
@@ -339,7 +324,6 @@ class MultiStrategyPredictor:
                 streak += 1
             else:
                 break
-
         if streak < 8:
             return None, 0, 0
         opp = 'Xỉu' if last == 'Tài' else 'Tài'
@@ -629,9 +613,7 @@ class MultiStrategyPredictor:
                 h -= p * math.log2(p)
         return h
 
-    # =================================================================
-    # ADAPTIVE WEIGHTS
-    # =================================================================
+    # ==================== ADAPTIVE ====================
     @classmethod
     def _get_adaptive_weight(cls, name, base_weight):
         tr = cls._STRATEGY_TRACK.get(name)
@@ -692,9 +674,7 @@ class MultiStrategyPredictor:
                     pass
         cls._STRATEGY_TRACK['__len__'] = {'last_len': cur_len}
 
-    # =================================================================
-    # FAILURE STREAK — SAI 2 TAY TỰ ĐỘNG FLIP
-    # =================================================================
+    # ==================== FAILURE STREAK ====================
     @classmethod
     def _check_failure_streak(cls):
         evaluated = [
@@ -706,9 +686,7 @@ class MultiStrategyPredictor:
         last_two = evaluated[:2]
         return sum(1 for _, e in last_two if e.get('correct') is False)
 
-    # =================================================================
-    # MAIN PREDICT v11
-    # =================================================================
+    # ==================== MAIN PREDICT ====================
     @classmethod
     def predict(cls, valid):
         seed = str(valid[-1]['phien']) if valid else "0"
@@ -763,13 +741,11 @@ class MultiStrategyPredictor:
                 continue
             if p is None or weight == 0:
                 continue
-
             weight = cls._get_adaptive_weight(name, weight)
             p_norm = max(0.51, min(conf / 100.0, 0.92))
             lr = p_norm / (1 - p_norm)
             if p == 'Xỉu':
                 lr = 1.0 / lr
-
             contrib = weight * (1.0 if p == 'Tài' else -1.0) * (lr - 1.0)
             log_odds += contrib
             total_weight += weight
@@ -794,7 +770,6 @@ class MultiStrategyPredictor:
 
         recent = [v['result'] for v in valid[-20:]]
         entropy = cls._entropy(recent)
-
         votes_tai = sum(1 for s in signals if s['prediction'] == 'Tài')
         votes_xiu = len(signals) - votes_tai
         agreement = max(votes_tai, votes_xiu) / len(signals)
@@ -831,7 +806,7 @@ class MultiStrategyPredictor:
             'flipped': False,
         }
 
-        # === v11: CAU OVERRIDE ===
+        # === CAU OVERRIDE ===
         cau = CauDetector.detect(valid)
         if cau and cau['weight'] >= 1.4 and cau['confidence'] >= 62:
             result['cau_name'] = cau['name']
@@ -849,7 +824,7 @@ class MultiStrategyPredictor:
                 result['method'] = f"CAU[{cau['name']}]+" + result['method'][:40]
                 result['reason'] += f" · xác nhận bởi {cau['name']}"
 
-        # === v11: SAI 2 TAY → FLIP ===
+        # === SAI 2 TAY → FLIP ===
         fail_streak = cls._check_failure_streak()
         if fail_streak >= 2:
             result['prediction'] = 'Xỉu' if result['prediction'] == 'Tài' else 'Tài'
@@ -992,7 +967,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 v11</title>
+<title>LE MINH MD5 </title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -1042,7 +1017,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </head>
 <body>
 <div class="header">
-    <div class="logo">LE MINH <span>v11</span></div>
+    <div class="logo">LE MINH <span>v1</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="fetchData()">↻</button>
@@ -1057,7 +1032,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
         <div class="sc"><div class="sc-l">⏳ Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
     </div>
 
-    <div class="cau-bar" id="cau-bar">Đang phân tích cầu...</div>
+    <div class="cau-bar" id="cau-bar" style="display:none;"></div>
 
     <div class="tbl">
         <table>
@@ -1097,9 +1072,13 @@ function renderScore(ai){
 
 function renderCauBar(cau){
     const el = document.getElementById('cau-bar');
-    if(!cau){ el.innerHTML = '📊 Không phát hiện cầu rõ ràng — dùng ensemble'; return; }
+    if(!cau || !cau.cau_name){
+        el.style.display = 'none';
+        return;
+    }
+    el.style.display = 'block';
     const flip = cau.cau_override ? ' 🔥 OVERRIDE' : '';
-    el.innerHTML = `🎯 Cầu chính: <b>${cau.cau_name || '—'}</b> · 
+    el.innerHTML = `🎯 Cầu chính: <b>${cau.cau_name}</b> · 
                     Dự đoán: <b>${cau.prediction}</b> (${cau.confidence}%)${flip}`;
 }
 
@@ -1334,7 +1313,6 @@ def stats_only():
 
 @app.route('/api/cau_detect')
 def cau_detect():
-    """Debug: xem tất cả cầu đang khớp"""
     try:
         valid, success = _sync_history()
         if not success:
@@ -1402,7 +1380,7 @@ def reset_api():
 
 
 # =====================================================================
-# API TEST TOÀN DIỆN
+# TEST API
 # =====================================================================
 def _seq_to_valid(seq_str, start_phien=1000):
     tokens = seq_str.split()
@@ -1418,7 +1396,6 @@ def _seq_to_valid(seq_str, start_phien=1000):
 
 
 def _build_all_cau_tests():
-    """Sinh mẫu cầu deterministic — test đủ loại từ 1-1 đến 1-2-3-4"""
     tests = []
 
     def add(name, history_str, actual_char, expect_char):
@@ -1430,7 +1407,7 @@ def _build_all_cau_tests():
         tests.append({'name': name, 'history': history_str,
                       'actual': actual, 'expect': expect})
 
-    # === CẦU 2-BLOCK ===
+    # 2-block cầu
     for cycle_name, sizes in [
         ('1-1', [1, 1]), ('2-2', [2, 2]), ('3-3', [3, 3]),
         ('4-4', [4, 4]), ('5-5', [5, 5]),
@@ -1447,12 +1424,10 @@ def _build_all_cau_tests():
                 seq.extend([val] * size)
                 phase += 1
             seq = seq[:n_phien]
-            # Dự đoán phiên tiếp
-            next_size = sizes[phase % len(sizes)]
             next_val = 'T' if phase % 2 == 0 else 'X'
             add(f'{cycle_name}_len{n_phien}', ' '.join(seq), next_val, next_val)
 
-    # === CẦU 3-BLOCK ===
+    # 3-block cầu
     for cycle_name, sizes in [
         ('1-1-1', [1, 1, 1]), ('1-2-1', [1, 2, 1]),
         ('1-2-2', [1, 2, 2]), ('2-1-1', [2, 1, 1]),
@@ -1473,7 +1448,7 @@ def _build_all_cau_tests():
             next_val = 'T' if phase % 2 == 0 else 'X'
             add(f'{cycle_name}_len{n_phien}', ' '.join(seq), next_val, next_val)
 
-    # === CẦU 4-BLOCK ===
+    # 4-block
     for cycle_name, sizes in [
         ('1-1-1-1', [1, 1, 1, 1]),
         ('1-2-1-2', [1, 2, 1, 2]),
@@ -1492,16 +1467,16 @@ def _build_all_cau_tests():
             next_val = 'T' if phase % 2 == 0 else 'X'
             add(f'{cycle_name}_len{n_phien}', ' '.join(seq), next_val, next_val)
 
-    # === CẦU BỆT ===
+    # Cầu bệt
     for n in (5, 6, 7, 8, 9, 10, 12, 15, 18, 20):
         add(f'bet_tai_{n}', ' '.join(['T'] * n), 'X', 'X')
         add(f'bet_xiu_{n}', ' '.join(['X'] * n), 'T', 'T')
 
-    # === TREND ===
+    # Trend
     add('trend_up', 'X X X X X T T T T T T T T T T', 'T', 'T')
     add('trend_down', 'T T T T T X X X X X X X X X X', 'X', 'X')
 
-    # === BREAK SAU CHUỖI ===
+    # Break
     add('break_5tai', 'T T T T T X', 'T', 'T')
     add('break_5xiu', 'X X X X X T', 'X', 'X')
     add('break_7tai', 'T T T T T T T X', 'T', 'T')
@@ -1511,10 +1486,6 @@ def _build_all_cau_tests():
 
 @app.route('/api/test_all_cau')
 def test_all_cau():
-    """
-    Test exhaustive qua TẤT CẢ mẫu cầu deterministic.
-    GET /api/test_all_cau?format=txt
-    """
     try:
         tests = _build_all_cau_tests()
         results = []
@@ -1528,10 +1499,8 @@ def test_all_cau():
             if len(valid) < 4:
                 continue
 
-            # Tắt failure streak flip để test thuần
             saved_log = dict(PREDICTION_LOG)
             PREDICTION_LOG.clear()
-
             pred = MultiStrategyPredictor.predict(valid)
             PREDICTION_LOG.clear()
             PREDICTION_LOG.update(saved_log)
