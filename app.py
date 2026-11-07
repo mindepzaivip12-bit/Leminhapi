@@ -8,7 +8,7 @@ import math
 from datetime import datetime
 from collections import Counter, defaultdict
 import requests
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -52,7 +52,7 @@ def _save_log():
 
 
 # =====================================================================
-# DETERMINISTIC PREDICTOR v9
+# DETERMINISTIC PREDICTOR v10
 # =====================================================================
 class MultiStrategyPredictor:
     _STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
@@ -65,7 +65,6 @@ class MultiStrategyPredictor:
     # =================================================================
     # CORE SIGNALS
     # =================================================================
-
     @staticmethod
     def _markov_order2(valid, window=None):
         if len(valid) < 15:
@@ -123,7 +122,6 @@ class MultiStrategyPredictor:
 
         opp = 'Xỉu' if last == 'Tài' else 'Tài'
 
-        # Mean-revert: vừa gãy từ chuỗi dài
         if streak == 1 and len(valid) >= 6:
             prev = valid[-2]['result']
             prev_run = 1
@@ -136,6 +134,10 @@ class MultiStrategyPredictor:
                 return last, 62, 1.10
 
         if streak < 3:
+            return None, 0, 0
+
+        # Streak >=8: để exhaustion xử lý
+        if streak >= 8:
             return None, 0, 0
 
         breaks, continues = 0, 0
@@ -160,7 +162,7 @@ class MultiStrategyPredictor:
                 p_break = min(0.55 + streak * 0.02, 0.65)
             target = opp
             conf = int(p_break * 100)
-        elif streak <= 6:
+        elif streak <= 7:
             if total_obs < 2:
                 return None, 0, 0
             p_break = breaks / total_obs
@@ -171,14 +173,80 @@ class MultiStrategyPredictor:
             else:
                 return None, 0, 0
         else:
-            target = last
-            conf = min(58 + (streak - 7) * 4, 80)
+            return None, 0, 0
 
         if conf < 55:
             return None, 0, 0
 
         weight = 1.0 + (streak - 3) * 0.10
         return target, conf, min(weight, 1.6)
+
+    # =================================================================
+    # EXHAUSTION (cầu kiệt)
+    # =================================================================
+    @staticmethod
+    def _exhaustion(valid):
+        if len(valid) < 10:
+            return None, 0, 0
+        last = valid[-1]['result']
+        streak = 1
+        for i in range(len(valid) - 2, -1, -1):
+            if valid[i]['result'] == last:
+                streak += 1
+            else:
+                break
+
+        if streak < 8:
+            return None, 0, 0
+
+        opp = 'Xỉu' if last == 'Tài' else 'Tài'
+
+        long_breaks, long_total = 0, 0
+        run = 1
+        for i in range(1, len(valid) - 1):
+            if valid[i]['result'] == valid[i - 1]['result']:
+                run += 1
+            else:
+                if run >= 8:
+                    long_total += 1
+                    long_breaks += 1
+                run = 1
+        if run >= 8:
+            long_total += 1
+
+        if streak <= 9:
+            base = 55 + (streak - 8) * 2
+        elif streak <= 12:
+            base = 60 + (streak - 10) * 2
+        else:
+            base = 70 + min((streak - 13) * 2, 8)
+
+        if long_total == 0:
+            base -= 8
+        else:
+            p_break = long_breaks / long_total
+            base = int(base * 0.6 + p_break * 100 * 0.4)
+
+        conf = max(55, min(int(base), 80))
+        weight = 1.1 + (streak - 8) * 0.08
+        return opp, conf, min(weight, 1.5)
+
+    # =================================================================
+    # DOMINANCE FLIP (lệch cực đoan)
+    # =================================================================
+    @staticmethod
+    def _dominance_flip(valid):
+        if len(valid) < 20:
+            return None, 0, 0
+        seg = [v['result'] for v in valid[-20:]]
+        t = sum(1 for x in seg if x == 'Tài') / 20
+        if t >= 0.85:
+            conf = min(int((t - 0.75) * 200), 75)
+            return 'Xỉu', max(conf, 58), 0.90
+        if t <= 0.15:
+            conf = min(int((0.25 - t) * 200), 75)
+            return 'Tài', max(conf, 58), 0.90
+        return None, 0, 0
 
     # =================================================================
     # FOLLOW TREND
@@ -196,27 +264,28 @@ class MultiStrategyPredictor:
             else:
                 break
 
-        # Case 1: streak dài → theo
+        if streak >= 8:
+            return None, 0, 0
+
         if streak >= 5:
-            conf = min(58 + (streak - 5) * 4, 80)
+            conf = min(58 + (streak - 5) * 4, 72)
             return last, conf, 1.25
 
-        # Case 2: nghiêng mạnh 15 phiên & 5 phiên gần vẫn theo
         if len(valid) >= 15:
             seg15 = [v['result'] for v in valid[-15:]]
             t15 = sum(1 for x in seg15 if x == 'Tài') / 15
             seg5 = seg15[-5:]
             t5 = sum(1 for x in seg5 if x == 'Tài') / 5
-            if t15 >= 0.70 and t5 >= 0.60:
-                conf = min(55 + int((t15 - 0.6) * 100), 78)
+            if 0.70 <= t15 <= 0.80 and t5 >= 0.60:
+                conf = min(55 + int((t15 - 0.6) * 100), 72)
                 return 'Tài', conf, 1.15
-            if t15 <= 0.30 and t5 <= 0.40:
-                conf = min(55 + int((0.4 - t15) * 100), 78)
+            if 0.20 <= t15 <= 0.30 and t5 <= 0.40:
+                conf = min(55 + int((0.4 - t15) * 100), 72)
                 return 'Xỉu', conf, 1.15
         return None, 0, 0
 
     # =================================================================
-    # INVERT CAU (đảo cầu)
+    # INVERT CAU
     # =================================================================
     @staticmethod
     def _invert_cau(valid):
@@ -224,7 +293,6 @@ class MultiStrategyPredictor:
             return None, 0, 0
         r = [v['result'] for v in valid[-16:]]
 
-        # Cầu 1-1
         alt = sum(1 for i in range(1, len(r)) if r[i] != r[i - 1])
         alt_ratio = alt / (len(r) - 1)
         if alt_ratio >= 0.65:
@@ -232,7 +300,6 @@ class MultiStrategyPredictor:
             conf = min(56 + int(alt_ratio * 30), 82)
             return nxt, conf, 1.30
 
-        # Cầu block 2-2
         block2_hits = 0
         block2_total = 0
         for i in range(2, len(r)):
@@ -250,7 +317,6 @@ class MultiStrategyPredictor:
             nxt = r[-2] if tail_run == 1 else ('Xỉu' if r[-1] == 'Tài' else 'Tài')
             return nxt, 68, 1.25
 
-        # Mean-revert sau chuỗi dài vừa gãy
         run = 1
         for i in range(len(r) - 2, -1, -1):
             if r[i] == r[-1]:
@@ -270,7 +336,7 @@ class MultiStrategyPredictor:
         return None, 0, 0
 
     # =================================================================
-    # TREND (so sánh tỷ lệ đa khung)
+    # TREND
     # =================================================================
     @staticmethod
     def _trend(valid):
@@ -295,7 +361,7 @@ class MultiStrategyPredictor:
         return None, 0, 0
 
     # =================================================================
-    # BIAS RUN (cầu nghiêng)
+    # BIAS RUN
     # =================================================================
     @staticmethod
     def _bias_run(valid):
@@ -500,6 +566,8 @@ class MultiStrategyPredictor:
                 ('trend', cls._trend),
                 ('bias_run', cls._bias_run),
                 ('follow', cls._follow_trend),
+                ('exhaust', cls._exhaustion),
+                ('dominance', cls._dominance_flip),
             ):
                 try:
                     p, c, w = fn(history)
@@ -551,6 +619,8 @@ class MultiStrategyPredictor:
             ('trend',       lambda v: cls._trend(v)),
             ('bias_run',    lambda v: cls._bias_run(v)),
             ('follow',      lambda v: cls._follow_trend(v)),
+            ('exhaust',     lambda v: cls._exhaustion(v)),
+            ('dominance',   lambda v: cls._dominance_flip(v)),
         ]
 
         log_odds = 0.0
@@ -630,6 +700,148 @@ class MultiStrategyPredictor:
             'reason': (f"{len(signals)} tín hiệu · entropy={entropy:.2f} · "
                        f"đồng thuận={agreement:.0%}"),
         }
+
+
+# =====================================================================
+# 80 MẪU TEST PATTERN
+# =====================================================================
+TEST_PATTERNS = [
+    # ---- CẦU 1-1 (alternating) ----
+    {"name": "1-1_clean", "seq": "T X T X T X T X T X T X T X T X T X", "expect_note": "bẻ theo nhịp"},
+    {"name": "1-1_start_X", "seq": "X T X T X T X T X T X T X T X T X T", "expect_note": "bẻ theo nhịp"},
+    {"name": "1-1_mixed_short", "seq": "T X T X T X T X T", "expect_note": "bẻ"},
+    {"name": "1-1_long", "seq": "T X " * 12, "expect_note": "theo nhịp"},
+    {"name": "1-1_with_noise", "seq": "T X T X T X T T X T X T X T X T X", "expect_note": "bẻ"},
+
+    # ---- CẦU 2-2 (block) ----
+    {"name": "2-2_clean", "seq": "T T X X T T X X T T X X T T X X", "expect_note": "đảo block"},
+    {"name": "2-2_start_X", "seq": "X X T T X X T T X X T T X X T T", "expect_note": "đảo block"},
+    {"name": "2-2_mixed", "seq": "T T X X T T X X T T X T T X X", "expect_note": "đảo"},
+    {"name": "2-2_long", "seq": "T T X X " * 6, "expect_note": "đảo block"},
+
+    # ---- CẦU 3-3 (block) ----
+    {"name": "3-3_clean", "seq": "T T T X X X T T T X X X T T T", "expect_note": "đảo block"},
+    {"name": "3-3_short", "seq": "T T T X X X T T T", "expect_note": "đảo block"},
+    {"name": "3-3_start_X", "seq": "X X X T T T X X X T T T", "expect_note": "đảo block"},
+
+    # ---- CẦU BỆT TÀI dài ----
+    {"name": "all_tai_3", "seq": "T T T", "expect_note": "bẻ nhẹ"},
+    {"name": "all_tai_4", "seq": "T T T T", "expect_note": "bẻ"},
+    {"name": "all_tai_5", "seq": "T T T T T", "expect_note": "theo cầu"},
+    {"name": "all_tai_6", "seq": "T T T T T T", "expect_note": "theo cầu"},
+    {"name": "all_tai_7", "seq": "T T T T T T T", "expect_note": "trung tính"},
+    {"name": "all_tai_8", "seq": "T T T T T T T T", "expect_note": "kiệt — bẻ"},
+    {"name": "all_tai_10", "seq": "T T T T T T T T T T", "expect_note": "kiệt — bẻ mạnh"},
+    {"name": "all_tai_12", "seq": "T " * 12, "expect_note": "kiệt cực mạnh"},
+    {"name": "all_tai_15", "seq": "T " * 15, "expect_note": "siêu kiệt"},
+    {"name": "all_tai_20", "seq": "T " * 20, "expect_note": "dominance flip"},
+
+    # ---- CẦU BỆT XỈU dài ----
+    {"name": "all_xiu_3", "seq": "X X X", "expect_note": "bẻ nhẹ"},
+    {"name": "all_xiu_5", "seq": "X X X X X", "expect_note": "theo cầu"},
+    {"name": "all_xiu_8", "seq": "X X X X X X X X", "expect_note": "kiệt — bẻ"},
+    {"name": "all_xiu_10", "seq": "X " * 10, "expect_note": "kiệt"},
+    {"name": "all_xiu_12", "seq": "X " * 12, "expect_note": "kiệt mạnh"},
+    {"name": "all_xiu_20", "seq": "X " * 20, "expect_note": "dominance flip"},
+
+    # ---- LỆCH CỰC ĐOAN ----
+    {"name": "85pct_tai", "seq": "T " * 17 + "X X X", "expect_note": "lệch — bẻ"},
+    {"name": "85pct_xiu", "seq": "X " * 17 + "T T T", "expect_note": "lệch — bẻ"},
+    {"name": "75pct_tai", "seq": "T T T X " * 5, "expect_note": "nghiêng Tài"},
+    {"name": "75pct_xiu", "seq": "X X X T " * 5, "expect_note": "nghiêng Xỉu"},
+
+    # ---- XU HƯỚNG TĂNG ----
+    {"name": "trend_up", "seq": "X X X X X T T T T T T T T T T", "expect_note": "theo Tài"},
+    {"name": "trend_up_recent", "seq": "X X T X T T T T T T T", "expect_note": "theo Tài"},
+    {"name": "trend_down", "seq": "T T T T T X X X X X X X X X X", "expect_note": "theo Xỉu"},
+    {"name": "trend_down_recent", "seq": "T T X T X X X X X X X", "expect_note": "theo Xỉu"},
+
+    # ---- ĐẢO CẦU SAU CHUỖI DÀI ----
+    {"name": "break_after_5tai", "seq": "T T T T T X", "expect_note": "đảo lại Tài"},
+    {"name": "break_after_5xiu", "seq": "X X X X X T", "expect_note": "đảo lại Xỉu"},
+    {"name": "break_after_6tai", "seq": "T T T T T T X", "expect_note": "đảo lại Tài"},
+    {"name": "break_after_7xiu", "seq": "X X X X X X X T", "expect_note": "đảo lại Xỉu"},
+
+    # ---- CẦU GẤP KHÚC ----
+    {"name": "zigzag_1", "seq": "T X X T T X X T T X", "expect_note": "theo nhịp"},
+    {"name": "zigzag_2", "seq": "T T X T T X T T X", "expect_note": "theo nhịp"},
+    {"name": "zigzag_3", "seq": "X T T X T T X T", "expect_note": "theo nhịp"},
+
+    # ---- CẦU 1-2 ----
+    {"name": "1-2_clean", "seq": "T X X T X X T X X T X X", "expect_note": "đảo block"},
+    {"name": "1-2_start_X", "seq": "X T T X T T X T T X T T", "expect_note": "đảo block"},
+
+    # ---- CẦU 2-1 ----
+    {"name": "2-1_clean", "seq": "T T X T T X T T X T T X", "expect_note": "đảo block"},
+    {"name": "2-1_start_X", "seq": "X X T X X T X X T X X T", "expect_note": "đảo block"},
+
+    # ---- CẦU 1-3 ----
+    {"name": "1-3_clean", "seq": "T X X X T X X X T X X X", "expect_note": "đảo block"},
+
+    # ---- CẦU 3-1 ----
+    {"name": "3-1_clean", "seq": "T T T X T T T X T T T X", "expect_note": "đảo block"},
+
+    # ---- CẦU 2-2-1 ----
+    {"name": "2-2-1", "seq": "T T X X T T T X X T T T X X", "expect_note": "pattern"},
+
+    # ---- NHIỄU ----
+    {"name": "noisy_1", "seq": "T X T T X X T X X T T X T X", "expect_note": "không chắc"},
+    {"name": "noisy_2", "seq": "T T X T X T T X X T X T X X", "expect_note": "không chắc"},
+    {"name": "noisy_3", "seq": "X T X X T T X T X X T X T T", "expect_note": "không chắc"},
+    {"name": "random", "seq": "T X X T T X T T X X T X T T X X T", "expect_note": "không chắc"},
+
+    # ---- ĐẶC BIỆT ----
+    {"name": "symmetry", "seq": "T T T X X X X X X T T T", "expect_note": "đảo block"},
+    {"name": "reverse_symmetry", "seq": "X X X T T T T T T X X X", "expect_note": "đảo block"},
+    {"name": "sandwich", "seq": "T X X T T X X T T X X T", "expect_note": "theo nhịp"},
+    {"name": "double_sandwich", "seq": "T T X X X X T T T T X X X X", "expect_note": "đảo block"},
+
+    # ---- TREND + KIỆT ----
+    {"name": "trend_to_exhaust", "seq": "X T T T T T T T T T", "expect_note": "kiệt Tài"},
+    {"name": "trend_to_exhaust_xiu", "seq": "T X X X X X X X X X", "expect_note": "kiệt Xỉu"},
+
+    # ---- ĐẢO NHANH ----
+    {"name": "fast_flip", "seq": "T T T X X X T T T X X X T", "expect_note": "đảo block"},
+    {"name": "slow_flip", "seq": "T T T T T X X X X X T T T T", "expect_note": "đảo block"},
+
+    # ---- BẺ CẦU CHUẨN ----
+    {"name": "classic_break", "seq": "T T T X", "expect_note": "vừa bẻ"},
+    {"name": "classic_break_xiu", "seq": "X X X T", "expect_note": "vừa bẻ"},
+
+    # ---- HỖN HỢP ----
+    {"name": "mix_1", "seq": "T T X X T T T X X X T T T T", "expect_note": "tăng dần block"},
+    {"name": "mix_2", "seq": "X X T T X X X T T T X X X X", "expect_note": "tăng dần block"},
+    {"name": "mix_3", "seq": "T X X T T T X X X X T T T T T", "expect_note": "tăng dần block"},
+
+    # ---- CẦU 4-4 ----
+    {"name": "4-4", "seq": "T T T T X X X X T T T T X X X X", "expect_note": "đảo block"},
+
+    # ---- CẦU 5-5 ----
+    {"name": "5-5", "seq": "T T T T T X X X X X T T T T T", "expect_note": "đảo block"},
+
+    # ---- ĐUÔI DÀI + ĐẢO ----
+    {"name": "tail_dai_break", "seq": "X X T T T T T T X", "expect_note": "đảo lại Tài"},
+    {"name": "tail_dai_break_xiu", "seq": "T T X X X X X X T", "expect_note": "đảo lại Xỉu"},
+
+    # ---- ENTROPY CAO ----
+    {"name": "high_entropy", "seq": "T X T T X X T X X T T X X T X T", "expect_note": "không chắc"},
+
+    # ---- ENTROPY THẤP ----
+    {"name": "low_entropy", "seq": "T T T T T T T T T T T T T T T", "expect_note": "kiệt"},
+]
+
+def _seq_to_valid(seq_str, start_phien=1000):
+    """Chuyển chuỗi 'T X T ...' thành valid list"""
+    tokens = seq_str.split()
+    valid = []
+    for i, tok in enumerate(tokens):
+        valid.append({
+            'phien': start_phien + i,
+            'result': 'Tài' if tok.upper() == 'T' else 'Xỉu',
+            'dice': '0 + 0 + 0',
+            'total': 0,
+        })
+    return valid
 
 
 # =====================================================================
@@ -761,7 +973,7 @@ _load_log()
 
 
 # =====================================================================
-# HTML (giữ nguyên giao diện)
+# HTML
 # =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
@@ -818,7 +1030,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </head>
 <body>
 <div class="header">
-    <div class="logo">LE MINH <span>v9</span></div>
+    <div class="logo">LE MINH <span>Bon</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="fetchData()">↻</button>
@@ -1032,7 +1244,7 @@ def lc79():
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'le minh ai v9', 'Phien': None, 'Du_doan': None})
+            return jsonify({'Id': 'le minh ai v10', 'Phien': None, 'Du_doan': None})
 
         last = valid[-1]
         next_phien = last['phien'] + 1
@@ -1042,7 +1254,7 @@ def lc79():
         ai_stats = _log_stats()
 
         return jsonify({
-            'Id': 'le minh ai v9',
+            'Id': 'le minh ai v10',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
@@ -1126,6 +1338,84 @@ def reset_api():
     except Exception as e:
         traceback.print_exc()
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# =====================================================================
+# API TEST 80 MẪU
+# =====================================================================
+@app.route('/api/test_patterns')
+def test_patterns():
+    """
+    Chạy toàn bộ 80 mẫu pattern qua predictor v10.
+    GET /api/test_patterns           → trả JSON
+    GET /api/test_patterns?format=txt → trả text
+    """
+    try:
+        results = []
+        correct = 0
+        total = 0
+
+        for pattern in TEST_PATTERNS:
+            seq = pattern['seq'].strip()
+            tokens = seq.split()
+            if len(tokens) < 5:
+                continue
+
+            # Dùng N-1 phiên làm history, phiên cuối là actual để test
+            history_tokens = tokens[:-1]
+            actual_tok = tokens[-1].upper()
+            actual = 'Tài' if actual_tok == 'T' else 'Xỉu'
+
+            valid = _seq_to_valid(' '.join(history_tokens))
+            if len(valid) < 4:
+                continue
+
+            pred = MultiStrategyPredictor.predict(valid)
+            is_correct = (pred['prediction'] == actual)
+            if is_correct:
+                correct += 1
+            total += 1
+
+            results.append({
+                'name': pattern['name'],
+                'seq': seq,
+                'history_len': len(valid),
+                'prediction': pred['prediction'],
+                'confidence': pred['confidence'],
+                'actual': actual,
+                'correct': is_correct,
+                'method': pred['method'],
+                'reason': pred['reason'],
+                'note': pattern.get('expect_note', ''),
+            })
+
+        acc = round(correct / total * 100, 2) if total > 0 else 0
+
+        fmt = request.args.get('format', 'json').lower()
+        if fmt == 'txt':
+            lines = []
+            lines.append(f"=== TEST {total} MẪU PATTERN v10 ===")
+            lines.append(f"Đúng: {correct}/{total} ({acc}%)")
+            lines.append("")
+            for r in results:
+                mark = '✓' if r['correct'] else '✗'
+                lines.append(
+                    f"{mark} {r['name']:<22} | seq={r['seq']:<40} | "
+                    f"pred={r['prediction']:<5} ({r['confidence']}%) | "
+                    f"actual={r['actual']:<5} | {r['note']}"
+                )
+            return '\n'.join(lines), 200, {'Content-Type': 'text/plain; charset=utf-8'}
+
+        return jsonify({
+            'version': 'v10',
+            'total': total,
+            'correct': correct,
+            'accuracy': acc,
+            'results': results,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
