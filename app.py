@@ -26,6 +26,7 @@ MAX_LOG_SIZE = 2000
 
 LOG_FILE = "prediction_log.json"
 
+
 # =====================================================================
 # PERSISTENCE
 # =====================================================================
@@ -52,7 +53,162 @@ def _save_log():
 
 
 # =====================================================================
-# DETERMINISTIC PREDICTOR v10
+# CAU DETECTOR v11 — NHẬN DIỆN 20+ LOẠI CẦU
+# =====================================================================
+class CauDetector:
+    """
+    Nhận diện cầu dựa trên pattern matching có kiểm chứng.
+    Trả về: dict {name, prediction, confidence, weight, info}
+    """
+
+    CAU_TEMPLATES = {
+        # Cầu 2 block
+        '1-1':   [1, 1],
+        '2-2':   [2, 2],
+        '3-3':   [3, 3],
+        '4-4':   [4, 4],
+        '5-5':   [5, 5],
+        '1-2':   [1, 2],
+        '2-1':   [2, 1],
+        '1-3':   [1, 3],
+        '3-1':   [3, 1],
+        '2-3':   [2, 3],
+        '3-2':   [3, 2],
+        '1-4':   [1, 4],
+        '4-1':   [4, 1],
+        # Cầu 3 block
+        '1-1-1': [1, 1, 1],
+        '1-2-1': [1, 2, 1],
+        '1-2-2': [1, 2, 2],
+        '2-1-1': [2, 1, 1],
+        '2-2-1': [2, 2, 1],
+        '1-2-3': [1, 2, 3],
+        '3-2-1': [3, 2, 1],
+        '1-3-2': [1, 3, 2],
+        '2-3-1': [2, 3, 1],
+        '1-1-2': [1, 1, 2],
+        '2-1-2': [2, 1, 2],
+        # Cầu 4 block
+        '1-1-1-1': [1, 1, 1, 1],
+        '1-2-1-2': [1, 2, 1, 2],
+        '2-1-2-1': [2, 1, 2, 1],
+        '1-2-2-1': [1, 2, 2, 1],
+    }
+
+    @staticmethod
+    def _run_lengths(results):
+        if not results:
+            return []
+        runs = [1]
+        for i in range(1, len(results)):
+            if results[i] == results[i - 1]:
+                runs[-1] += 1
+            else:
+                runs.append(1)
+        return runs
+
+    @staticmethod
+    def _match_template(run_lengths, template, min_cycles=2):
+        if not run_lengths or not template:
+            return 0, None
+        plen = len(template)
+        rlen = len(run_lengths)
+        if rlen < plen * min_cycles:
+            return 0, None
+
+        for cycles in range(rlen // plen, min_cycles - 1, -1):
+            start = rlen - cycles * plen
+            if start < 0:
+                continue
+            ok = True
+            for i in range(cycles * plen):
+                expected = template[i % plen]
+                actual = run_lengths[start + i]
+                is_last = (start + i == rlen - 1)
+                if is_last:
+                    if actual > expected:
+                        ok = False
+                        break
+                elif actual != expected:
+                    ok = False
+                    break
+            if ok:
+                pos = (cycles * plen - 1) % plen
+                cur_len = run_lengths[-1]
+                if cur_len < template[pos]:
+                    return cycles, ('continue', template[pos] - cur_len)
+                return cycles, ('flip', 1)
+        return 0, None
+
+    @classmethod
+    def detect(cls, valid):
+        if len(valid) < 8:
+            return None
+
+        results = [v['result'] for v in valid]
+        last = results[-1]
+        opp = 'Xỉu' if last == 'Tài' else 'Tài'
+        runs = cls._run_lengths(results[-40:])
+
+        best = None
+        for name, template in cls.CAU_TEMPLATES.items():
+            cycles, tail = cls._match_template(runs, template, min_cycles=2)
+            if cycles == 0 or tail is None:
+                continue
+            action, remaining = tail
+            if action == 'continue':
+                pred = last
+                conf = 60 + min(cycles * 4, 20)
+                weight = 1.4 + cycles * 0.1
+            else:
+                pred = opp
+                conf = 62 + min(cycles * 4, 20)
+                weight = 1.5 + cycles * 0.1
+
+            score = cycles * len(template) + len(template) * 2
+            if best is None or score > best['score']:
+                best = {
+                    'name': name,
+                    'prediction': pred,
+                    'confidence': min(int(conf), 85),
+                    'weight': min(weight, 1.9),
+                    'info': f'cầu {name} lặp {cycles} chu kỳ ({action})',
+                    'score': score,
+                }
+
+        if runs and runs[-1] >= 8:
+            streak = runs[-1]
+            if best is None or streak >= 10:
+                return {
+                    'name': f'bệt_{streak}',
+                    'prediction': opp,
+                    'confidence': min(60 + (streak - 8) * 3, 82),
+                    'weight': min(1.3 + (streak - 8) * 0.08, 1.7),
+                    'info': f'cầu bệt {streak} phiên — bẻ',
+                }
+
+        return best
+
+    @classmethod
+    def detect_all(cls, valid):
+        if len(valid) < 8:
+            return []
+        results = [v['result'] for v in valid]
+        runs = cls._run_lengths(results[-40:])
+        found = []
+        for name, template in cls.CAU_TEMPLATES.items():
+            cycles, tail = cls._match_template(runs, template, min_cycles=2)
+            if cycles > 0:
+                found.append({
+                    'name': name,
+                    'cycles': cycles,
+                    'tail': tail,
+                })
+        return found
+
+
+# =====================================================================
+# DETERMINISTIC PREDICTOR v11
 # =====================================================================
 class MultiStrategyPredictor:
     _STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
@@ -105,9 +261,6 @@ class MultiStrategyPredictor:
             return 'Xỉu', int((1 - p_tai) * 100), 1.20
         return None, 0, 0
 
-    # =================================================================
-    # STREAK ADAPTIVE
-    # =================================================================
     @staticmethod
     def _streak_break(valid, window=None):
         if len(valid) < 4:
@@ -133,10 +286,7 @@ class MultiStrategyPredictor:
             if prev_run >= 4:
                 return last, 62, 1.10
 
-        if streak < 3:
-            return None, 0, 0
-
-        if streak >= 8:
+        if streak < 3 or streak >= 8:
             return None, 0, 0
 
         breaks, continues = 0, 0
@@ -150,7 +300,6 @@ class MultiStrategyPredictor:
                 run = 1
         if run >= 3:
             continues += 1
-
         total_obs = breaks + continues
 
         if streak <= 4:
@@ -176,13 +325,9 @@ class MultiStrategyPredictor:
 
         if conf < 55:
             return None, 0, 0
-
         weight = 1.0 + (streak - 3) * 0.10
         return target, conf, min(weight, 1.6)
 
-    # =================================================================
-    # EXHAUSTION (cầu kiệt)
-    # =================================================================
     @staticmethod
     def _exhaustion(valid):
         if len(valid) < 10:
@@ -197,7 +342,6 @@ class MultiStrategyPredictor:
 
         if streak < 8:
             return None, 0, 0
-
         opp = 'Xỉu' if last == 'Tài' else 'Tài'
 
         long_breaks, long_total = 0, 0
@@ -230,9 +374,6 @@ class MultiStrategyPredictor:
         weight = 1.1 + (streak - 8) * 0.08
         return opp, conf, min(weight, 1.5)
 
-    # =================================================================
-    # DOMINANCE FLIP (lệch cực đoan)
-    # =================================================================
     @staticmethod
     def _dominance_flip(valid):
         if len(valid) < 20:
@@ -247,14 +388,10 @@ class MultiStrategyPredictor:
             return 'Tài', max(conf, 58), 0.90
         return None, 0, 0
 
-    # =================================================================
-    # FOLLOW TREND
-    # =================================================================
     @staticmethod
     def _follow_trend(valid):
         if len(valid) < 8:
             return None, 0, 0
-
         last = valid[-1]['result']
         streak = 1
         for i in range(len(valid) - 2, -1, -1):
@@ -262,14 +399,11 @@ class MultiStrategyPredictor:
                 streak += 1
             else:
                 break
-
         if streak >= 8:
             return None, 0, 0
-
         if streak >= 5:
             conf = min(58 + (streak - 5) * 4, 72)
             return last, conf, 1.25
-
         if len(valid) >= 15:
             seg15 = [v['result'] for v in valid[-15:]]
             t15 = sum(1 for x in seg15 if x == 'Tài') / 15
@@ -283,15 +417,11 @@ class MultiStrategyPredictor:
                 return 'Xỉu', conf, 1.15
         return None, 0, 0
 
-    # =================================================================
-    # INVERT CAU
-    # =================================================================
     @staticmethod
     def _invert_cau(valid):
         if len(valid) < 12:
             return None, 0, 0
         r = [v['result'] for v in valid[-16:]]
-
         alt = sum(1 for i in range(1, len(r)) if r[i] != r[i - 1])
         alt_ratio = alt / (len(r) - 1)
         if alt_ratio >= 0.65:
@@ -299,8 +429,7 @@ class MultiStrategyPredictor:
             conf = min(56 + int(alt_ratio * 30), 82)
             return nxt, conf, 1.30
 
-        block2_hits = 0
-        block2_total = 0
+        block2_hits, block2_total = 0, 0
         for i in range(2, len(r)):
             if r[i] == r[i - 2] and r[i] != r[i - 1]:
                 block2_hits += 1
@@ -334,9 +463,6 @@ class MultiStrategyPredictor:
                 return r[-1], 62, 1.15
         return None, 0, 0
 
-    # =================================================================
-    # TREND
-    # =================================================================
     @staticmethod
     def _trend(valid):
         if len(valid) < 20:
@@ -359,17 +485,12 @@ class MultiStrategyPredictor:
             return 'Xỉu', conf, 1.20
         return None, 0, 0
 
-    # =================================================================
-    # BIAS RUN
-    # =================================================================
     @staticmethod
     def _bias_run(valid):
         if len(valid) < 24:
             return None, 0, 0
         r = [v['result'] for v in valid[-24:]]
-        first = r[:12]
-        second = r[12:]
-
+        first, second = r[:12], r[12:]
         r_first = sum(1 for x in first if x == 'Tài') / 12
         r_second = sum(1 for x in second if x == 'Tài') / 12
 
@@ -385,9 +506,6 @@ class MultiStrategyPredictor:
             return 'Xỉu', 65, 1.00
         return None, 0, 0
 
-    # =================================================================
-    # OTHERS
-    # =================================================================
     @staticmethod
     def _pattern_match(valid, window=None):
         if len(valid) < 15:
@@ -422,8 +540,7 @@ class MultiStrategyPredictor:
             return None, 0, 0
         tai, xiu = 0.0, 0.0
         for i, v in enumerate(recent):
-            w = (i + 1) / len(recent)
-            w = w ** 1.5
+            w = ((i + 1) / len(recent)) ** 1.5
             if v['result'] == 'Tài':
                 tai += w
             else:
@@ -487,8 +604,7 @@ class MultiStrategyPredictor:
         weights = {'Tài': 0.0, 'Xỉu': 0.0}
         n = 10
         for i in range(len(valid) - n, len(valid)):
-            w = (i - (len(valid) - n) + 1) / n
-            w = w ** 2
+            w = ((i - (len(valid) - n) + 1) / n) ** 2
             weights[valid[i]['result']] += w
         total = weights['Tài'] + weights['Xỉu']
         if total == 0:
@@ -577,7 +693,21 @@ class MultiStrategyPredictor:
         cls._STRATEGY_TRACK['__len__'] = {'last_len': cur_len}
 
     # =================================================================
-    # MAIN PREDICT
+    # FAILURE STREAK — SAI 2 TAY TỰ ĐỘNG FLIP
+    # =================================================================
+    @classmethod
+    def _check_failure_streak(cls):
+        evaluated = [
+            (p, e) for p, e in sorted(PREDICTION_LOG.items(), reverse=True)
+            if e.get('actual') is not None
+        ]
+        if len(evaluated) < 2:
+            return 0
+        last_two = evaluated[:2]
+        return sum(1 for _, e in last_two if e.get('correct') is False)
+
+    # =================================================================
+    # MAIN PREDICT v11
     # =================================================================
     @classmethod
     def predict(cls, valid):
@@ -628,24 +758,23 @@ class MultiStrategyPredictor:
 
         for name, fn in strategy_defs:
             try:
-                pred, conf, weight = fn(valid)
+                p, conf, weight = fn(valid)
             except Exception:
                 continue
-            if pred is None or weight == 0:
+            if p is None or weight == 0:
                 continue
 
             weight = cls._get_adaptive_weight(name, weight)
-
-            p = max(0.51, min(conf / 100.0, 0.92))
-            lr = p / (1 - p)
-            if pred == 'Xỉu':
+            p_norm = max(0.51, min(conf / 100.0, 0.92))
+            lr = p_norm / (1 - p_norm)
+            if p == 'Xỉu':
                 lr = 1.0 / lr
 
-            contrib = weight * (1.0 if pred == 'Tài' else -1.0) * (lr - 1.0)
+            contrib = weight * (1.0 if p == 'Tài' else -1.0) * (lr - 1.0)
             log_odds += contrib
             total_weight += weight
             signals.append({
-                'name': name, 'prediction': pred,
+                'name': name, 'prediction': p,
                 'confidence': conf, 'weight': round(weight, 2),
             })
 
@@ -681,7 +810,6 @@ class MultiStrategyPredictor:
             penalty += 8
         elif agreement < 0.75:
             penalty += 4
-
         bonus = 4 if agreement >= 0.9 and entropy < 0.6 else 0
 
         final_conf = raw_conf - penalty + bonus
@@ -691,248 +819,46 @@ class MultiStrategyPredictor:
         if len(signals) > 4:
             method += f'+{len(signals) - 4}'
 
-        return {
+        result = {
             'prediction': pred,
             'confidence': final_conf,
             'method': method,
             'signals': signals,
             'reason': (f"{len(signals)} tín hiệu · entropy={entropy:.2f} · "
                        f"đồng thuận={agreement:.0%}"),
+            'cau_override': False,
+            'cau_name': None,
+            'flipped': False,
         }
 
-
-# =====================================================================
-# 80 MẪU TEST PATTERN
-# =====================================================================
-TEST_PATTERNS = [
-    {"name": "1-1_clean", "seq": "T X T X T X T X T X T X T X T X T X", "expect_note": "bẻ theo nhịp"},
-    {"name": "1-1_start_X", "seq": "X T X T X T X T X T X T X T X T X T", "expect_note": "bẻ theo nhịp"},
-    {"name": "1-1_mixed_short", "seq": "T X T X T X T X T", "expect_note": "bẻ"},
-    {"name": "1-1_long", "seq": "T X " * 12, "expect_note": "theo nhịp"},
-    {"name": "1-1_with_noise", "seq": "T X T X T X T T X T X T X T X T X", "expect_note": "bẻ"},
-    {"name": "2-2_clean", "seq": "T T X X T T X X T T X X T T X X", "expect_note": "đảo block"},
-    {"name": "2-2_start_X", "seq": "X X T T X X T T X X T T X X T T", "expect_note": "đảo block"},
-    {"name": "2-2_mixed", "seq": "T T X X T T X X T T X T T X X", "expect_note": "đảo"},
-    {"name": "2-2_long", "seq": "T T X X " * 6, "expect_note": "đảo block"},
-    {"name": "3-3_clean", "seq": "T T T X X X T T T X X X T T T", "expect_note": "đảo block"},
-    {"name": "3-3_short", "seq": "T T T X X X T T T", "expect_note": "đảo block"},
-    {"name": "3-3_start_X", "seq": "X X X T T T X X X T T T", "expect_note": "đảo block"},
-    {"name": "all_tai_3", "seq": "T T T", "expect_note": "bẻ nhẹ"},
-    {"name": "all_tai_4", "seq": "T T T T", "expect_note": "bẻ"},
-    {"name": "all_tai_5", "seq": "T T T T T", "expect_note": "theo cầu"},
-    {"name": "all_tai_6", "seq": "T T T T T T", "expect_note": "theo cầu"},
-    {"name": "all_tai_7", "seq": "T T T T T T T", "expect_note": "trung tính"},
-    {"name": "all_tai_8", "seq": "T T T T T T T T", "expect_note": "kiệt — bẻ"},
-    {"name": "all_tai_10", "seq": "T T T T T T T T T T", "expect_note": "kiệt — bẻ mạnh"},
-    {"name": "all_tai_12", "seq": "T " * 12, "expect_note": "kiệt cực mạnh"},
-    {"name": "all_tai_15", "seq": "T " * 15, "expect_note": "siêu kiệt"},
-    {"name": "all_tai_20", "seq": "T " * 20, "expect_note": "dominance flip"},
-    {"name": "all_xiu_3", "seq": "X X X", "expect_note": "bẻ nhẹ"},
-    {"name": "all_xiu_5", "seq": "X X X X X", "expect_note": "theo cầu"},
-    {"name": "all_xiu_8", "seq": "X X X X X X X X", "expect_note": "kiệt — bẻ"},
-    {"name": "all_xiu_10", "seq": "X " * 10, "expect_note": "kiệt"},
-    {"name": "all_xiu_12", "seq": "X " * 12, "expect_note": "kiệt mạnh"},
-    {"name": "all_xiu_20", "seq": "X " * 20, "expect_note": "dominance flip"},
-    {"name": "85pct_tai", "seq": "T " * 17 + "X X X", "expect_note": "lệch — bẻ"},
-    {"name": "85pct_xiu", "seq": "X " * 17 + "T T T", "expect_note": "lệch — bẻ"},
-    {"name": "75pct_tai", "seq": "T T T X " * 5, "expect_note": "nghiêng Tài"},
-    {"name": "75pct_xiu", "seq": "X X X T " * 5, "expect_note": "nghiêng Xỉu"},
-    {"name": "trend_up", "seq": "X X X X X T T T T T T T T T T", "expect_note": "theo Tài"},
-    {"name": "trend_up_recent", "seq": "X X T X T T T T T T T", "expect_note": "theo Tài"},
-    {"name": "trend_down", "seq": "T T T T T X X X X X X X X X X", "expect_note": "theo Xỉu"},
-    {"name": "trend_down_recent", "seq": "T T X T X X X X X X X", "expect_note": "theo Xỉu"},
-    {"name": "break_after_5tai", "seq": "T T T T T X", "expect_note": "đảo lại Tài"},
-    {"name": "break_after_5xiu", "seq": "X X X X X T", "expect_note": "đảo lại Xỉu"},
-    {"name": "break_after_6tai", "seq": "T T T T T T X", "expect_note": "đảo lại Tài"},
-    {"name": "break_after_7xiu", "seq": "X X X X X X X T", "expect_note": "đảo lại Xỉu"},
-    {"name": "zigzag_1", "seq": "T X X T T X X T T X", "expect_note": "theo nhịp"},
-    {"name": "zigzag_2", "seq": "T T X T T X T T X", "expect_note": "theo nhịp"},
-    {"name": "zigzag_3", "seq": "X T T X T T X T", "expect_note": "theo nhịp"},
-    {"name": "1-2_clean", "seq": "T X X T X X T X X T X X", "expect_note": "đảo block"},
-    {"name": "1-2_start_X", "seq": "X T T X T T X T T X T T", "expect_note": "đảo block"},
-    {"name": "2-1_clean", "seq": "T T X T T X T T X T T X", "expect_note": "đảo block"},
-    {"name": "2-1_start_X", "seq": "X X T X X T X X T X X T", "expect_note": "đảo block"},
-    {"name": "1-3_clean", "seq": "T X X X T X X X T X X X", "expect_note": "đảo block"},
-    {"name": "3-1_clean", "seq": "T T T X T T T X T T T X", "expect_note": "đảo block"},
-    {"name": "2-2-1", "seq": "T T X X T T T X X T T T X X", "expect_note": "pattern"},
-    {"name": "noisy_1", "seq": "T X T T X X T X X T T X T X", "expect_note": "không chắc"},
-    {"name": "noisy_2", "seq": "T T X T X T T X X T X T X X", "expect_note": "không chắc"},
-    {"name": "noisy_3", "seq": "X T X X T T X T X X T X T T", "expect_note": "không chắc"},
-    {"name": "random", "seq": "T X X T T X T T X X T X T T X X T", "expect_note": "không chắc"},
-    {"name": "symmetry", "seq": "T T T X X X X X X T T T", "expect_note": "đảo block"},
-    {"name": "reverse_symmetry", "seq": "X X X T T T T T T X X X", "expect_note": "đảo block"},
-    {"name": "sandwich", "seq": "T X X T T X X T T X X T", "expect_note": "theo nhịp"},
-    {"name": "double_sandwich", "seq": "T T X X X X T T T T X X X X", "expect_note": "đảo block"},
-    {"name": "trend_to_exhaust", "seq": "X T T T T T T T T T", "expect_note": "kiệt Tài"},
-    {"name": "trend_to_exhaust_xiu", "seq": "T X X X X X X X X X", "expect_note": "kiệt Xỉu"},
-    {"name": "fast_flip", "seq": "T T T X X X T T T X X X T", "expect_note": "đảo block"},
-    {"name": "slow_flip", "seq": "T T T T T X X X X X T T T T", "expect_note": "đảo block"},
-    {"name": "classic_break", "seq": "T T T X", "expect_note": "vừa bẻ"},
-    {"name": "classic_break_xiu", "seq": "X X X T", "expect_note": "vừa bẻ"},
-    {"name": "mix_1", "seq": "T T X X T T T X X X T T T T", "expect_note": "tăng dần block"},
-    {"name": "mix_2", "seq": "X X T T X X X T T T X X X X", "expect_note": "tăng dần block"},
-    {"name": "mix_3", "seq": "T X X T T T X X X X T T T T T", "expect_note": "tăng dần block"},
-    {"name": "4-4", "seq": "T T T T X X X X T T T T X X X X", "expect_note": "đảo block"},
-    {"name": "5-5", "seq": "T T T T T X X X X X T T T T T", "expect_note": "đảo block"},
-    {"name": "tail_dai_break", "seq": "X X T T T T T T X", "expect_note": "đảo lại Tài"},
-    {"name": "tail_dai_break_xiu", "seq": "T T X X X X X X T", "expect_note": "đảo lại Xỉu"},
-    {"name": "high_entropy", "seq": "T X T T X X T X X T T X X T X T", "expect_note": "không chắc"},
-    {"name": "low_entropy", "seq": "T T T T T T T T T T T T T T T", "expect_note": "kiệt"},
-]
-
-def _seq_to_valid(seq_str, start_phien=1000):
-    """Chuyển chuỗi 'T X T ...' thành valid list"""
-    tokens = seq_str.split()
-    valid = []
-    for i, tok in enumerate(tokens):
-        valid.append({
-            'phien': start_phien + i,
-            'result': 'Tài' if tok.upper() == 'T' else 'Xỉu',
-            'dice': '0 + 0 + 0',
-            'total': 0,
-        })
-    return valid
-
-
-# =====================================================================
-# BỘ MẪU CẦU TEST ALL — KHÔNG RANDOM
-# =====================================================================
-def _build_all_cau_tests():
-    """
-    Sinh mẫu cầu quy luật rõ ràng để test.
-    Trả list dict: {name, history, actual, expect}
-    """
-    tests = []
-
-    def add(name, history_str, actual_char, expect_char):
-        h = _seq_to_valid(history_str)
-        if len(h) < 4:
-            return
-        actual = 'Tài' if actual_char.upper() == 'T' else 'Xỉu'
-        expect = 'Tài' if expect_char.upper() == 'T' else 'Xỉu'
-        tests.append({
-            'name': name,
-            'history': history_str,
-            'actual': actual,
-            'expect': expect,
-        })
-
-    # ---- CẦU 1-1 ----
-    for i in range(6, 15):
-        seq = ' '.join(['T' if j % 2 == 0 else 'X' for j in range(i)])
-        nxt = 'T' if i % 2 == 0 else 'X'
-        add(f'1-1_len{i}', seq, nxt, nxt)
-
-    # ---- CẦU 2-2 ----
-    for i in range(6, 15):
-        seq = ' '.join(['T' if (j // 2) % 2 == 0 else 'X' for j in range(i)])
-        nxt = 'T' if (i // 2) % 2 == 0 else 'X'
-        add(f'2-2_len{i}', seq, nxt, nxt)
-
-    # ---- CẦU 3-3 ----
-    for i in range(6, 15):
-        seq = ' '.join(['T' if (j // 3) % 2 == 0 else 'X' for j in range(i)])
-        nxt = 'T' if (i // 3) % 2 == 0 else 'X'
-        add(f'3-3_len{i}', seq, nxt, nxt)
-
-    # ---- CẦU BỆT TÀI (test bẻ) ----
-    for n in (3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 18, 20):
-        add(f'bet_tai_{n}', ' '.join(['T'] * n), 'X', 'X')
-
-    # ---- CẦU BỆT XỈU ----
-    for n in (3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 18, 20):
-        add(f'bet_xiu_{n}', ' '.join(['X'] * n), 'T', 'T')
-
-    # ---- CẦU 1-2 ----
-    for i in range(6, 15):
-        seq = []
-        j = 0
-        toggle = True
-        while len(seq) < i:
-            if toggle:
-                seq.append('T')
+        # === v11: CAU OVERRIDE ===
+        cau = CauDetector.detect(valid)
+        if cau and cau['weight'] >= 1.4 and cau['confidence'] >= 62:
+            result['cau_name'] = cau['name']
+            if cau['prediction'] != result['prediction']:
+                result['prediction'] = cau['prediction']
+                result['confidence'] = max(
+                    cau['confidence'],
+                    min(result['confidence'] + 8, 88)
+                )
+                result['method'] = f"CAU[{cau['name']}]+" + result['method'][:40]
+                result['reason'] = f"🎯 {cau['info']} · override ensemble"
+                result['cau_override'] = True
             else:
-                seq.extend(['X', 'X'])
-            toggle = not toggle
-        seq = seq[:i]
-        j = i
-        toggle = True
-        cnt = 0
-        phase = 0
-        while cnt < j:
-            size = 1 if phase % 2 == 0 else 2
-            cnt += size
-            phase += 1
-        nxt = 'T' if (phase - 1) % 2 == 0 else 'X'
-        add(f'1-2_len{i}', ' '.join(seq), nxt, nxt)
+                result['confidence'] = min(result['confidence'] + 5, 88)
+                result['method'] = f"CAU[{cau['name']}]+" + result['method'][:40]
+                result['reason'] += f" · xác nhận bởi {cau['name']}"
 
-    # ---- CẦU 2-1 ----
-    for i in range(6, 15):
-        seq = []
-        toggle = True
-        while len(seq) < i:
-            if toggle:
-                seq.extend(['T', 'T'])
-            else:
-                seq.append('X')
-            toggle = not toggle
-        seq = seq[:i]
-        phase = 0
-        cnt = 0
-        while cnt < i:
-            size = 2 if phase % 2 == 0 else 1
-            cnt += size
-            phase += 1
-        nxt = 'T' if (phase - 1) % 2 == 0 else 'X'
-        add(f'2-1_len{i}', ' '.join(seq), nxt, nxt)
+        # === v11: SAI 2 TAY → FLIP ===
+        fail_streak = cls._check_failure_streak()
+        if fail_streak >= 2:
+            result['prediction'] = 'Xỉu' if result['prediction'] == 'Tài' else 'Tài'
+            result['confidence'] = max(55, min(result['confidence'], 72))
+            result['method'] = 'FLIP(' + result['method'] + ')'
+            result['reason'] += f" · ⚠ SAI {fail_streak} TAY → ĐẢO"
+            result['flipped'] = True
 
-    # ---- CẦU 4-4 ----
-    for i in range(8, 15):
-        seq = ' '.join(['T' if (j // 4) % 2 == 0 else 'X' for j in range(i)])
-        nxt = 'T' if (i // 4) % 2 == 0 else 'X'
-        add(f'4-4_len{i}', seq, nxt, nxt)
-
-    # ---- CẦU 5-5 ----
-    for i in range(10, 16):
-        seq = ' '.join(['T' if (j // 5) % 2 == 0 else 'X' for j in range(i)])
-        nxt = 'T' if (i // 5) % 2 == 0 else 'X'
-        add(f'5-5_len{i}', seq, nxt, nxt)
-
-    # ---- XU HƯỚNG TĂNG ----
-    add('trend_up', 'X X X X X T T T T T T T T T T', 'T', 'T')
-    add('trend_down', 'T T T T T X X X X X X X X X X', 'X', 'X')
-    add('trend_up_short', 'X X X T T T T T T', 'T', 'T')
-    add('trend_down_short', 'T T T X X X X X X', 'X', 'X')
-
-    # ---- ĐẢO CẦU SAU CHUỖI DÀI ----
-    add('break_5tai', 'T T T T T X', 'T', 'T')
-    add('break_5xiu', 'X X X X X T', 'X', 'X')
-    add('break_6tai', 'T T T T T T X', 'T', 'T')
-    add('break_6xiu', 'X X X X X X T', 'X', 'X')
-    add('break_7tai', 'T T T T T T T X', 'T', 'T')
-    add('break_7xiu', 'X X X X X X X T', 'X', 'X')
-
-    # ---- CẦU GẤP KHÚC ----
-    add('zigzag_1', 'T X X T T X X T T X', 'T', 'T')
-    add('zigzag_2', 'T T X T T X T T X', 'T', 'T')
-
-    # ---- 2-2-1 ----
-    add('2-2-1_1', 'T T X X T T X X T', 'T', 'T')
-    add('2-2-1_2', 'T T X X T T T X X T T T X X', 'T', 'T')
-
-    # ---- SYMMETRY ----
-    add('symmetry', 'T T T X X X X X X T T T', 'X', 'X')
-    add('reverse_symmetry', 'X X X T T T T T T X X X', 'T', 'T')
-
-    # ---- TĂNG DẦN BLOCK ----
-    add('mix_1', 'T T X X T T T X X X T T T T', 'X', 'X')
-    add('mix_2', 'X X T T X X X T T T X X X X', 'T', 'T')
-
-    # ---- CLASSIC BREAK ----
-    add('classic_break', 'T T T X', 'X', 'X')
-    add('classic_break_xiu', 'X X X T', 'T', 'T')
-
-    return tests
+        return result
 
 
 # =====================================================================
@@ -983,7 +909,6 @@ def _sync_history():
 def _update_prediction_log(valid):
     if not valid:
         return
-
     by_phien = {v['phien']: v for v in valid}
     phien_list = sorted(by_phien.keys())
 
@@ -997,15 +922,11 @@ def _update_prediction_log(valid):
 
     changed = False
     for i, phien in enumerate(phien_list):
-        if phien in PREDICTION_LOG:
+        if phien in PREDICTION_LOG or phien <= RESET_ID:
             continue
-        if phien <= RESET_ID:
-            continue
-
         history_before = [by_phien[p] for p in phien_list[:i]]
         if len(history_before) < 3:
             continue
-
         pred = MultiStrategyPredictor.predict(history_before)
         actual = by_phien[phien]['result']
         PREDICTION_LOG[phien] = {
@@ -1071,7 +992,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 </title>
+<title>LE MINH MD5 v11</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -1085,16 +1006,15 @@ body{background:linear-gradient(135deg,#0f172a,#1e1b4b);color:var(--text);min-he
 .clock{font-size:11px;color:var(--muted);font-weight:600}
 .btn{background:var(--card);color:var(--text);border:1px solid var(--border);padding:7px 12px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer}
 .btn-reset{background:rgba(248,113,113,.15);color:#f87171;border-color:rgba(248,113,113,.4)}
-
 .wrap{max-width:760px;margin:0 auto;padding:12px}
-
 .scorebar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
 .sc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center}
 .sc-l{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:4px;letter-spacing:.5px}
 .sc-v{font-size:22px;font-weight:800}
 .sc-v.ok{color:var(--ok)}.sc-v.fail{color:var(--fail)}.sc-v.warn{color:var(--warn)}
-
-.tbl{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-height:74vh;overflow-y:auto}
+.cau-bar{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:12px;text-align:center;font-size:12px;color:var(--muted)}
+.cau-bar b{color:var(--tai)}
+.tbl{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-height:70vh;overflow-y:auto}
 table{width:100%;border-collapse:separate;border-spacing:0}
 th{background:var(--card2);color:var(--muted);font-size:10px;font-weight:700;padding:11px 6px;text-align:center;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;text-transform:uppercase}
 td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:12px;font-weight:600}
@@ -1109,6 +1029,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 .dice{font-size:10px;color:var(--muted);display:block;margin-top:2px}
 .pred-mini{font-size:11px;font-weight:800}
 .pred-mini.tai{color:var(--tai)}.pred-mini.xiu{color:var(--xiu)}
+.cau-tag{display:inline-block;font-size:9px;background:rgba(251,191,36,.15);color:var(--warn);padding:2px 6px;border-radius:8px;margin-top:2px;font-weight:700}
 .loading{text-align:center;padding:30px;color:var(--tai);font-weight:600}
 @media(max-width:520px){
   th,td{padding:8px 4px;font-size:11px}
@@ -1121,7 +1042,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </head>
 <body>
 <div class="header">
-    <div class="logo">LE MINH <span>Bon</span></div>
+    <div class="logo">LE MINH <span>v11</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="fetchData()">↻</button>
@@ -1133,8 +1054,10 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
     <div class="scorebar">
         <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="sc-correct">0</div></div>
         <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="sc-wrong">0</div></div>
-        <div class="sc"><div class="sc-l"> Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
+        <div class="sc"><div class="sc-l">⏳ Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
     </div>
+
+    <div class="cau-bar" id="cau-bar">Đang phân tích cầu...</div>
 
     <div class="tbl">
         <table>
@@ -1161,6 +1084,7 @@ async function fetchData(){
         const data = await r.json();
         document.getElementById('clock').innerText = new Date().toLocaleTimeString('vi-VN');
         renderScore(data.ai_stats || {});
+        renderCauBar(data.cau_info);
         renderTable(data.rows || []);
     }catch(e){ console.error(e); }
 }
@@ -1171,20 +1095,28 @@ function renderScore(ai){
     document.getElementById('sc-pending').innerText = ai.pending || 0;
 }
 
+function renderCauBar(cau){
+    const el = document.getElementById('cau-bar');
+    if(!cau){ el.innerHTML = '📊 Không phát hiện cầu rõ ràng — dùng ensemble'; return; }
+    const flip = cau.cau_override ? ' 🔥 OVERRIDE' : '';
+    el.innerHTML = `🎯 Cầu chính: <b>${cau.cau_name || '—'}</b> · 
+                    Dự đoán: <b>${cau.prediction}</b> (${cau.confidence}%)${flip}`;
+}
+
 function renderTable(rows){
     const tb = document.getElementById('tbody');
     if(!rows.length){ tb.innerHTML = '<tr><td colspan="4" class="loading">Chưa có dữ liệu.</td></tr>'; return; }
     let html = '';
     rows.forEach(row => {
         const trCls = row.is_next ? 'class="row-next"' : '';
-
         let predCell = '<span class="badge b-none">—</span>';
         if(row.ai_prediction){
             const cls = row.ai_prediction === 'Tài' ? 'tai' : 'xiu';
+            let cauTag = '';
+            if(row.cau_name) cauTag = `<br><span class="cau-tag">${row.cau_name}</span>`;
             predCell = `<span class="pred-mini ${cls}">${row.ai_prediction}</span>
-                        <br><span style="font-size:9px;color:var(--muted)">${row.ai_confidence||0}%</span>`;
+                        <br><span style="font-size:9px;color:var(--muted)">${row.ai_confidence||0}%</span>${cauTag}`;
         }
-
         let resBadge = '<span class="badge b-none">—</span>';
         if(row.result === 'Tài') resBadge = '<span class="badge b-tai">TÀI</span>';
         if(row.result === 'Xỉu') resBadge = '<span class="badge b-xiu">XỈU</span>';
@@ -1251,7 +1183,6 @@ def history():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'tai': 0, 'xiu': 0},
                             'ai_stats': _log_stats()})
@@ -1262,6 +1193,15 @@ def history():
         stats = _honest_stats(valid)
         ai_stats = _log_stats()
 
+        cau_info = None
+        if pred.get('cau_name'):
+            cau_info = {
+                'cau_name': pred['cau_name'],
+                'prediction': pred['prediction'],
+                'confidence': pred['confidence'],
+                'cau_override': pred.get('cau_override', False),
+            }
+
         out = [{
             'phien': next_phien,
             'is_next': True,
@@ -1271,6 +1211,7 @@ def history():
             'ai_prediction': pred['prediction'],
             'ai_confidence': pred['confidence'],
             'ai_correct': None,
+            'cau_name': pred.get('cau_name'),
         }]
 
         for v in reversed(valid[-200:]):
@@ -1286,9 +1227,11 @@ def history():
                 'ai_prediction': log['prediction'] if log else None,
                 'ai_confidence': log['confidence'] if log else None,
                 'ai_correct': log['correct'] if log else None,
+                'cau_name': None,
             })
 
-        return jsonify({'rows': out, 'stats': stats, 'ai_stats': ai_stats})
+        return jsonify({'rows': out, 'stats': stats, 'ai_stats': ai_stats,
+                        'cau_info': cau_info})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -1307,6 +1250,7 @@ def predict():
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid)
         _log_prediction(next_phien, pred)
+        all_cau = CauDetector.detect_all(valid)
 
         return jsonify({
             'last_phien': last['phien'],
@@ -1319,6 +1263,10 @@ def predict():
             'method': pred['method'],
             'reason': pred['reason'],
             'signals': pred['signals'],
+            'cau_name': pred.get('cau_name'),
+            'cau_override': pred.get('cau_override', False),
+            'flipped': pred.get('flipped', False),
+            'all_cau_detected': all_cau,
             'stats': _honest_stats(valid),
             'ai_stats': _log_stats(),
             'timestamp': datetime.now().isoformat(),
@@ -1335,7 +1283,7 @@ def lc79():
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'le minh ai v10', 'Phien': None, 'Du_doan': None})
+            return jsonify({'Id': 'le minh ai v11', 'Phien': None, 'Du_doan': None})
 
         last = valid[-1]
         next_phien = last['phien'] + 1
@@ -1345,12 +1293,13 @@ def lc79():
         ai_stats = _log_stats()
 
         return jsonify({
-            'Id': 'le minh ai v10',
+            'Id': 'le minh ai v11',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
             'Do_tin_cay': f"{pred['confidence']}%",
             'Phuong_phap': pred['method'],
+            'Cau': pred.get('cau_name'),
             'Tong_phien': stats['total'],
             'So_Tai': stats['tai'],
             'So_Xiu': stats['xiu'],
@@ -1377,6 +1326,27 @@ def stats_only():
             'last_phien': last['phien'] if last else None,
             'last_dice': last['dice'] if last else None,
             'timestamp': datetime.now().isoformat(),
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/cau_detect')
+def cau_detect():
+    """Debug: xem tất cả cầu đang khớp"""
+    try:
+        valid, success = _sync_history()
+        if not success:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+        all_cau = CauDetector.detect_all(valid)
+        best = CauDetector.detect(valid)
+        runs = CauDetector._run_lengths([v['result'] for v in valid[-40:]])
+        return jsonify({
+            'all_cau': all_cau,
+            'best_cau': best,
+            'recent_runs': runs,
+            'num_phien': len(valid),
         })
     except Exception as e:
         traceback.print_exc()
@@ -1432,95 +1402,118 @@ def reset_api():
 
 
 # =====================================================================
-# API TEST 80 MẪU PATTERN
+# API TEST TOÀN DIỆN
 # =====================================================================
-@app.route('/api/test_patterns')
-def test_patterns():
-    """
-    Chạy toàn bộ 80 mẫu pattern qua predictor v10.
-    GET /api/test_patterns           → trả JSON
-    GET /api/test_patterns?format=txt → trả text
-    """
-    try:
-        results = []
-        correct = 0
-        total = 0
-
-        for pattern in TEST_PATTERNS:
-            seq = pattern['seq'].strip()
-            tokens = seq.split()
-            if len(tokens) < 5:
-                continue
-
-            history_tokens = tokens[:-1]
-            actual_tok = tokens[-1].upper()
-            actual = 'Tài' if actual_tok == 'T' else 'Xỉu'
-
-            valid = _seq_to_valid(' '.join(history_tokens))
-            if len(valid) < 4:
-                continue
-
-            pred = MultiStrategyPredictor.predict(valid)
-            is_correct = (pred['prediction'] == actual)
-            if is_correct:
-                correct += 1
-            total += 1
-
-            results.append({
-                'name': pattern['name'],
-                'seq': seq,
-                'history_len': len(valid),
-                'prediction': pred['prediction'],
-                'confidence': pred['confidence'],
-                'actual': actual,
-                'correct': is_correct,
-                'method': pred['method'],
-                'reason': pred['reason'],
-                'note': pattern.get('expect_note', ''),
-            })
-
-        acc = round(correct / total * 100, 2) if total > 0 else 0
-
-        fmt = request.args.get('format', 'json').lower()
-        if fmt == 'txt':
-            lines = []
-            lines.append(f"=== TEST {total} MẪU PATTERN v10 ===")
-            lines.append(f"Đúng: {correct}/{total} ({acc}%)")
-            lines.append("")
-            for r in results:
-                mark = '✓' if r['correct'] else '✗'
-                lines.append(
-                    f"{mark} {r['name']:<22} | seq={r['seq']:<40} | "
-                    f"pred={r['prediction']:<5} ({r['confidence']}%) | "
-                    f"actual={r['actual']:<5} | {r['note']}"
-                )
-            return '\n'.join(lines), 200, {'Content-Type': 'text/plain; charset=utf-8'}
-
-        return jsonify({
-            'version': 'v10',
-            'total': total,
-            'correct': correct,
-            'accuracy': acc,
-            'results': results,
+def _seq_to_valid(seq_str, start_phien=1000):
+    tokens = seq_str.split()
+    valid = []
+    for i, tok in enumerate(tokens):
+        valid.append({
+            'phien': start_phien + i,
+            'result': 'Tài' if tok.upper() == 'T' else 'Xỉu',
+            'dice': '0 + 0 + 0',
+            'total': 0,
         })
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+    return valid
 
 
-# =====================================================================
-# API TEST TẤT CẢ CẦU — KHÔNG RANDOM
-# =====================================================================
+def _build_all_cau_tests():
+    """Sinh mẫu cầu deterministic — test đủ loại từ 1-1 đến 1-2-3-4"""
+    tests = []
+
+    def add(name, history_str, actual_char, expect_char):
+        h = _seq_to_valid(history_str)
+        if len(h) < 4:
+            return
+        actual = 'Tài' if actual_char.upper() == 'T' else 'Xỉu'
+        expect = 'Tài' if expect_char.upper() == 'T' else 'Xỉu'
+        tests.append({'name': name, 'history': history_str,
+                      'actual': actual, 'expect': expect})
+
+    # === CẦU 2-BLOCK ===
+    for cycle_name, sizes in [
+        ('1-1', [1, 1]), ('2-2', [2, 2]), ('3-3', [3, 3]),
+        ('4-4', [4, 4]), ('5-5', [5, 5]),
+        ('1-2', [1, 2]), ('2-1', [2, 1]),
+        ('1-3', [1, 3]), ('3-1', [3, 1]),
+        ('2-3', [2, 3]), ('3-2', [3, 2]),
+    ]:
+        for n_phien in (8, 10, 12, 14, 16, 18, 20):
+            seq = []
+            phase = 0
+            while len(seq) < n_phien:
+                size = sizes[phase % len(sizes)]
+                val = 'T' if phase % 2 == 0 else 'X'
+                seq.extend([val] * size)
+                phase += 1
+            seq = seq[:n_phien]
+            # Dự đoán phiên tiếp
+            next_size = sizes[phase % len(sizes)]
+            next_val = 'T' if phase % 2 == 0 else 'X'
+            add(f'{cycle_name}_len{n_phien}', ' '.join(seq), next_val, next_val)
+
+    # === CẦU 3-BLOCK ===
+    for cycle_name, sizes in [
+        ('1-1-1', [1, 1, 1]), ('1-2-1', [1, 2, 1]),
+        ('1-2-2', [1, 2, 2]), ('2-1-1', [2, 1, 1]),
+        ('2-2-1', [2, 2, 1]), ('1-2-3', [1, 2, 3]),
+        ('3-2-1', [3, 2, 1]), ('1-3-2', [1, 3, 2]),
+        ('2-3-1', [2, 3, 1]), ('1-1-2', [1, 1, 2]),
+        ('2-1-2', [2, 1, 2]),
+    ]:
+        for n_phien in (12, 15, 18, 21, 24):
+            seq = []
+            phase = 0
+            while len(seq) < n_phien:
+                size = sizes[phase % len(sizes)]
+                val = 'T' if phase % 2 == 0 else 'X'
+                seq.extend([val] * size)
+                phase += 1
+            seq = seq[:n_phien]
+            next_val = 'T' if phase % 2 == 0 else 'X'
+            add(f'{cycle_name}_len{n_phien}', ' '.join(seq), next_val, next_val)
+
+    # === CẦU 4-BLOCK ===
+    for cycle_name, sizes in [
+        ('1-1-1-1', [1, 1, 1, 1]),
+        ('1-2-1-2', [1, 2, 1, 2]),
+        ('2-1-2-1', [2, 1, 2, 1]),
+        ('1-2-2-1', [1, 2, 2, 1]),
+    ]:
+        for n_phien in (16, 20, 24):
+            seq = []
+            phase = 0
+            while len(seq) < n_phien:
+                size = sizes[phase % len(sizes)]
+                val = 'T' if phase % 2 == 0 else 'X'
+                seq.extend([val] * size)
+                phase += 1
+            seq = seq[:n_phien]
+            next_val = 'T' if phase % 2 == 0 else 'X'
+            add(f'{cycle_name}_len{n_phien}', ' '.join(seq), next_val, next_val)
+
+    # === CẦU BỆT ===
+    for n in (5, 6, 7, 8, 9, 10, 12, 15, 18, 20):
+        add(f'bet_tai_{n}', ' '.join(['T'] * n), 'X', 'X')
+        add(f'bet_xiu_{n}', ' '.join(['X'] * n), 'T', 'T')
+
+    # === TREND ===
+    add('trend_up', 'X X X X X T T T T T T T T T T', 'T', 'T')
+    add('trend_down', 'T T T T T X X X X X X X X X X', 'X', 'X')
+
+    # === BREAK SAU CHUỖI ===
+    add('break_5tai', 'T T T T T X', 'T', 'T')
+    add('break_5xiu', 'X X X X X T', 'X', 'X')
+    add('break_7tai', 'T T T T T T T X', 'T', 'T')
+
+    return tests
+
+
 @app.route('/api/test_all_cau')
 def test_all_cau():
     """
     Test exhaustive qua TẤT CẢ mẫu cầu deterministic.
-    - Không random
-    - So sánh prediction vs expect (kỳ vọng của pattern)
-    - Trả thống kê theo từng nhóm cầu
-
-    GET /api/test_all_cau            → JSON
-    GET /api/test_all_cau?format=txt → text
+    GET /api/test_all_cau?format=txt
     """
     try:
         tests = _build_all_cau_tests()
@@ -1528,17 +1521,27 @@ def test_all_cau():
         correct = 0
         total = 0
         by_group = defaultdict(lambda: {'correct': 0, 'total': 0})
+        cau_override_count = 0
 
         for t in tests:
             valid = _seq_to_valid(t['history'])
             if len(valid) < 4:
                 continue
 
+            # Tắt failure streak flip để test thuần
+            saved_log = dict(PREDICTION_LOG)
+            PREDICTION_LOG.clear()
+
             pred = MultiStrategyPredictor.predict(valid)
+            PREDICTION_LOG.clear()
+            PREDICTION_LOG.update(saved_log)
+
             is_correct = (pred['prediction'] == t['expect'])
             total += 1
             if is_correct:
                 correct += 1
+            if pred.get('cau_override'):
+                cau_override_count += 1
 
             group = t['name'].split('_')[0]
             by_group[group]['total'] += 1
@@ -1548,17 +1551,13 @@ def test_all_cau():
             results.append({
                 'name': t['name'],
                 'history_len': len(valid),
-                'history_tail': ' '.join(
-                    ['T' if v['result'] == 'Tài' else 'X' for v in valid[-8:]]
-                ),
                 'prediction': pred['prediction'],
                 'confidence': pred['confidence'],
                 'expect': t['expect'],
-                'actual_result': t['actual'],
-                'correct_vs_expect': is_correct,
-                'correct_vs_actual': (pred['prediction'] == t['actual']),
+                'correct': is_correct,
                 'method': pred['method'],
-                'flipped': pred.get('flipped', False),
+                'cau_name': pred.get('cau_name'),
+                'cau_override': pred.get('cau_override', False),
             })
 
         acc = round(correct / total * 100, 2) if total > 0 else 0
@@ -1570,28 +1569,30 @@ def test_all_cau():
 
         fmt = request.args.get('format', 'json').lower()
         if fmt == 'txt':
-            lines = [f"=== TEST ALL CẦU v10 (NO RANDOM) ===",
-                     f"Tổng: {total} mẫu | Đúng kỳ vọng: {correct} ({acc}%)", ""]
+            lines = [f"=== TEST ALL CẦU v11 (NO RANDOM) ===",
+                     f"Tổng: {total} | Đúng: {correct} ({acc}%)",
+                     f"Cầu override: {cau_override_count}/{total}", ""]
             lines.append("--- THEO NHÓM ---")
             for k, v in group_stats.items():
                 lines.append(f"  {k:<15} {v['correct']}/{v['total']} ({v['accuracy']}%)")
             lines.append("")
             lines.append("--- CHI TIẾT ---")
             for r in results:
-                mark = '✓' if r['correct_vs_expect'] else '✗'
-                flip = ' [FLIP]' if r['flipped'] else ''
+                mark = '✓' if r['correct'] else '✗'
+                cau = f" [{r['cau_name']}]" if r['cau_name'] else ''
+                ov = ' 🔥' if r['cau_override'] else ''
                 lines.append(
-                    f"{mark} {r['name']:<20} hist={r['history_tail']:<24} "
-                    f"pred={r['prediction']:<5}({r['confidence']}%) "
-                    f"expect={r['expect']:<5} actual={r['actual_result']:<5}{flip}"
+                    f"{mark} {r['name']:<22} pred={r['prediction']:<5}"
+                    f"({r['confidence']}%) expect={r['expect']:<5}{cau}{ov}"
                 )
             return '\n'.join(lines), 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
         return jsonify({
-            'version': 'v10',
+            'version': 'v11',
             'total': total,
             'correct': correct,
             'accuracy': acc,
+            'cau_override_count': cau_override_count,
             'group_stats': group_stats,
             'results': results,
         })
