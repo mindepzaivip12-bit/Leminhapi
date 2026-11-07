@@ -52,9 +52,7 @@ def _save_log():
 
 
 # =====================================================================
-# DETERMINISTIC PREDICTOR v8
-# - Thêm: đảo cầu (invert), xu hướng (trend), cầu nghiêng (bias run)
-# - Ensemble Bayesian log-odds + adaptive weight + calibration
+# DETERMINISTIC PREDICTOR v9
 # =====================================================================
 class MultiStrategyPredictor:
     _STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
@@ -65,7 +63,7 @@ class MultiStrategyPredictor:
         return options[h % len(options)]
 
     # =================================================================
-    # STRATEGY SIGNALS
+    # CORE SIGNALS
     # =================================================================
 
     @staticmethod
@@ -108,9 +106,12 @@ class MultiStrategyPredictor:
             return 'Xỉu', int((1 - p_tai) * 100), 1.20
         return None, 0, 0
 
+    # =================================================================
+    # STREAK ADAPTIVE
+    # =================================================================
     @staticmethod
     def _streak_break(valid, window=None):
-        if len(valid) < 3:
+        if len(valid) < 4:
             return None, 0, 0
         last = valid[-1]['result']
         streak = 1
@@ -119,6 +120,21 @@ class MultiStrategyPredictor:
                 streak += 1
             else:
                 break
+
+        opp = 'Xỉu' if last == 'Tài' else 'Tài'
+
+        # Mean-revert: vừa gãy từ chuỗi dài
+        if streak == 1 and len(valid) >= 6:
+            prev = valid[-2]['result']
+            prev_run = 1
+            for i in range(len(valid) - 3, -1, -1):
+                if valid[i]['result'] == prev:
+                    prev_run += 1
+                else:
+                    break
+            if prev_run >= 4:
+                return last, 62, 1.10
+
         if streak < 3:
             return None, 0, 0
 
@@ -134,21 +150,179 @@ class MultiStrategyPredictor:
         if run >= 3:
             continues += 1
 
-        opp = 'Xỉu' if last == 'Tài' else 'Tài'
         total_obs = breaks + continues
-        if total_obs >= 3:
-            p_break = breaks / total_obs
-            prior = min(0.5 + streak * 0.04, 0.72)
-            p_break = 0.6 * p_break + 0.4 * prior
-        else:
-            p_break = min(0.52 + streak * 0.05, 0.72)
 
-        conf = int(p_break * 100)
+        if streak <= 4:
+            if total_obs >= 3:
+                p_break = breaks / total_obs
+                p_break = 0.5 * p_break + 0.5 * min(0.52 + streak * 0.03, 0.65)
+            else:
+                p_break = min(0.55 + streak * 0.02, 0.65)
+            target = opp
+            conf = int(p_break * 100)
+        elif streak <= 6:
+            if total_obs < 2:
+                return None, 0, 0
+            p_break = breaks / total_obs
+            if p_break >= 0.55:
+                target, conf = opp, int(p_break * 100)
+            elif p_break <= 0.45:
+                target, conf = last, int((1 - p_break) * 100)
+            else:
+                return None, 0, 0
+        else:
+            target = last
+            conf = min(58 + (streak - 7) * 4, 80)
+
         if conf < 55:
             return None, 0, 0
-        weight = 1.0 + (streak - 3) * 0.15
-        return opp, conf, min(weight, 1.6)
 
+        weight = 1.0 + (streak - 3) * 0.10
+        return target, conf, min(weight, 1.6)
+
+    # =================================================================
+    # FOLLOW TREND
+    # =================================================================
+    @staticmethod
+    def _follow_trend(valid):
+        if len(valid) < 8:
+            return None, 0, 0
+
+        last = valid[-1]['result']
+        streak = 1
+        for i in range(len(valid) - 2, -1, -1):
+            if valid[i]['result'] == last:
+                streak += 1
+            else:
+                break
+
+        # Case 1: streak dài → theo
+        if streak >= 5:
+            conf = min(58 + (streak - 5) * 4, 80)
+            return last, conf, 1.25
+
+        # Case 2: nghiêng mạnh 15 phiên & 5 phiên gần vẫn theo
+        if len(valid) >= 15:
+            seg15 = [v['result'] for v in valid[-15:]]
+            t15 = sum(1 for x in seg15 if x == 'Tài') / 15
+            seg5 = seg15[-5:]
+            t5 = sum(1 for x in seg5 if x == 'Tài') / 5
+            if t15 >= 0.70 and t5 >= 0.60:
+                conf = min(55 + int((t15 - 0.6) * 100), 78)
+                return 'Tài', conf, 1.15
+            if t15 <= 0.30 and t5 <= 0.40:
+                conf = min(55 + int((0.4 - t15) * 100), 78)
+                return 'Xỉu', conf, 1.15
+        return None, 0, 0
+
+    # =================================================================
+    # INVERT CAU (đảo cầu)
+    # =================================================================
+    @staticmethod
+    def _invert_cau(valid):
+        if len(valid) < 12:
+            return None, 0, 0
+        r = [v['result'] for v in valid[-16:]]
+
+        # Cầu 1-1
+        alt = sum(1 for i in range(1, len(r)) if r[i] != r[i - 1])
+        alt_ratio = alt / (len(r) - 1)
+        if alt_ratio >= 0.65:
+            nxt = 'Xỉu' if r[-1] == 'Tài' else 'Tài'
+            conf = min(56 + int(alt_ratio * 30), 82)
+            return nxt, conf, 1.30
+
+        # Cầu block 2-2
+        block2_hits = 0
+        block2_total = 0
+        for i in range(2, len(r)):
+            if r[i] == r[i - 2] and r[i] != r[i - 1]:
+                block2_hits += 1
+            if r[i] != r[i - 1]:
+                block2_total += 1
+        if block2_total >= 4 and block2_hits / block2_total >= 0.7:
+            tail_run = 1
+            for i in range(len(r) - 2, -1, -1):
+                if r[i] == r[-1]:
+                    tail_run += 1
+                else:
+                    break
+            nxt = r[-2] if tail_run == 1 else ('Xỉu' if r[-1] == 'Tài' else 'Tài')
+            return nxt, 68, 1.25
+
+        # Mean-revert sau chuỗi dài vừa gãy
+        run = 1
+        for i in range(len(r) - 2, -1, -1):
+            if r[i] == r[-1]:
+                run += 1
+            else:
+                break
+        if run == 1 and len(r) >= 6:
+            prev = r[-2]
+            prev_run = 1
+            for i in range(len(r) - 3, -1, -1):
+                if r[i] == prev:
+                    prev_run += 1
+                else:
+                    break
+            if prev_run >= 4:
+                return r[-1], 62, 1.15
+        return None, 0, 0
+
+    # =================================================================
+    # TREND (so sánh tỷ lệ đa khung)
+    # =================================================================
+    @staticmethod
+    def _trend(valid):
+        if len(valid) < 20:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+
+        def tai_ratio(win):
+            seg = r[-win:]
+            return sum(1 for x in seg if x == 'Tài') / len(seg)
+
+        p10 = tai_ratio(10)
+        p20 = tai_ratio(20) if len(r) >= 20 else p10
+        p40 = tai_ratio(40) if len(r) >= 40 else p20
+
+        if p10 > 0.55 and p20 > 0.52 and p10 >= p20 - 0.05 and p10 - p40 >= 0.05:
+            conf = min(int((p10 - 0.5) * 200 + 52), 78)
+            return 'Tài', conf, 1.20
+        if p10 < 0.45 and p20 < 0.48 and p10 <= p20 + 0.05 and p40 - p10 >= 0.05:
+            conf = min(int((0.5 - p10) * 200 + 52), 78)
+            return 'Xỉu', conf, 1.20
+        return None, 0, 0
+
+    # =================================================================
+    # BIAS RUN (cầu nghiêng)
+    # =================================================================
+    @staticmethod
+    def _bias_run(valid):
+        if len(valid) < 24:
+            return None, 0, 0
+        r = [v['result'] for v in valid[-24:]]
+        first = r[:12]
+        second = r[12:]
+
+        r_first = sum(1 for x in first if x == 'Tài') / 12
+        r_second = sum(1 for x in second if x == 'Tài') / 12
+
+        if r_second - r_first >= 0.25 and r_second >= 0.60:
+            conf = min(int((r_second - 0.5) * 180 + 55), 80)
+            return 'Tài', conf, 1.15
+        if r_first - r_second >= 0.25 and (1 - r_second) >= 0.60:
+            conf = min(int((0.5 - r_second) * -180 + 55), 80)
+            return 'Xỉu', conf, 1.15
+        if r_second >= 0.75:
+            return 'Tài', 65, 1.00
+        if r_second <= 0.25:
+            return 'Xỉu', 65, 1.00
+        return None, 0, 0
+
+    # =================================================================
+    # OTHERS
+    # =================================================================
     @staticmethod
     def _pattern_match(valid, window=None):
         if len(valid) < 15:
@@ -261,131 +435,6 @@ class MultiStrategyPredictor:
             return 'Xỉu', int((1 - p) * 100), 1.15
         return None, 0, 0
 
-    # =================================================================
-    # NEW STRATEGIES v8
-    # =================================================================
-
-    @staticmethod
-    def _invert_cau(valid):
-        """
-        Đảo cầu: nếu cầu 1-1 (T-X-T-X...) đang chạy mạnh → giữ nhịp đảo.
-        Nếu cầu 2-2, 3-3 ổn định → bám pattern đảo theo block.
-        Nếu kết quả gần nhất vừa phá cầu (streak 1, trước đó là chuỗi dài)
-        → có xu hướng đảo lại (mean-revert).
-        """
-        if len(valid) < 12:
-            return None, 0, 0
-        r = [v['result'] for v in valid[-16:]]
-
-        # Cầu 1-1 (alternating)
-        alt = sum(1 for i in range(1, len(r)) if r[i] != r[i - 1])
-        alt_ratio = alt / (len(r) - 1)
-        if alt_ratio >= 0.65:
-            nxt = 'Xỉu' if r[-1] == 'Tài' else 'Tài'
-            conf = min(56 + int(alt_ratio * 30), 82)
-            return nxt, conf, 1.30
-
-        # Cầu block 2-2 (T T X X T T ...)
-        block2_hits = 0
-        block2_total = 0
-        for i in range(2, len(r)):
-            if r[i] == r[i - 2] and r[i] != r[i - 1]:
-                block2_hits += 1
-            if r[i] != r[i - 1]:
-                block2_total += 1
-        if block2_total >= 4 and block2_hits / block2_total >= 0.7:
-            # đoán theo block 2
-            tail_run = 1
-            for i in range(len(r) - 2, -1, -1):
-                if r[i] == r[-1]:
-                    tail_run += 1
-                else:
-                    break
-            nxt = r[-2] if tail_run == 1 else ('Xỉu' if r[-1] == 'Tài' else 'Tài')
-            return nxt, 68, 1.25
-
-        # Mean-revert sau cầu dài vừa gãy
-        run = 1
-        for i in range(len(r) - 2, -1, -1):
-            if r[i] == r[-1]:
-                run += 1
-            else:
-                break
-        if run == 1 and len(r) >= 6:
-            # xem trước khi gãy có chuỗi dài không
-            prev = r[-2]
-            prev_run = 1
-            for i in range(len(r) - 3, -1, -1):
-                if r[i] == prev:
-                    prev_run += 1
-                else:
-                    break
-            if prev_run >= 4:
-                # vừa gãy chuỗi dài → xu hướng đảo tiếp
-                return r[-1], 62, 1.15
-        return None, 0, 0
-
-    @staticmethod
-    def _trend(valid):
-        """
-        Xu hướng: so sánh tỷ lệ Tài trong 3 khung thời gian
-        (gần 10, 20, 40) — nếu cùng chiều & chênh lệch đủ lớn → theo xu hướng.
-        """
-        if len(valid) < 20:
-            return None, 0, 0
-        r = [v['result'] for v in valid]
-
-        def tai_ratio(win):
-            seg = r[-win:]
-            return sum(1 for x in seg if x == 'Tài') / len(seg)
-
-        p10 = tai_ratio(10)
-        p20 = tai_ratio(20) if len(r) >= 20 else p10
-        p40 = tai_ratio(40) if len(r) >= 40 else p20
-
-        # Cùng chiều tăng (Tài)
-        if p10 > 0.55 and p20 > 0.52 and p10 >= p20 - 0.05 and p10 - p40 >= 0.05:
-            conf = min(int((p10 - 0.5) * 200 + 52), 78)
-            return 'Tài', conf, 1.20
-        # Cùng chiều giảm (Xỉu)
-        if p10 < 0.45 and p20 < 0.48 and p10 <= p20 + 0.05 and p40 - p10 >= 0.05:
-            conf = min(int((0.5 - p10) * 200 + 52), 78)
-            return 'Xỉu', conf, 1.20
-        return None, 0, 0
-
-    @staticmethod
-    def _bias_run(valid):
-        """
-        Cầu nghiêng: một bên chiếm ưu thế trong cửa sổ trượt,
-        nhưng KHÔNG phải do streak — mà do tần suất nửa gần đây cao.
-        Đây là biến thể khác weighted_freq: tính trên 2 nửa cửa sổ 24 phiên.
-        """
-        if len(valid) < 24:
-            return None, 0, 0
-        r = [v['result'] for v in valid[-24:]]
-        first = r[:12]
-        second = r[12:]
-
-        t_first = sum(1 for x in first if x == 'Tài')
-        t_second = sum(1 for x in second if x == 'Tài')
-        r_first = t_first / 12
-        r_second = t_second / 12
-
-        # Nghiêng tăng dần về Tài (nửa sau > nửa đầu đáng kể)
-        if r_second - r_first >= 0.25 and r_second >= 0.60:
-            conf = min(int((r_second - 0.5) * 180 + 55), 80)
-            return 'Tài', conf, 1.15
-        # Nghiêng tăng dần về Xỉu
-        if r_first - r_second >= 0.25 and (1 - r_second) >= 0.60:
-            conf = min(int((r_second - 0.5) * -180 + 55), 80)
-            return 'Xỉu', conf, 1.15
-        # Nghiêng mạnh một bên ở nửa sau
-        if r_second >= 0.75:
-            return 'Tài', 65, 1.00
-        if r_second <= 0.25:
-            return 'Xỉu', 65, 1.00
-        return None, 0, 0
-
     @staticmethod
     def _entropy(results):
         if len(results) < 5:
@@ -450,6 +499,7 @@ class MultiStrategyPredictor:
                 ('invert', cls._invert_cau),
                 ('trend', cls._trend),
                 ('bias_run', cls._bias_run),
+                ('follow', cls._follow_trend),
             ):
                 try:
                     p, c, w = fn(history)
@@ -500,6 +550,7 @@ class MultiStrategyPredictor:
             ('invert',      lambda v: cls._invert_cau(v)),
             ('trend',       lambda v: cls._trend(v)),
             ('bias_run',    lambda v: cls._bias_run(v)),
+            ('follow',      lambda v: cls._follow_trend(v)),
         ]
 
         log_odds = 0.0
@@ -767,7 +818,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </head>
 <body>
 <div class="header">
-    <div class="logo">LE MINH <span>v8</span></div>
+    <div class="logo">LE MINH <span>v9</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="fetchData()">↻</button>
@@ -884,7 +935,7 @@ setInterval(fetchData, 5000);
 
 
 # =====================================================================
-# ROUTES (giữ nguyên)
+# ROUTES
 # =====================================================================
 @app.route('/')
 def index():
@@ -981,7 +1032,7 @@ def lc79():
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'le minh ai v8', 'Phien': None, 'Du_doan': None})
+            return jsonify({'Id': 'le minh ai v9', 'Phien': None, 'Du_doan': None})
 
         last = valid[-1]
         next_phien = last['phien'] + 1
@@ -991,7 +1042,7 @@ def lc79():
         ai_stats = _log_stats()
 
         return jsonify({
-            'Id': 'le minh ai v8',
+            'Id': 'le minh ai v9',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
