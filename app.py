@@ -1228,8 +1228,8 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </div>
 <div class="wrap">
     <div class="tabs">
-        <div class="tab active" data-tab="tx" onclick="switchTab('tx')">🎲 TÀI XỈU</div>
-        <div class="tab hu" data-tab="hu" onclick="switchTab('hu')">🎰 HŨ</div>
+        <div class="tab active" data-tab="tx" onclick="switchTab('tx')">MD5</div>
+        <div class="tab hu" data-tab="hu" onclick="switchTab('hu')">TX THƯỜNG</div>
     </div>
     <div class="panel active" id="panel-tx">
         <div class="scorebar">
