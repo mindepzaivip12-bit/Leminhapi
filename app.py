@@ -93,7 +93,6 @@ SIGNAL_NAMES = {
     'signal_dissent':   'Phản biện tín hiệu',
     'entropy_adaptive': 'Entropy thích ứng',
     'streak_maturity':  'Độ chín streak',
-    # V6.0 NEW
     'time_pattern':     'Mẫu thời gian',
     'volatility':       'Biến động',
     'cusum':            'CUSUM',
@@ -102,6 +101,13 @@ SIGNAL_NAMES = {
     'rsi_signal':       'RSI cầu',
     'fibonacci_break':  'Fibonacci bẻ',
     'zscore_extreme':   'Z-Score cực trị',
+    # V7.0 NEW
+    'harmonic_pattern': 'Mẫu hài hòa',
+    'wavelet_trend':    'Xu hướng sóng',
+    'seasonal_cycle':   'Chu kỳ mùa',
+    'markov_weighted':  'Markov trọng số',
+    'ensemble_boost':   'Ensemble boost',
+    'decision_tree':    'Cây quyết định',
 }
 
 
@@ -166,7 +172,7 @@ def _entropy(results):
 
 
 # =====================================================================
-# PREDICTOR V6.0
+# PREDICTOR V7.0
 # =====================================================================
 class MultiStrategyPredictor:
     _STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
@@ -383,185 +389,158 @@ class MultiStrategyPredictor:
             return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 62, 1.10
         return None, 0, 0
 
-    # ==================== V6.0 NEW SIGNALS ====================
+    # ==================== V7.0 NEW SIGNALS ====================
     @classmethod
-    def _time_pattern(cls, valid):
-        """Phát hiện pattern theo chu kỳ thời gian (mỗi N phiên lặp)."""
-        if len(valid) < 20:
+    def _harmonic_pattern(cls, r):
+        """Phát hiện mẫu hài hòa: 1-2-1-3, 2-1-2-1..."""
+        if len(r) < 12:
+            return None, 0, 0
+        # Ma trận chuyển đôi (2 ký tự → kế tiếp) có trọng số
+        trans = defaultdict(lambda: {'Tài': 0.0, 'Xỉu': 0.0})
+        for i in range(len(r) - 2):
+            key = (r[i], r[i + 1])
+            w = 1.0 + (i / len(r)) * 0.5  # recent weight
+            trans[key][r[i + 2]] += w
+        key = (r[-2], r[-1])
+        counts = trans[key]
+        total = counts['Tài'] + counts['Xỉu']
+        if total < 3:
+            return None, 0, 0
+        p_tai = counts['Tài'] / total
+        if p_tai >= 0.65:
+            return 'Tài', min(int(p_tai * 100), 82), 1.20
+        if p_tai <= 0.35:
+            return 'Xỉu', min(int((1 - p_tai) * 100), 82), 1.20
+        return None, 0, 0
+
+    @classmethod
+    def _wavelet_trend(cls, valid):
+        """Phân rã xu hướng đa tầng (short/medium/long)."""
+        if len(valid) < 30:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        # Kiểm tra chu kỳ 5, 6, 7, 8, 9, 10
-        for period in (5, 6, 7, 8, 9, 10):
+        p_short = cls._seg_ratio(r, 5)
+        p_medium = cls._seg_ratio(r, 15)
+        p_long = cls._seg_ratio(r, 30)
+        # Short + medium + long cùng hướng
+        if p_short > 0.65 and p_medium > 0.58 and p_long > 0.52:
+            conf = min(60 + int((p_short - 0.6) * 100), 80)
+            return 'Tài', conf, 1.15
+        if p_short < 0.35 and p_medium < 0.42 and p_long < 0.48:
+            conf = min(60 + int((0.4 - p_short) * 100), 80)
+            return 'Xỉu', conf, 1.15
+        # Short đảo so với long → đảo chiều
+        if p_short > 0.7 and p_long < 0.45:
+            return 'Xỉu', 63, 1.10
+        if p_short < 0.3 and p_long > 0.55:
+            return 'Tài', 63, 1.10
+        return None, 0, 0
+
+    @classmethod
+    def _seasonal_cycle(cls, r):
+        """Phát hiện chu kỳ mùa (period 10-15)."""
+        if len(r) < 40:
+            return None, 0, 0
+        for period in (12, 10, 14, 15, 11, 13):
             if len(r) < period * 3:
                 continue
-            # Đếm khớp vị trí modulo
-            hits = 0
-            total = 0
-            target_pos = (len(r) % period)
+            # So sánh vị trí modulo
+            matches = []
+            target_pos = len(r) % period
             for i in range(len(r) - period):
-                if i % period == target_pos:
-                    total += 1
-                    if r[i] == r[-period:][0]:
-                        hits += 1
-            # Thay vào dự đoán: kết quả tại vị trí modulo tương ứng
-            matching_pos = [r[i] for i in range(len(r)) if i % period == target_pos and i < len(r) - 1]
-            if len(matching_pos) >= 3:
-                c = Counter(matching_pos)
+                if i % period == target_pos and i < len(r) - 1:
+                    matches.append(r[i])
+            if len(matches) >= 3:
+                c = Counter(matches)
                 top, cnt = c.most_common(1)[0]
-                ratio = cnt / len(matching_pos)
-                if ratio >= 0.65:
-                    conf = min(55 + int(ratio * 25), 75)
+                ratio = cnt / len(matches)
+                if ratio >= 0.70:
+                    conf = min(55 + int(ratio * 20), 78)
                     return top, conf, 1.05
         return None, 0, 0
 
     @classmethod
-    def _volatility(cls, valid):
-        """Đo biến động - khi quá ổn định thì bẻ."""
-        if len(valid) < 20:
-            return None, 0, 0
-        r = [v['result'] for v in valid[-20:]]
-        # Đếm số lần đổi trong 20 phiên
-        flips = sum(1 for i in range(1, len(r)) if r[i] != r[i - 1])
-        flip_ratio = flips / (len(r) - 1)
-        # Nếu flip_ratio rất cao hoặc rất thấp → tín hiệu mạnh
-        if flip_ratio >= 0.85:
-            # Rất nhiều đảo → đảo tiếp
-            return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 64, 1.15
-        if flip_ratio <= 0.15:
-            # Rất ổn định → bẻ sau khi đủ dài
-            cur_len, cur_val = cls._tail_run(r)
-            if cur_len >= 4:
-                return ('Xỉu' if cur_val == 'Tài' else 'Tài'), 62, 1.10
-        return None, 0, 0
-
-    @classmethod
-    def _cusum(cls, valid):
-        """CUSUM - Cumulative Sum để phát hiện drift."""
-        if len(valid) < 15:
-            return None, 0, 0
-        r = [v['result'] for v in valid[-20:]]
-        # Map Tài = +1, Xỉu = -1
-        vals = [1 if x == 'Tài' else -1 for x in r]
-        mean = sum(vals) / len(vals)
-        s_pos, s_neg = 0.0, 0.0
-        threshold = 1.5
-        # CUSUM
-        for v in vals:
-            s_pos = max(0, s_pos + (v - mean))
-            s_neg = max(0, s_neg - (v - mean))
-        # Nếu s_pos > threshold → trend tăng → dự đoán đảo (mean revert)
-        if s_pos > threshold and mean > 0:
-            return 'Xỉu', 62, 1.05
-        if s_neg > threshold and mean < 0:
-            return 'Tài', 62, 1.05
-        return None, 0, 0
-
-    @classmethod
-    def _kelly_optimal(cls, valid):
-        """Kelly Criterion để đánh giá cầu hiện tại."""
-        if len(valid) < 15:
-            return None, 0, 0
-        recent = [v['result'] for v in valid[-15:]]
-        tai = sum(1 for x in recent if x == 'Tài')
-        p = tai / len(recent)
-        # Kelly: f = p - (1-p)/b với b=1 (fair)
-        # f = 2p - 1
-        kelly = 2 * p - 1
-        if kelly >= 0.30:
-            return 'Tài', min(55 + int(kelly * 40), 80), 1.10
-        if kelly <= -0.30:
-            return 'Xỉu', min(55 + int(-kelly * 40), 80), 1.10
-        return None, 0, 0
-
-    @classmethod
-    def _multi_window(cls, valid):
-        """Đa cửa sổ - vote giữa 5/10/15/20."""
+    def _markov_weighted(cls, valid):
+        """Markov bậc 2 nhưng trọng số giảm dần theo tuổi."""
         if len(valid) < 25:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        windows = [5, 10, 15, 20]
-        votes = []
-        for w in windows:
-            seg = r[-w:]
-            t = sum(1 for x in seg if x == 'Tài') / w
-            if t >= 0.60:
-                votes.append('Tài')
-            elif t <= 0.40:
-                votes.append('Xỉu')
-        if len(votes) >= 3:
-            # Đa số đồng thuận
-            c = Counter(votes)
-            top, cnt = c.most_common(1)[0]
-            if cnt >= 3:
-                conf = min(55 + cnt * 5, 75)
-                return top, conf, 1.15
+        trans = defaultdict(lambda: {'Tài': 0.0, 'Xỉu': 0.0})
+        for i in range(len(r) - 2):
+            key = (r[i], r[i + 1])
+            w = 0.95 ** (len(r) - i - 2)
+            trans[key][r[i + 2]] += w
+        key = (r[-2], r[-1])
+        counts = trans[key]
+        total = counts['Tài'] + counts['Xỉu']
+        if total < 2:
+            return None, 0, 0
+        p_tai = (counts['Tài'] + 0.5) / (total + 1.0)
+        if p_tai >= 0.62:
+            return 'Tài', min(int(p_tai * 100) + 2, 82), 1.25
+        if p_tai <= 0.38:
+            return 'Xỉu', min(int((1 - p_tai) * 100) + 2, 82), 1.25
         return None, 0, 0
 
     @classmethod
-    def _rsi_signal(cls, valid, period=14):
-        """RSI cho cầu (overbought/oversold)."""
-        if len(valid) < period + 5:
-            return None, 0, 0
-        r = [v['result'] for v in valid]
-        # Tính change
-        changes = []
-        for i in range(1, len(r)):
-            if r[i] == r[i - 1]:
-                changes.append(0)
-            elif r[i] == 'Tài':
-                changes.append(1)
-            else:
-                changes.append(-1)
-        recent = changes[-period:]
-        gains = sum(c for c in recent if c > 0)
-        losses = sum(-c for c in recent if c < 0)
-        if gains + losses == 0:
-            return None, 0, 0
-        rs = gains / (losses + 0.01)
-        rsi = 100 - 100 / (1 + rs)
-        # RSI > 70: overbought → đảo
-        if rsi >= 75:
-            return 'Xỉu', min(55 + int((rsi - 70)), 78), 1.10
-        if rsi <= 25:
-            return 'Tài', min(55 + int((30 - rsi)), 78), 1.10
-        return None, 0, 0
-
-    @classmethod
-    def _fibonacci_break(cls, valid):
-        """Fibonacci - streak dài dựa trên dãy Fibonacci."""
-        if len(valid) < 15:
-            return None, 0, 0
-        r = [v['result'] for v in valid]
-        cur_len, cur_val = cls._tail_run(r)
-        # Fibonacci levels: 3, 5, 8, 13
-        fibs = [3, 5, 8, 13]
-        # Nếu streak đạt gần Fibonacci → bẻ
-        for fib in fibs:
-            if cur_len == fib or cur_len == fib + 1:
-                opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
-                conf = min(58 + fib, 75)
-                return opp, conf, 1.10
-        return None, 0, 0
-
-    @classmethod
-    def _zscore_extreme(cls, valid):
-        """Z-Score - phát hiện cực trị."""
+    def _ensemble_boost(cls, valid):
+        """Boost từ 3 signals ổn định nhất lịch sử."""
         if len(valid) < 20:
             return None, 0, 0
-        r = [v['result'] for v in valid[-20:]]
-        vals = [1 if x == 'Tài' else 0 for x in r]
-        mean = sum(vals) / len(vals)
-        variance = sum((v - mean) ** 2 for v in vals) / len(vals)
-        std = variance ** 0.5
-        if std < 0.01:
+        stable_signals = [
+            ('markov2', cls._markov_order2(valid)),
+            ('trend', cls._trend(valid)),
+            ('transition_matrix', cls._transition_matrix(valid)),
+        ]
+        votes = {'Tài': 0.0, 'Xỉu': 0.0}
+        count = 0
+        for name, (p, c, w) in stable_signals:
+            if p:
+                votes[p] += c
+                count += 1
+        if count < 2:
             return None, 0, 0
-        # Z-score của phiên cuối
-        z = (vals[-1] - mean) / std
-        # Z-score > 1.5: lệch cao → có thể đảo
-        if z >= 1.5:
-            return 'Xỉu', 62, 0.95
-        if z <= -1.5:
-            return 'Tài', 62, 0.95
+        total = votes['Tài'] + votes['Xỉu']
+        if total == 0:
+            return None, 0, 0
+        # Chỉ signal khi đồng thuận mạnh
+        if votes['Tài'] >= 0.75 * total:
+            return 'Tài', min(int(votes['Tài'] / total * 100), 85), 1.15
+        if votes['Xỉu'] >= 0.75 * total:
+            return 'Xỉu', min(int(votes['Xỉu'] / total * 100), 85), 1.15
+        return None, 0, 0
+
+    @classmethod
+    def _decision_tree(cls, valid):
+        """Cây quyết định đơn giản 3 tầng."""
+        if len(valid) < 20:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+        tail_len, tail_val = cls._tail_run(r)
+
+        # Tầng 1: Streak dài ≥5 → bẻ
+        if tail_len >= 5:
+            opp = 'Xỉu' if tail_val == 'Tài' else 'Tài'
+            return opp, 68, 1.15
+
+        # Tầng 2: Streak 3-4 → check trend
+        if 3 <= tail_len <= 4:
+            p10 = cls._seg_ratio(r, 10)
+            if p10 > 0.65 and tail_val == 'Tài':
+                return tail_val, 62, 1.05
+            if p10 < 0.35 and tail_val == 'Xỉu':
+                return tail_val, 62, 1.05
+            opp = 'Xỉu' if tail_val == 'Tài' else 'Tài'
+            return opp, 58, 1.00
+
+        # Tầng 3: Streak 1-2 → theo alternation
+        if tail_len <= 2:
+            p_alt = sum(1 for i in range(1, len(r[-10:]))
+                        if r[-10:][i] != r[-10:][i - 1]) / 9
+            if p_alt >= 0.65:
+                opp = 'Xỉu' if tail_val == 'Tài' else 'Tài'
+                return opp, 64, 1.10
+
         return None, 0, 0
 
     # ==================== N-GRAM ====================
@@ -1261,6 +1240,152 @@ class MultiStrategyPredictor:
             return 'Xỉu', int((1 - p) * 100), 1.15
         return None, 0, 0
 
+    @classmethod
+    def _time_pattern(cls, valid):
+        if len(valid) < 20:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+        for period in (5, 6, 7, 8, 9, 10):
+            if len(r) < period * 3:
+                continue
+            target_pos = (len(r) % period)
+            matching_pos = [r[i] for i in range(len(r)) if i % period == target_pos and i < len(r) - 1]
+            if len(matching_pos) >= 3:
+                c = Counter(matching_pos)
+                top, cnt = c.most_common(1)[0]
+                ratio = cnt / len(matching_pos)
+                if ratio >= 0.65:
+                    conf = min(55 + int(ratio * 25), 75)
+                    return top, conf, 1.05
+        return None, 0, 0
+
+    @classmethod
+    def _volatility(cls, valid):
+        if len(valid) < 20:
+            return None, 0, 0
+        r = [v['result'] for v in valid[-20:]]
+        flips = sum(1 for i in range(1, len(r)) if r[i] != r[i - 1])
+        flip_ratio = flips / (len(r) - 1)
+        if flip_ratio >= 0.85:
+            return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 64, 1.15
+        if flip_ratio <= 0.15:
+            cur_len, cur_val = cls._tail_run(r)
+            if cur_len >= 4:
+                return ('Xỉu' if cur_val == 'Tài' else 'Tài'), 62, 1.10
+        return None, 0, 0
+
+    @classmethod
+    def _cusum(cls, valid):
+        if len(valid) < 15:
+            return None, 0, 0
+        r = [v['result'] for v in valid[-20:]]
+        vals = [1 if x == 'Tài' else -1 for x in r]
+        mean = sum(vals) / len(vals)
+        s_pos, s_neg = 0.0, 0.0
+        threshold = 1.5
+        for v in vals:
+            s_pos = max(0, s_pos + (v - mean))
+            s_neg = max(0, s_neg - (v - mean))
+        if s_pos > threshold and mean > 0:
+            return 'Xỉu', 62, 1.05
+        if s_neg > threshold and mean < 0:
+            return 'Tài', 62, 1.05
+        return None, 0, 0
+
+    @classmethod
+    def _kelly_optimal(cls, valid):
+        if len(valid) < 15:
+            return None, 0, 0
+        recent = [v['result'] for v in valid[-15:]]
+        tai = sum(1 for x in recent if x == 'Tài')
+        p = tai / len(recent)
+        kelly = 2 * p - 1
+        if kelly >= 0.30:
+            return 'Tài', min(55 + int(kelly * 40), 80), 1.10
+        if kelly <= -0.30:
+            return 'Xỉu', min(55 + int(-kelly * 40), 80), 1.10
+        return None, 0, 0
+
+    @classmethod
+    def _multi_window(cls, valid):
+        if len(valid) < 25:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+        windows = [5, 10, 15, 20]
+        votes = []
+        for w in windows:
+            seg = r[-w:]
+            t = sum(1 for x in seg if x == 'Tài') / w
+            if t >= 0.60:
+                votes.append('Tài')
+            elif t <= 0.40:
+                votes.append('Xỉu')
+        if len(votes) >= 3:
+            c = Counter(votes)
+            top, cnt = c.most_common(1)[0]
+            if cnt >= 3:
+                conf = min(55 + cnt * 5, 75)
+                return top, conf, 1.15
+        return None, 0, 0
+
+    @classmethod
+    def _rsi_signal(cls, valid, period=14):
+        if len(valid) < period + 5:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+        changes = []
+        for i in range(1, len(r)):
+            if r[i] == r[i - 1]:
+                changes.append(0)
+            elif r[i] == 'Tài':
+                changes.append(1)
+            else:
+                changes.append(-1)
+        recent = changes[-period:]
+        gains = sum(c for c in recent if c > 0)
+        losses = sum(-c for c in recent if c < 0)
+        if gains + losses == 0:
+            return None, 0, 0
+        rs = gains / (losses + 0.01)
+        rsi = 100 - 100 / (1 + rs)
+        if rsi >= 75:
+            return 'Xỉu', min(55 + int((rsi - 70)), 78), 1.10
+        if rsi <= 25:
+            return 'Tài', min(55 + int((30 - rsi)), 78), 1.10
+        return None, 0, 0
+
+    @classmethod
+    def _fibonacci_break(cls, valid):
+        if len(valid) < 15:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+        cur_len, cur_val = cls._tail_run(r)
+        fibs = [3, 5, 8, 13]
+        for fib in fibs:
+            if cur_len == fib or cur_len == fib + 1:
+                opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
+                conf = min(58 + fib, 75)
+                return opp, conf, 1.10
+        return None, 0, 0
+
+    @classmethod
+    def _zscore_extreme(cls, valid):
+        if len(valid) < 20:
+            return None, 0, 0
+        r = [v['result'] for v in valid[-20:]]
+        vals = [1 if x == 'Tài' else 0 for x in r]
+        mean = sum(vals) / len(vals)
+        variance = sum((v - mean) ** 2 for v in vals) / len(vals)
+        std = variance ** 0.5
+        if std < 0.01:
+            return None, 0, 0
+        z = (vals[-1] - mean) / std
+        if z >= 1.5:
+            return 'Xỉu', 62, 0.95
+        if z <= -1.5:
+            return 'Tài', 62, 0.95
+        return None, 0, 0
+
     # ==================== ADAPTIVE ====================
     @classmethod
     def _get_adaptive_weight(cls, name, base_weight):
@@ -1349,11 +1474,10 @@ class MultiStrategyPredictor:
             return min(88, raw_conf + 3)
         return raw_conf
 
-    # ==================== STRATEGY LIST (V6.0) ====================
+    # ==================== STRATEGY LIST (V7.0) ====================
     @classmethod
     def _strategy_list(cls, include_cross=False, include_hu_specific=False):
         base = [
-            # Core
             ('markov3',      lambda v, hu: cls._markov_order3(v)),
             ('markov2',      lambda v, hu: cls._markov_order2(v)),
             ('markov1',      lambda v, hu: cls._markov_order1(v)),
@@ -1370,7 +1494,6 @@ class MultiStrategyPredictor:
             ('follow',       lambda v, hu: cls._follow_trend(v)),
             ('exhaust',      lambda v, hu: cls._exhaustion(v)),
             ('dominance',    lambda v, hu: cls._dominance_flip(v)),
-            # Cycle
             ('cycle_1_1',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [1, 1])),
             ('cycle_2_2',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [2, 2])),
             ('cycle_3_3',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [3, 3])),
@@ -1396,27 +1519,22 @@ class MultiStrategyPredictor:
             ('regime',       lambda v, hu: cls._regime_signal(v)),
             ('flip_break',   lambda v, hu: cls._flip_break(v)),
             ('run_break',    lambda v, hu: cls._run_break(v)),
-            # N-gram
             ('ngram_2',      lambda v, hu: cls._ngram_signal([x['result'] for x in v], 2)),
             ('ngram_3',      lambda v, hu: cls._ngram_signal([x['result'] for x in v], 3)),
             ('ngram_4',      lambda v, hu: cls._ngram_signal([x['result'] for x in v], 4)),
             ('ngram_5',      lambda v, hu: cls._ngram_signal([x['result'] for x in v], 5)),
-            # Mirror
             ('mirror_pattern',  lambda v, hu: cls._mirror_pattern([x['result'] for x in v])),
             ('reverse_trend',   lambda v, hu: cls._reverse_trend(v)),
             ('palindrome_check', lambda v, hu: cls._palindrome_check([x['result'] for x in v])),
-            # Statistical
             ('bayes_recent',      lambda v, hu: cls._bayes_recent(v)),
             ('chi_square',        lambda v, hu: cls._chi_square(v)),
             ('runs_prediction',   lambda v, hu: cls._runs_prediction(v)),
             ('transition_matrix', lambda v, hu: cls._transition_matrix(v)),
             ('double_break',      lambda v, hu: cls._cycle_signal([x['result'] for x in v], [2, 2])),
-            # Meta
             ('signal_consensus',  lambda v, hu: cls._signal_consensus(v)),
             ('signal_dissent',    lambda v, hu: cls._signal_dissent(v)),
             ('entropy_adaptive',  lambda v, hu: cls._entropy_adaptive(v)),
             ('streak_maturity',   lambda v, hu: cls._streak_maturity(v)),
-            # V6.0 NEW
             ('time_pattern',      lambda v, hu: cls._time_pattern(v)),
             ('volatility',        lambda v, hu: cls._volatility(v)),
             ('cusum',             lambda v, hu: cls._cusum(v)),
@@ -1425,6 +1543,13 @@ class MultiStrategyPredictor:
             ('rsi_signal',        lambda v, hu: cls._rsi_signal(v)),
             ('fibonacci_break',   lambda v, hu: cls._fibonacci_break(v)),
             ('zscore_extreme',    lambda v, hu: cls._zscore_extreme(v)),
+            # V7.0 NEW
+            ('harmonic_pattern',  lambda v, hu: cls._harmonic_pattern([x['result'] for x in v])),
+            ('wavelet_trend',     lambda v, hu: cls._wavelet_trend(v)),
+            ('seasonal_cycle',    lambda v, hu: cls._seasonal_cycle([x['result'] for x in v])),
+            ('markov_weighted',   lambda v, hu: cls._markov_weighted(v)),
+            ('ensemble_boost',    lambda v, hu: cls._ensemble_boost(v)),
+            ('decision_tree',     lambda v, hu: cls._decision_tree(v)),
         ]
         if include_hu_specific:
             base.extend([
@@ -1456,6 +1581,7 @@ class MultiStrategyPredictor:
                     'method': 'Fallback Hũ (cross)',
                     'signals': pred_hu.get('signals', []),
                     'top_signals': ['Fallback Hũ'],
+                    'signals_strength': pred_hu.get('signals_strength', []),
                     'reason': 'Không có data → dùng Hũ',
                     'flipped': False,
                 }
@@ -1464,6 +1590,7 @@ class MultiStrategyPredictor:
                 'prediction': cls._deterministic_choice(['Tài', 'Xỉu'], seed),
                 'confidence': 50, 'method': 'Chưa có DL',
                 'signals': [], 'top_signals': ['Chưa có DL'],
+                'signals_strength': [],
                 'reason': 'Không có dữ liệu', 'flipped': False,
             }
 
@@ -1490,12 +1617,13 @@ class MultiStrategyPredictor:
                         'prediction': last, 'confidence': 62,
                         'method': f'Đồng thuận Hũ {last}',
                         'signals': [], 'top_signals': [f'Đồng thuận Hũ'],
+                        'signals_strength': [],
                         'reason': f'2 bàn cùng {last}', 'flipped': False,
                     }
             return {
                 'prediction': opp, 'confidence': conf,
                 'method': method, 'signals': [],
-                'top_signals': [method],
+                'top_signals': [method], 'signals_strength': [],
                 'reason': reason, 'flipped': False,
             }
 
@@ -1532,6 +1660,7 @@ class MultiStrategyPredictor:
                     'prediction': cyc['next'], 'confidence': 55,
                     'method': f"Chu kỳ {cyc['period']}",
                     'signals': [], 'top_signals': [f"Chu kỳ {cyc['period']}"],
+                    'signals_strength': [],
                     'reason': f"Phát hiện chu kỳ {cyc['period']}",
                     'flipped': False,
                 }
@@ -1541,6 +1670,7 @@ class MultiStrategyPredictor:
                 'prediction': opp, 'confidence': 52,
                 'method': f'Bẻ {last}×{streak}',
                 'signals': [], 'top_signals': [f'Bẻ {last}×{streak}'],
+                'signals_strength': [],
                 'reason': f'Bẻ streak {streak}',
                 'flipped': False,
             }
@@ -1817,128 +1947,269 @@ _load_log()
 
 
 # =====================================================================
-# HTML - V6.0 (ĐỘNG + HIỆU ỨNG)
+# HTML - V7.0 (Trắng hồng nhạt + Xanh than nhạt)
 # =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH </title>
+<title>LE MINH V7.0</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
-:root{--bg:#0f172a;--card:#1e293b;--card2:#111827;--text:#f8fafc;--muted:#94a3b8;--border:#334155;--tai:#38bdf8;--xiu:#f472b6;--ok:#22c55e;--fail:#ef4444;--warn:#fbbf24;--hu:#a855f7}
+:root{
+  --bg-1:#fdf2f8;
+  --bg-2:#f0f9ff;
+  --bg-3:#fef3f9;
+  --card:#ffffff;
+  --card-soft:#f8fafc;
+  --card-mint:#ecfeff;
+  --card-pink:#fce7f3;
+  --text:#1e293b;
+  --text-soft:#475569;
+  --muted:#94a3b8;
+  --border:#e2e8f0;
+  --border-pink:#fbcfe8;
+  --border-mint:#a7f3d0;
+  --tai:#0284c7;
+  --tai-bg:#e0f2fe;
+  --xiu:#db2777;
+  --xiu-bg:#fce7f3;
+  --ok:#059669;
+  --ok-bg:#d1fae5;
+  --fail:#dc2626;
+  --fail-bg:#fee2e2;
+  --warn:#d97706;
+  --warn-bg:#fef3c7;
+  --hu:#9333ea;
+  --hu-bg:#f3e8ff;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.04);
+  --shadow:0 4px 12px rgba(15,23,42,.06);
+  --shadow-lg:0 12px 32px rgba(219,39,119,.1);
+}
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans',sans-serif}
-body{background:linear-gradient(135deg,#0f172a,#1e1b4b,#0f172a);background-size:200% 200%;animation:bgShift 15s ease infinite;color:var(--text);min-height:100vh;padding-bottom:30px;font-size:13px}
-@keyframes bgShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
-
-/* HEADER */
-.header{background:rgba(30,41,59,.85);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100;box-shadow:0 4px 20px rgba(0,0,0,.3)}
-.logo{font-size:16px;font-weight:800;color:var(--tai);display:flex;align-items:center;gap:8px}
-.logo-text{background:linear-gradient(90deg,#38bdf8,#a855f7,#f472b6);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:shine 3s linear infinite}
+body{
+  background:linear-gradient(135deg,#fdf2f8 0%,#f0f9ff 50%,#fef3f9 100%);
+  background-attachment:fixed;
+  color:var(--text);
+  min-height:100vh;
+  padding-bottom:30px;
+  font-size:13px;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(251,207,232,.35), transparent 40%),
+    radial-gradient(circle at 85% 80%, rgba(167,243,208,.28), transparent 40%);
+}
+.header{
+  background:rgba(255,255,255,.85);
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border-pink);
+  padding:12px 16px;
+  display:flex;justify-content:space-between;align-items:center;
+  position:sticky;top:0;z-index:100;
+  box-shadow:0 2px 12px rgba(219,39,119,.06);
+}
+.logo{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px}
+.logo-text{
+  background:linear-gradient(90deg,#ec4899,#a855f7,#0ea5e9);
+  background-size:200% auto;
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  animation:shine 4s linear infinite;
+}
 @keyframes shine{to{background-position:200% center}}
-.logo span{font-size:9px;background:linear-gradient(135deg,#a855f7,#ec4899);color:#fff;padding:3px 8px;border-radius:20px;font-weight:800;letter-spacing:.5px}
+.logo span.ver{
+  font-size:9px;background:linear-gradient(135deg,#ec4899,#a855f7);
+  color:#fff;padding:3px 8px;border-radius:20px;font-weight:800;letter-spacing:.5px;
+  box-shadow:0 2px 6px rgba(168,85,247,.3)
+}
 .actions{display:flex;gap:8px;align-items:center}
 .clock{font-size:11px;color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
-.btn{background:var(--card);color:var(--text);border:1px solid var(--border);padding:7px 12px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;transition:.2s}
-.btn:hover{background:var(--card2);transform:translateY(-1px)}
+.btn{
+  background:#fff;color:var(--text-soft);border:1px solid var(--border);
+  padding:7px 12px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;
+  transition:.2s;box-shadow:var(--shadow-sm);
+}
+.btn:hover{background:var(--card-soft);transform:translateY(-1px);box-shadow:var(--shadow)}
 .btn:active{transform:scale(.95)}
-.btn-reset{background:rgba(248,113,113,.15);color:#f87171;border-color:rgba(248,113,113,.4)}
-.btn-reset:hover{background:rgba(248,113,113,.25)}
+.btn-reset{
+  background:linear-gradient(135deg,#fee2e2,#fce7f3);
+  color:var(--fail);border-color:var(--border-pink);
+}
 .spin{animation:spin .5s}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-.wrap{max-width:780px;margin:0 auto;padding:12px}
+.wrap{max-width:780px;margin:0 auto;padding:12px;position:relative;z-index:1}
 
-/* TABS */
-.tabs{display:flex;gap:6px;margin-bottom:12px;background:var(--card);padding:5px;border-radius:11px;border:1px solid var(--border);position:relative}
-.tab{flex:1;padding:10px;text-align:center;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;color:var(--muted);transition:.3s;position:relative;z-index:1}
-.tab.active{background:linear-gradient(135deg,#0ea5e9,#3b82f6);color:#fff;box-shadow:0 4px 15px rgba(14,165,233,.4)}
-.tab.hu.active{background:linear-gradient(135deg,#a855f7,#ec4899);box-shadow:0 4px 15px rgba(168,85,247,.4)}
+.tabs{
+  display:flex;gap:6px;margin-bottom:12px;background:#fff;
+  padding:5px;border-radius:11px;border:1px solid var(--border);
+  box-shadow:var(--shadow-sm);
+}
+.tab{
+  flex:1;padding:10px;text-align:center;border-radius:8px;
+  font-weight:700;font-size:12px;cursor:pointer;color:var(--muted);
+  transition:.3s;position:relative;z-index:1;
+}
+.tab.active{
+  background:linear-gradient(135deg,#ec4899,#f472b6);color:#fff;
+  box-shadow:0 4px 15px rgba(236,72,153,.35);
+}
+.tab.hu.active{
+  background:linear-gradient(135deg,#9333ea,#ec4899);
+  box-shadow:0 4px 15px rgba(147,51,234,.35);
+}
 
 .panel{display:none}.panel.active{display:block;animation:fadeIn .3s}
 @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 
 /* PREDICTION BOX */
-.pred-box{background:linear-gradient(135deg,rgba(30,41,59,.9),rgba(17,24,39,.9));border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px;position:relative;overflow:hidden}
-.pred-box::before{content:'';position:absolute;inset:0;background:linear-gradient(45deg,transparent 30%,rgba(56,189,248,.05) 50%,transparent 70%);animation:sweep 3s linear infinite}
+.pred-box{
+  background:linear-gradient(135deg,#ffffff,#fdf2f8);
+  border:1px solid var(--border-pink);border-radius:16px;padding:18px;
+  margin-bottom:12px;position:relative;overflow:hidden;
+  box-shadow:var(--shadow-lg);
+}
+.pred-box::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(45deg,transparent 30%,rgba(251,207,232,.4) 50%,transparent 70%);
+  animation:sweep 4s linear infinite;
+}
 @keyframes sweep{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
 .pred-row{display:flex;align-items:center;justify-content:space-between;position:relative;z-index:1}
 .pred-label{font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:.5px;margin-bottom:6px}
-.pred-value{font-size:32px;font-weight:800;line-height:1;letter-spacing:-.5px}
-.pred-value.tai{color:var(--tai);text-shadow:0 0 20px rgba(56,189,248,.5)}
-.pred-value.xiu{color:var(--xiu);text-shadow:0 0 20px rgba(244,114,182,.5)}
-.pred-conf-badge{background:rgba(56,189,248,.15);border:1px solid rgba(56,189,248,.3);color:var(--tai);padding:6px 14px;border-radius:20px;font-weight:800;font-size:14px;font-variant-numeric:tabular-nums}
-
-/* CONFIDENCE BAR */
-.conf-bar{height:4px;background:rgba(255,255,255,.05);border-radius:2px;overflow:hidden;margin-top:12px}
-.conf-bar-fill{height:100%;background:linear-gradient(90deg,#38bdf8,#a855f7);border-radius:2px;transition:width 1s ease;box-shadow:0 0 10px rgba(56,189,248,.5)}
-
-/* TOP SIGNALS */
+.pred-value{font-size:34px;font-weight:800;line-height:1;letter-spacing:-1px}
+.pred-value.tai{color:var(--tai);text-shadow:0 2px 12px rgba(2,132,199,.2)}
+.pred-value.xiu{color:var(--xiu);text-shadow:0 2px 12px rgba(219,39,119,.2)}
+.pred-conf-badge{
+  background:linear-gradient(135deg,#fce7f3,#fbcfe8);
+  border:1px solid var(--border-pink);color:var(--xiu);
+  padding:7px 16px;border-radius:20px;font-weight:800;font-size:15px;
+  font-variant-numeric:tabular-nums;box-shadow:0 2px 8px rgba(236,72,153,.15);
+}
+.conf-bar{height:5px;background:var(--bg-1);border-radius:3px;overflow:hidden;margin-top:14px;position:relative;z-index:1}
+.conf-bar-fill{
+  height:100%;
+  background:linear-gradient(90deg,#ec4899,#a855f7,#0ea5e9);
+  border-radius:3px;transition:width 1s ease;
+  box-shadow:0 0 10px rgba(236,72,153,.4);
+}
 .signals-wrap{margin-top:12px;position:relative;z-index:1}
 .signals-title{font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;letter-spacing:.5px}
 .signals-list{display:flex;flex-wrap:wrap;gap:5px}
-.signal-badge{padding:4px 9px;border-radius:12px;font-size:10px;font-weight:700;display:inline-flex;align-items:center;gap:4px;animation:pop .3s ease backwards}
+.signal-badge{
+  padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;
+  display:inline-flex;align-items:center;gap:4px;
+  animation:pop .3s ease backwards;box-shadow:var(--shadow-sm);
+}
 @keyframes pop{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:scale(1)}}
-.signal-badge.t{background:rgba(56,189,248,.15);color:var(--tai);border:1px solid rgba(56,189,248,.3)}
-.signal-badge.x{background:rgba(244,114,182,.15);color:var(--xiu);border:1px solid rgba(244,114,182,.3)}
-.signal-badge .strength{opacity:.7;font-size:9px}
+.signal-badge.t{background:var(--tai-bg);color:var(--tai);border:1px solid #bae6fd}
+.signal-badge.x{background:var(--xiu-bg);color:var(--xiu);border:1px solid var(--border-pink)}
+.signal-badge .strength{opacity:.65;font-size:9px}
 
 /* SCORE BAR */
 .scorebar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
-.sc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center;transition:.2s;position:relative;overflow:hidden}
-.sc:hover{transform:translateY(-2px);border-color:rgba(56,189,248,.3)}
+.sc{
+  background:#fff;border:1px solid var(--border);border-radius:11px;
+  padding:12px 8px;text-align:center;transition:.2s;box-shadow:var(--shadow-sm);
+  position:relative;overflow:hidden;
+}
+.sc::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,transparent,currentColor,transparent);
+  opacity:.15;
+}
+.sc:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--border-pink)}
 .sc-l{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:4px;letter-spacing:.5px}
 .sc-v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;transition:.3s}
-.sc-v.ok{color:var(--ok);text-shadow:0 0 15px rgba(34,197,94,.3)}
-.sc-v.fail{color:var(--fail);text-shadow:0 0 15px rgba(239,68,68,.3)}
-.sc-v.warn{color:var(--warn);text-shadow:0 0 15px rgba(251,191,36,.3)}
+.sc-v.ok{color:var(--ok)}
+.sc-v.fail{color:var(--fail)}
+.sc-v.warn{color:var(--warn)}
 .sc-v.pulse{animation:pulse .4s}
 @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
 
 /* TABLE */
-.tbl{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-height:60vh;overflow-y:auto}
+.tbl{
+  background:#fff;border:1px solid var(--border);border-radius:14px;
+  overflow:hidden;max-height:60vh;overflow-y:auto;box-shadow:var(--shadow);
+}
 table{width:100%;border-collapse:separate;border-spacing:0}
-th{background:var(--card2);color:var(--muted);font-size:10px;font-weight:700;padding:11px 6px;text-align:center;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;text-transform:uppercase}
-td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;transition:.15s}
-tr:hover td{background:rgba(56,189,248,.03)}
-.row-next{background:linear-gradient(90deg,rgba(56,189,248,.12),rgba(56,189,248,.02));border-left:3px solid var(--tai);animation:glow 2s ease infinite}
-@keyframes glow{0%,100%{box-shadow:inset 0 0 20px rgba(56,189,248,.1)}50%{box-shadow:inset 0 0 20px rgba(56,189,248,.25)}}
-.row-next.hu{background:linear-gradient(90deg,rgba(168,85,247,.12),rgba(168,85,247,.02));border-left:3px solid var(--hu)}
-.badge{display:inline-block;padding:3px 10px;border-radius:14px;font-size:10px;font-weight:800;min-width:52px;text-align:center}
-.b-tai{background:rgba(56,189,248,.18);color:var(--tai);border:1px solid rgba(56,189,248,.3)}
-.b-xiu{background:rgba(244,114,182,.18);color:var(--xiu);border:1px solid rgba(244,114,182,.3)}
-.b-none{background:rgba(255,255,255,.05);color:var(--muted)}
-.b-ok{background:rgba(34,197,94,.2);color:var(--ok);border:1px solid rgba(34,197,94,.4);font-size:10px;padding:4px 10px;font-weight:800;animation:checkIn .3s}
+th{
+  background:linear-gradient(135deg,#fdf2f8,#f0f9ff);
+  color:var(--text-soft);font-size:10px;font-weight:700;
+  padding:12px 6px;text-align:center;
+  border-bottom:1px solid var(--border-pink);
+  position:sticky;top:0;z-index:10;text-transform:uppercase;letter-spacing:.3px;
+}
+td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--bg-1);font-size:12px;font-weight:600;transition:.15s}
+tr:hover td{background:#fdf2f8}
+.row-next{
+  background:linear-gradient(90deg,#fdf2f8,#fff);
+  border-left:3px solid var(--xiu);
+  animation:glow 2.5s ease infinite;
+}
+@keyframes glow{
+  0%,100%{box-shadow:inset 0 0 20px rgba(236,72,153,.06)}
+  50%{box-shadow:inset 0 0 25px rgba(236,72,153,.18)}
+}
+.row-next.hu{background:linear-gradient(90deg,#f3e8ff,#fff);border-left:3px solid var(--hu)}
+.badge{
+  display:inline-block;padding:3px 10px;border-radius:14px;
+  font-size:10px;font-weight:800;min-width:52px;text-align:center;
+}
+.b-tai{background:var(--tai-bg);color:var(--tai);border:1px solid #bae6fd}
+.b-xiu{background:var(--xiu-bg);color:var(--xiu);border:1px solid var(--border-pink)}
+.b-none{background:var(--bg-1);color:var(--muted);border:1px solid var(--border)}
+.b-ok{
+  background:var(--ok-bg);color:var(--ok);border:1px solid #6ee7b7;
+  font-size:10px;padding:4px 10px;font-weight:800;animation:checkIn .3s;
+}
 @keyframes checkIn{from{transform:scale(0)}to{transform:scale(1)}}
-.b-fail{background:rgba(239,68,68,.2);color:var(--fail);border:1px solid rgba(239,68,68,.4);font-size:10px;padding:4px 10px;font-weight:800}
-.b-pending{background:rgba(251,191,36,.2);color:var(--warn);border:1px solid rgba(251,191,36,.4);font-size:10px;padding:4px 10px;font-weight:800;animation:blink 2s infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.6}}
+.b-fail{background:var(--fail-bg);color:var(--fail);border:1px solid #fca5a5;font-size:10px;padding:4px 10px;font-weight:800}
+.b-pending{
+  background:var(--warn-bg);color:var(--warn);border:1px solid #fcd34d;
+  font-size:10px;padding:4px 10px;font-weight:800;animation:blink 2s infinite;
+}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.65}}
 .dice{font-size:10px;color:var(--muted);display:block;margin-top:2px;font-variant-numeric:tabular-nums}
 .pred-mini{font-size:11px;font-weight:800}
 .pred-mini.tai{color:var(--tai)}.pred-mini.xiu{color:var(--xiu)}
 .hu-pred{font-size:11px;font-weight:800;color:var(--hu)}
-.loading{text-align:center;padding:30px;color:var(--tai);font-weight:600}
+.loading{text-align:center;padding:30px;color:var(--xiu);font-weight:600}
 
-/* HU PRED BOX */
-.hu-pred-box{background:linear-gradient(135deg,rgba(168,85,247,.1),rgba(236,72,153,.05));border:1px solid rgba(168,85,247,.3);border-radius:14px;padding:16px;margin-bottom:12px;position:relative;overflow:hidden}
-.hu-pred-box::before{content:'';position:absolute;inset:0;background:linear-gradient(45deg,transparent 30%,rgba(168,85,247,.1) 50%,transparent 70%);animation:sweep 3s linear infinite}
-.hu-value{font-size:32px;font-weight:800;line-height:1;color:var(--hu);text-shadow:0 0 20px rgba(168,85,247,.5);position:relative;z-index:1}
+.hu-pred-box{
+  background:linear-gradient(135deg,#fdf2f8,#f3e8ff);
+  border:1px solid #e9d5ff;border-radius:16px;padding:18px;
+  margin-bottom:12px;position:relative;overflow:hidden;
+  box-shadow:0 12px 32px rgba(147,51,234,.1);
+}
+.hu-pred-box::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(45deg,transparent 30%,rgba(233,213,255,.5) 50%,transparent 70%);
+  animation:sweep 4s linear infinite;
+}
+.hu-value{
+  font-size:34px;font-weight:800;line-height:1;
+  color:var(--hu);text-shadow:0 2px 12px rgba(147,51,234,.2);
+  position:relative;z-index:1;letter-spacing:-1px;
+}
 
 @media(max-width:520px){
-    th,td{padding:8px 4px;font-size:11px}
-    .clock{display:none}
-    .badge{min-width:44px;font-size:9px}
-    .sc-v{font-size:17px}
-    .tab{font-size:11px;padding:8px}
-    .pred-value,.hu-value{font-size:26px}
+  th,td{padding:8px 4px;font-size:11px}
+  .clock{display:none}
+  .badge{min-width:44px;font-size:9px}
+  .sc-v{font-size:17px}
+  .tab{font-size:11px;padding:8px}
+  .pred-value,.hu-value{font-size:26px}
 }
 </style>
 </head>
 <body>
 <div class="header">
-    <div class="logo"><span class="logo-text">LE MINH</span> <span>V2</span></div>
+    <div class="logo"><span class="logo-text">LE MINH</span> <span class="ver">V3</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="manualRefresh(this)">↻</button>
@@ -1948,11 +2219,10 @@ tr:hover td{background:rgba(56,189,248,.03)}
 <div class="wrap">
     <div class="tabs">
         <div class="tab active" data-tab="tx" onclick="switchTab('tx')">MD5</div>
-        <div class="tab hu" data-tab="hu" onclick="switchTab('hu')">HŨ</div>
+        <div class="tab hu" data-tab="hu" onclick="switchTab('hu')"> HŨ</div>
     </div>
     
     <div class="panel active" id="panel-tx">
-        <!-- PREDICTION DISPLAY -->
         <div class="pred-box" id="tx-pred-box">
             <div class="pred-row">
                 <div>
@@ -1964,7 +2234,7 @@ tr:hover td{background:rgba(56,189,248,.03)}
             <div class="conf-bar">
                 <div class="conf-bar-fill" id="tx-conf-bar" style="width:0%"></div>
             </div>
-            <div class="signals-wrap" id="tx-signals-wrap">
+            <div class="signals-wrap">
                 <div class="signals-title">Top tín hiệu</div>
                 <div class="signals-list" id="tx-signals-list">
                     <span class="signal-badge" style="opacity:.5">Đang tải...</span>
@@ -1972,7 +2242,6 @@ tr:hover td{background:rgba(56,189,248,.03)}
             </div>
         </div>
         
-        <!-- STATS -->
         <div class="scorebar">
             <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="sc-correct">0</div></div>
             <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="sc-wrong">0</div></div>
@@ -1994,10 +2263,10 @@ tr:hover td{background:rgba(56,189,248,.03)}
                     <div class="pred-label">Hũ dự đoán phiên tiếp theo</div>
                     <div class="hu-value" id="hu-pred-value">Đang tải...</div>
                 </div>
-                <div class="pred-conf-badge" id="hu-conf-badge" style="background:rgba(168,85,247,.15);border-color:rgba(168,85,247,.3);color:var(--hu)">--%</div>
+                <div class="pred-conf-badge" id="hu-conf-badge" style="background:linear-gradient(135deg,#f3e8ff,#e9d5ff);border-color:#e9d5ff;color:var(--hu)">--%</div>
             </div>
             <div class="conf-bar">
-                <div class="conf-bar-fill" id="hu-conf-bar" style="width:0%;background:linear-gradient(90deg,#a855f7,#ec4899)"></div>
+                <div class="conf-bar-fill" id="hu-conf-bar" style="width:0%;background:linear-gradient(90deg,#9333ea,#ec4899)"></div>
             </div>
             <div class="signals-wrap">
                 <div class="signals-title">Top tín hiệu Hũ</div>
@@ -2017,7 +2286,6 @@ tr:hover td{background:rgba(56,189,248,.03)}
 </div>
 <script>
 let isResetting=false;
-let lastTxPred=null, lastHuPred=null;
 
 function switchTab(t){
     document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('active',el.dataset.tab===t));
@@ -2052,7 +2320,9 @@ function renderScore(ai){
     const wv=document.getElementById('sc-wrong');
     const pv=document.getElementById('sc-pending');
     const newC=ai.correct||0, newW=ai.wrong||0, newP=ai.pending||0;
-    if(parseInt(cv.innerText)!==newC && cv.innerText!=='0'){cv.classList.add('pulse');setTimeout(()=>cv.classList.remove('pulse'),400);}
+    if(parseInt(cv.innerText)!==newC && cv.innerText!=='0'){
+        cv.classList.add('pulse');setTimeout(()=>cv.classList.remove('pulse'),400);
+    }
     cv.innerText=newC;wv.innerText=newW;pv.innerText=newP;
 }
 
@@ -2061,7 +2331,6 @@ function renderTxPred(pred, rows){
     const cb=document.getElementById('tx-conf-badge');
     const bar=document.getElementById('tx-conf-bar');
     const sl=document.getElementById('tx-signals-list');
-    
     if(!pred){
         pv.innerText='—';pv.className='pred-value';
         cb.innerText='--%';bar.style.width='0%';
@@ -2072,8 +2341,6 @@ function renderTxPred(pred, rows){
         pv.className='pred-value '+(p==='Tài'?'tai':'xiu');
         cb.innerText=c+'%';
         bar.style.width=c+'%';
-        
-        // Render top signals
         const sigs=pred.signals_strength||[];
         if(sigs.length){
             sl.innerHTML=sigs.map((s,i)=>{
@@ -2107,7 +2374,7 @@ function renderTableTX(rows){
         if(row.ai_correct===true)evalCell='<span class="badge b-ok">✓ ĐÚNG</span>';
         else if(row.ai_correct===false)evalCell='<span class="badge b-fail">✗ SAI</span>';
         else if(row.ai_prediction&&row.ai_correct===null)evalCell='<span class="badge b-pending">⏳ CHỜ</span>';
-        html+=`<tr ${trCls}><td>#${row.phien}${row.is_next?'<br><span style="font-size:9px;color:var(--tai)">NEXT</span>':''}</td><td>${predCell}</td><td>${resBadge}${dice}</td><td>${evalCell}</td></tr>`;
+        html+=`<tr ${trCls}><td>#${row.phien}${row.is_next?'<br><span style="font-size:9px;color:var(--xiu)">NEXT</span>':''}</td><td>${predCell}</td><td>${resBadge}${dice}</td><td>${evalCell}</td></tr>`;
     });
     tb.innerHTML=html;
 }
@@ -2118,11 +2385,9 @@ function renderHuPred(d){
     const cb=document.getElementById('hu-conf-badge');
     const bar=document.getElementById('hu-conf-bar');
     const sl=document.getElementById('hu-signals-list');
-    
     pv.innerText=pred.prediction||'—';
     cb.innerText=(pred.confidence||0)+'%';
     bar.style.width=(pred.confidence||0)+'%';
-    
     const sigs=pred.signals_strength||[];
     if(sigs.length){
         sl.innerHTML=sigs.map((s,i)=>{
@@ -2158,7 +2423,13 @@ function renderTableHu(rows){
 }
 
 async function confirmReset(){
-    Swal.fire({title:'Reset?',text:'Xoá toàn bộ cache và log?',icon:'warning',background:'#1e293b',color:'#f8fafc',showCancelButton:true,confirmButtonColor:'#0ea5e9',cancelButtonColor:'#64748b',confirmButtonText:'Đồng ý',cancelButtonText:'Hủy'}).then(async r=>{
+    Swal.fire({
+        title:'Reset?',text:'Xoá toàn bộ cache và log?',icon:'warning',
+        background:'#fff',color:'#1e293b',
+        showCancelButton:true,
+        confirmButtonColor:'#ec4899',cancelButtonColor:'#94a3b8',
+        confirmButtonText:'Đồng ý',cancelButtonText:'Hủy'
+    }).then(async r=>{
         if(!r.isConfirmed)return;
         isResetting=true;
         try{
@@ -2167,11 +2438,11 @@ async function confirmReset(){
             isResetting=false;
             if(d.status==='success'){
                 fetchAll();
-                Swal.fire({title:'OK!',text:'Đã reset.',icon:'success',background:'#1e293b',color:'#f8fafc',confirmButtonColor:'#0ea5e9'});
+                Swal.fire({title:'OK!',text:'Đã reset.',icon:'success',background:'#fff',color:'#1e293b',confirmButtonColor:'#ec4899'});
             } else throw new Error(d.message||'Lỗi');
         }catch(e){
             isResetting=false;
-            Swal.fire({title:'Lỗi!',text:e.message,icon:'error',background:'#1e293b',color:'#f8fafc'});
+            Swal.fire({title:'Lỗi!',text:e.message,icon:'error',background:'#fff',color:'#1e293b'});
         }
     });
 }
@@ -2290,7 +2561,7 @@ def lc79md5():
         if not success:
             return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
         if not valid:
-            return jsonify({'Id': 'LE MINH V6.0 MD5', 'Phien': None,
+            return jsonify({'Id': 'LE MINH V7.0 MD5', 'Phien': None,
                             'Du_doan': None, 'message': 'Chưa có dữ liệu'})
         last = valid[-1]
         next_phien = last['phien'] + 1
@@ -2300,7 +2571,7 @@ def lc79md5():
         stats = _honest_stats(valid)
         ai_stats = _log_stats(PREDICTION_LOG)
         return jsonify({
-            'Id': 'LE MINH V6.0 MD5',
+            'Id': 'LE MINH V7.0 MD5',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Xuc_xac_truoc': last['dice'],
@@ -2334,7 +2605,7 @@ def lc79hu():
         if not success:
             return jsonify({'error': 'Không thể kết nối Hũ API'}), 500
         if not valid_hu:
-            return jsonify({'Id': 'LE MINH V6.0 HU', 'Phien': None,
+            return jsonify({'Id': 'LE MINH V7.0 HU', 'Phien': None,
                             'Du_doan': None, 'message': 'Chưa có dữ liệu Hũ'})
         last_hu = valid_hu[-1]
         next_phien = last_hu['phien'] + 1
@@ -2344,7 +2615,7 @@ def lc79hu():
         stats = _honest_stats(valid_hu)
         ai_stats = _log_stats(HU_PREDICTION_LOG)
         return jsonify({
-            'Id': 'LE MINH V6.0 HU',
+            'Id': 'LE MINH V7.0 HU',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last_hu['result'].lower(),
             'Xuc_xac_truoc': last_hu['dice'],
@@ -2379,7 +2650,7 @@ def lc79():
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'LE MINH V6.0', 'Phien': None, 'Du_doan': None})
+            return jsonify({'Id': 'LE MINH V7.0', 'Phien': None, 'Du_doan': None})
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(
@@ -2388,7 +2659,7 @@ def lc79():
         stats = _honest_stats(valid)
         ai_stats = _log_stats(PREDICTION_LOG)
         return jsonify({
-            'Id': 'LE MINH V6.0 COMBINED',
+            'Id': 'LE MINH V7.0 COMBINED',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
@@ -2431,7 +2702,7 @@ def predict():
             valid, [], use_cross=False, log=PREDICTION_LOG, is_hu=False)
         _log_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V6.0',
+            'version': 'V7.0',
             'last_phien': last['phien'],
             'next_phien': next_phien,
             'last_result': last['result'],
@@ -2469,7 +2740,7 @@ def hu_predict():
             valid_hu, [], use_cross=False, log=HU_PREDICTION_LOG, is_hu=True)
         _log_hu_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V6.0', 'game': 'Hũ',
+            'version': 'V7.0', 'game': 'Hũ',
             'last_phien': last_hu['phien'],
             'next_phien': next_phien,
             'last_result': last_hu['result'],
@@ -2541,7 +2812,7 @@ def algo_info():
             cyc_hu = MultiStrategyPredictor._detect_cycle(
                 [v['result'] for v in valid_hu], max_period=6, min_repeats=2)
         return jsonify({
-            'version': 'V6.0',
+            'version': 'V7.0',
             'prediction': pred['prediction'],
             'confidence': pred['confidence'],
             'method': pred['method'],
