@@ -32,6 +32,7 @@ MAX_LOG_SIZE = 3000
 LOG_FILE = "prediction_log.json"
 
 SIGNAL_NAMES = {
+    # Core
     'markov3':      'Markov bậc 3',
     'markov2':      'Markov bậc 2',
     'markov1':      'Markov bậc 1',
@@ -48,6 +49,7 @@ SIGNAL_NAMES = {
     'follow':       'Theo cầu',
     'exhaust':      'Cầu kiệt',
     'dominance':    'Lệch cực đoan',
+    # Cycle
     'cycle_1_1':    'Chu kỳ 1-1',
     'cycle_2_2':    'Chu kỳ 2-2',
     'cycle_3_3':    'Chu kỳ 3-3',
@@ -70,9 +72,31 @@ SIGNAL_NAMES = {
     'flip_break':   'Bẻ cầu đảo',
     'run_break':    'Bẻ run dài',
     'cross_game':   'Đối chiếu chéo',
+    # Hũ specific
     'hu_dice_pattern':   'Hũ · Lệch điểm',
     'hu_streak_predict': 'Hũ · Bẻ ngắn',
     'hu_momentum_boost': 'Hũ · Điểm+chiều',
+    # NEW V5.0
+    'ngram_2':          'N-gram 2',
+    'ngram_3':          'N-gram 3',
+    'ngram_4':          'N-gram 4',
+    'ngram_5':          'N-gram 5',
+    'mirror_pattern':   'Đối xứng đảo',
+    'reverse_trend':    'Đảo xu hướng',
+    'palindrome_check': 'Cầu đối xứng',
+    'bayes_recent':     'Bayes gần đây',
+    'chi_square':       'Kiểm định lệch',
+    'runs_prediction':  'Chuỗi run-length',
+    'transition_matrix': 'Ma trận chuyển',
+    'cycle_1234':       'Chu kỳ 1-2-3-4',
+    'cycle_2341':       'Chu kỳ 2-3-4-1',
+    'cycle_3456':       'Chu kỳ 3-4-5-6',
+    'cycle_4_4':        'Chu kỳ 4-4',
+    'double_break':     'Bẻ đôi',
+    'signal_consensus': 'Đồng thuận tín hiệu',
+    'signal_dissent':   'Phản biện tín hiệu',
+    'entropy_adaptive': 'Entropy thích ứng',
+    'streak_maturity':  'Độ chín streak',
 }
 
 
@@ -137,7 +161,7 @@ def _entropy(results):
 
 
 # =====================================================================
-# PREDICTOR V4.2 - FULL CẦU + HU SPECIFIC
+# PREDICTOR V5.0
 # =====================================================================
 class MultiStrategyPredictor:
     _STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
@@ -359,54 +383,303 @@ class MultiStrategyPredictor:
             return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 62, 1.10
         return None, 0, 0
 
-    # ==================== CROSS GAME ====================
+    # ==================== V5.0 N-GRAM MATCHING ====================
     @classmethod
-    def _cross_game_signal(cls, valid_tx, valid_hu):
-        if not valid_hu or len(valid_hu) < 8:
+    def _ngram_signal(cls, r, n):
+        """So khớp n-gram cuối với lịch sử — vote theo occurrence."""
+        if len(r) < n + 6:
             return None, 0, 0
-        r_tx = [v['result'] for v in valid_tx] if valid_tx else []
-        r_hu = [v['result'] for v in valid_hu]
+        pattern = tuple(r[-n:])
+        matches = []
+        for i in range(len(r) - n):
+            if tuple(r[i:i + n]) == pattern and i + n < len(r):
+                matches.append(r[i + n])
+        if len(matches) < 3:
+            return None, 0, 0
+        c = Counter(matches)
+        top, count = c.most_common(1)[0]
+        ratio = count / len(matches)
+        if ratio < 0.60:
+            return None, 0, 0
+        base_conf = 55 + min(n * 3, 15) + int((ratio - 0.6) * 40)
+        conf = min(base_conf, 85)
+        weight = 1.1 + n * 0.10
+        return top, conf, min(weight, 1.7)
 
-        cyc_tx = cls._detect_cycle(r_tx, max_period=5, min_repeats=2) if len(r_tx) >= 10 else None
-        cyc_hu = cls._detect_cycle(r_hu, max_period=5, min_repeats=2) if len(r_hu) >= 10 else None
-
-        if cyc_tx and cyc_hu:
-            if cyc_tx['next'] == cyc_hu['next']:
-                return cyc_hu['next'], 72, 1.35
-            e_tx = _entropy(r_tx[-20:])
-            e_hu = _entropy(r_hu[-20:])
-            if e_hu < e_tx - 0.15:
-                return cyc_hu['next'], 62, 1.10
-            elif e_tx < e_hu - 0.15:
-                return cyc_tx['next'], 62, 1.10
-
-        if len(r_hu) >= 10:
-            hu_last5 = r_hu[-5:]
-            t5 = sum(1 for x in hu_last5 if x == 'Tài') / 5
-            hu_tail_len, hu_tail_val = cls._tail_run(r_hu)
-            if t5 >= 0.8 and hu_tail_len <= 3:
-                return 'Tài', 60, 1.05
-            if t5 <= 0.2 and hu_tail_len <= 3:
-                return 'Xỉu', 60, 1.05
-            if hu_tail_len >= 5:
-                opp = 'Xỉu' if hu_tail_val == 'Tài' else 'Tài'
-                return opp, 58, 0.95
+    # ==================== V5.0 MIRROR/REVERSE ====================
+    @classmethod
+    def _mirror_pattern(cls, r):
+        """Đảo ngược chuỗi gần đây để dự đoán mirror."""
+        if len(r) < 10:
+            return None, 0, 0
+        n = 6
+        if len(r) < n * 2:
+            return None, 0, 0
+        # Lấy mirror của cửa sổ cuối
+        recent = r[-n:]
+        # Tìm trong lịch sử: chuỗi ngược lại của recent xuất hiện ở đâu
+        mirrored = tuple('Xỉu' if x == 'Tài' else 'Tài' for x in reversed(recent))
+        matches = []
+        for i in range(len(r) - n):
+            if tuple(r[i:i + n]) == mirrored and i + n < len(r):
+                # Nếu khớp mirror → kết quả tiếp theo CŨNG đảo
+                nxt = r[i + n]
+                matches.append('Xỉu' if nxt == 'Tài' else 'Tài')
+        if len(matches) >= 2:
+            c = Counter(matches)
+            top, count = c.most_common(1)[0]
+            ratio = count / len(matches)
+            if ratio >= 0.65:
+                conf = min(55 + int(ratio * 30), 78)
+                return top, conf, 1.10
         return None, 0, 0
 
-    # ==================== HU-SPECIFIC SIGNALS (V4.2) ====================
+    @classmethod
+    def _reverse_trend(cls, valid):
+        """Phát hiện xu hướng đảo chiều (regime shift)."""
+        if len(valid) < 24:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+        first = r[-20:-10]
+        second = r[-10:]
+        t_first = sum(1 for x in first if x == 'Tài') / 10
+        t_second = sum(1 for x in second if x == 'Tài') / 10
+        # Nếu đảo từ Tài→Xỉu hoặc Xỉu→Tài rõ rệt
+        if t_first >= 0.7 and t_second <= 0.3:
+            # Đang đảo sang Xỉu → tiếp Xỉu
+            return 'Xỉu', 62, 1.15
+        if t_first <= 0.3 and t_second >= 0.7:
+            return 'Tài', 62, 1.15
+        return None, 0, 0
+
+    @classmethod
+    def _palindrome_check(cls, r):
+        """Kiểm tra cầu đối xứng: TXXT, TXT, TXXXT."""
+        if len(r) < 8:
+            return None, 0, 0
+        for plen in (5, 4, 3):
+            if len(r) < plen * 2:
+                continue
+            tail = r[-plen:]
+            if tail == tail[::-1]:  # palindrome
+                # Tìm lần trước palindrome tương tự
+                for i in range(len(r) - plen * 2 - 1, -1, -1):
+                    if r[i:i + plen] == tail and i + plen < len(r):
+                        nxt = r[i + plen]
+                        conf = 58 + plen * 2
+                        return nxt, min(conf, 72), 1.05
+        return None, 0, 0
+
+    # ==================== V5.0 STATISTICAL ====================
+    @classmethod
+    def _bayes_recent(cls, valid, prior_strength=4.0):
+        """Bayesian inference với prior động."""
+        if len(valid) < 10:
+            return None, 0, 0
+        recent = [v['result'] for v in valid[-25:]]
+        tai = sum(1 for x in recent if x == 'Tài')
+        # Beta prior
+        n = len(recent)
+        # Prior: 50/50 với strength
+        a = tai + prior_strength / 2
+        b = (n - tai) + prior_strength / 2
+        p_tai = a / (a + b)
+        # Chỉ signal khi lệch đáng kể
+        if p_tai >= 0.60:
+            conf = min(int(p_tai * 100) + 3, 78)
+            return 'Tài', conf, 1.05
+        if p_tai <= 0.40:
+            conf = min(int((1 - p_tai) * 100) + 3, 78)
+            return 'Xỉu', conf, 1.05
+        return None, 0, 0
+
+    @classmethod
+    def _chi_square(cls, valid):
+        """Kiểm định phân phối lệch — dự đoán bù trừ."""
+        if len(valid) < 20:
+            return None, 0, 0
+        recent = [v['result'] for v in valid[-30:]]
+        n = len(recent)
+        tai = sum(1 for x in recent if x == 'Tài')
+        xiu = n - tai
+        expected = n / 2
+        # Chi-square statistic
+        chi2 = ((tai - expected) ** 2 + (xiu - expected) ** 2) / expected
+        # Critical value ~3.84 (p=0.05, df=1)
+        if chi2 >= 3.84:
+            # Lệch đáng kể → dự đoán bù
+            if tai > xiu:
+                conf = min(55 + int((chi2 - 3.84) * 3), 75)
+                return 'Xỉu', conf, 0.85
+            else:
+                conf = min(55 + int((chi2 - 3.84) * 3), 75)
+                return 'Tài', conf, 0.85
+        return None, 0, 0
+
+    @classmethod
+    def _runs_prediction(cls, valid):
+        """Dự đoán dựa trên phân phối run-length."""
+        if len(valid) < 15:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+        runs = _run_lengths(r)
+        if len(runs) < 5:
+            return None, 0, 0
+        cur_len, cur_val = cls._tail_run(r)
+        # Đếm tần suất các run-length trong lịch sử
+        run_dist = Counter(runs[:-1])  # bỏ run cuối
+        # Nếu cur_len đã xuất hiện nhiều lần → khả năng bẻ cao
+        total_runs = sum(run_dist.values())
+        if total_runs < 5:
+            return None, 0, 0
+        # P(run kết thúc | đã dài cur_len)
+        end_count = sum(c for l, c in run_dist.items() if l <= cur_len)
+        p_end = end_count / total_runs
+        if p_end >= 0.65:
+            opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
+            conf = min(55 + int(p_end * 25), 75)
+            return opp, conf, 1.10
+        if p_end <= 0.35:
+            conf = min(55 + int((1 - p_end) * 25), 75)
+            return cur_val, conf, 1.00
+        return None, 0, 0
+
+    @classmethod
+    def _transition_matrix(cls, valid, window=40):
+        """Ma trận chuyển trạng thái windowed."""
+        if len(valid) < 15:
+            return None, 0, 0
+        data = valid[-window:] if len(valid) > window else valid
+        r = [v['result'] for v in data]
+        # Xét transition (r[i], r[i+1], r[i+2]) → r[i+2] với window
+        trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
+        for i in range(len(r) - 2):
+            key = (r[i], r[i + 1])
+            trans[key][r[i + 2]] += 1
+        key = (r[-2], r[-1])
+        counts = trans[key]
+        total = counts['Tài'] + counts['Xỉu']
+        if total < 4:
+            return None, 0, 0
+        p_tai = (counts['Tài'] + 1) / (total + 2)
+        if p_tai >= 0.62:
+            return 'Tài', min(int(p_tai * 100) + 3, 80), 1.15
+        if p_tai <= 0.38:
+            return 'Xỉu', min(int((1 - p_tai) * 100) + 3, 80), 1.15
+        return None, 0, 0
+
+    # ==================== V5.0 META SIGNALS ====================
+    @classmethod
+    def _signal_consensus(cls, valid):
+        """Đồng thuận từ các signal mạnh (chạy trước để lấy vote)."""
+        if len(valid) < 10:
+            return None, 0, 0
+        # Chạy các signal chính không đệ quy
+        key_signals = [
+            cls._markov_order2(valid),
+            cls._streak_break(valid),
+            cls._trend(valid),
+            cls._invert_cau(valid),
+            cls._alternation(valid),
+            cls._momentum(valid),
+        ]
+        votes = {'Tài': 0, 'Xỉu': 0}
+        total_conf = 0
+        count = 0
+        for p, c, w in key_signals:
+            if p:
+                votes[p] += c * w
+                total_conf += c
+                count += 1
+        if count < 4:
+            return None, 0, 0
+        if votes['Tài'] > votes['Xỉu'] * 1.3:
+            return 'Tài', min(int(votes['Tài'] / (votes['Tài'] + votes['Xỉu']) * 100), 80), 1.10
+        if votes['Xỉu'] > votes['Tài'] * 1.3:
+            return 'Xỉu', min(int(votes['Xỉu'] / (votes['Tài'] + votes['Xỉu']) * 100), 80), 1.10
+        return None, 0, 0
+
+    @classmethod
+    def _signal_dissent(cls, valid):
+        """Phản biện khi nhiều signals lệch nhau."""
+        if len(valid) < 15:
+            return None, 0, 0
+        key_signals = [
+            cls._markov_order2(valid),
+            cls._streak_break(valid),
+            cls._trend(valid),
+            cls._invert_cau(valid),
+            cls._alternation(valid),
+        ]
+        votes = {'Tài': 0, 'Xỉu': 0}
+        for p, c, w in key_signals:
+            if p:
+                votes[p] += 1
+        total = votes['Tài'] + votes['Xỉu']
+        if total < 4:
+            return None, 0, 0
+        # Nếu gần như hòa → khó đoán, dựa vào momentum
+        if abs(votes['Tài'] - votes['Xỉu']) <= 1:
+            # Dùng recency làm tie-breaker
+            r = [v['result'] for v in valid[-8:]]
+            t_count = sum(1 for x in r if x == 'Tài')
+            if t_count >= 5:
+                return 'Tài', 55, 0.85
+            if t_count <= 3:
+                return 'Xỉu', 55, 0.85
+        return None, 0, 0
+
+    @classmethod
+    def _entropy_adaptive(cls, valid):
+        """Signal thích ứng theo entropy."""
+        if len(valid) < 20:
+            return None, 0, 0
+        r = [v['result'] for v in valid[-20:]]
+        entropy = _entropy(r)
+        p_tai = cls._seg_ratio(r, 20)
+        # Entropy thấp → theo majority
+        if entropy < 0.7:
+            if p_tai >= 0.6:
+                return 'Tài', 62, 1.05
+            if p_tai <= 0.4:
+                return 'Xỉu', 62, 1.05
+        # Entropy cao → đảo chiều
+        elif entropy > 0.95:
+            return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 58, 0.95
+        return None, 0, 0
+
+    @classmethod
+    def _streak_maturity(cls, valid):
+        """Độ chín streak — streak càng dài càng dễ bẻ."""
+        if len(valid) < 12:
+            return None, 0, 0
+        r = [v['result'] for v in valid]
+        cur_len, cur_val = cls._tail_run(r)
+        if cur_len < 3:
+            return None, 0, 0
+        # Tuổi streak trong lịch sử: so sánh với run dài nhất
+        runs = _run_lengths(r)
+        max_run = max(runs)
+        if max_run < 3:
+            return None, 0, 0
+        maturity = cur_len / max_run
+        if maturity >= 0.8 and cur_len >= 4:
+            opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
+            conf = min(55 + int(maturity * 20), 75)
+            return opp, conf, 1.10
+        return None, 0, 0
+
+    # ==================== HU-SPECIFIC ====================
     @classmethod
     def _hu_dice_pattern(cls, valid):
-        """Hũ: phân tích pattern tổng điểm xúc xắc (7-17)."""
         if len(valid) < 10:
             return None, 0, 0
         points = [v['total'] for v in valid[-30:] if v.get('total')]
         if len(points) < 10:
             return None, 0, 0
-
         recent_10 = points[-10:]
         avg_10 = sum(recent_10) / 10
         avg_30 = sum(points) / len(points)
-
         if avg_10 > 12.5 and avg_10 - avg_30 >= 1.0:
             if avg_10 >= 13.5:
                 return 'Xỉu', 65, 1.20
@@ -415,7 +688,6 @@ class MultiStrategyPredictor:
             if avg_10 <= 8.5:
                 return 'Tài', 65, 1.20
             return 'Xỉu', 60, 1.05
-
         if len(points) >= 6:
             last6 = points[-6:]
             last3 = points[-3:]
@@ -431,14 +703,12 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _hu_streak_predict(cls, valid):
-        """Hũ: streak ngắn 2-6 thường bẻ nhanh (variance cao)."""
         if len(valid) < 12:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cur_len, cur_val = cls._tail_run(r)
         if cur_len < 2 or cur_len > 6:
             return None, 0, 0
-
         runs = _run_lengths(r)
         breaks, totals = 0, 0
         pos = 0
@@ -448,7 +718,6 @@ class MultiStrategyPredictor:
                 if pos + rlen < len(r):
                     breaks += 1
             pos += rlen
-
         if totals < 2:
             return None, 0, 0
         p_break = breaks / totals
@@ -463,18 +732,15 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _hu_momentum_boost(cls, valid):
-        """Hũ: momentum kết hợp hướng kết quả + slope điểm."""
         if len(valid) < 8:
             return None, 0, 0
         last5 = valid[-5:]
         if any(not v.get('total') for v in last5):
             return None, 0, 0
-
         results_5 = [v['result'] for v in last5]
         points_5 = [v['total'] for v in last5]
         t_count = sum(1 for x in results_5 if x == 'Tài')
         point_slope = points_5[-1] - points_5[0]
-
         if t_count >= 4 and point_slope <= -3:
             return 'Xỉu', 64, 1.10
         if t_count <= 1 and point_slope >= 3:
@@ -483,6 +749,37 @@ class MultiStrategyPredictor:
             return 'Tài', 60, 0.95
         if t_count == 0:
             return 'Xỉu', 60, 0.95
+        return None, 0, 0
+
+    # ==================== CROSS GAME ====================
+    @classmethod
+    def _cross_game_signal(cls, valid_tx, valid_hu):
+        if not valid_hu or len(valid_hu) < 8:
+            return None, 0, 0
+        r_tx = [v['result'] for v in valid_tx] if valid_tx else []
+        r_hu = [v['result'] for v in valid_hu]
+        cyc_tx = cls._detect_cycle(r_tx, max_period=5, min_repeats=2) if len(r_tx) >= 10 else None
+        cyc_hu = cls._detect_cycle(r_hu, max_period=5, min_repeats=2) if len(r_hu) >= 10 else None
+        if cyc_tx and cyc_hu:
+            if cyc_tx['next'] == cyc_hu['next']:
+                return cyc_hu['next'], 72, 1.35
+            e_tx = _entropy(r_tx[-20:])
+            e_hu = _entropy(r_hu[-20:])
+            if e_hu < e_tx - 0.15:
+                return cyc_hu['next'], 62, 1.10
+            elif e_tx < e_hu - 0.15:
+                return cyc_tx['next'], 62, 1.10
+        if len(r_hu) >= 10:
+            hu_last5 = r_hu[-5:]
+            t5 = sum(1 for x in hu_last5 if x == 'Tài') / 5
+            hu_tail_len, hu_tail_val = cls._tail_run(r_hu)
+            if t5 >= 0.8 and hu_tail_len <= 3:
+                return 'Tài', 60, 1.05
+            if t5 <= 0.2 and hu_tail_len <= 3:
+                return 'Xỉu', 60, 1.05
+            if hu_tail_len >= 5:
+                opp = 'Xỉu' if hu_tail_val == 'Tài' else 'Tài'
+                return opp, 58, 0.95
         return None, 0, 0
 
     # ==================== ORIGINAL SIGNALS ====================
@@ -915,10 +1212,11 @@ class MultiStrategyPredictor:
             return min(88, raw_conf + 3)
         return raw_conf
 
-    # ==================== STRATEGY LIST ====================
+    # ==================== STRATEGY LIST (V5.0) ====================
     @classmethod
     def _strategy_list(cls, include_cross=False, include_hu_specific=False):
         base = [
+            # Core
             ('markov3',      lambda v, hu: cls._markov_order3(v)),
             ('markov2',      lambda v, hu: cls._markov_order2(v)),
             ('markov1',      lambda v, hu: cls._markov_order1(v)),
@@ -935,6 +1233,7 @@ class MultiStrategyPredictor:
             ('follow',       lambda v, hu: cls._follow_trend(v)),
             ('exhaust',      lambda v, hu: cls._exhaustion(v)),
             ('dominance',    lambda v, hu: cls._dominance_flip(v)),
+            # Cycle specific
             ('cycle_1_1',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [1, 1])),
             ('cycle_2_2',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [2, 2])),
             ('cycle_3_3',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [3, 3])),
@@ -951,11 +1250,38 @@ class MultiStrategyPredictor:
             ('cycle_212',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [2, 1, 2])),
             ('cycle_122',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [1, 2, 2])),
             ('cycle_221',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [2, 2, 1])),
+            # V5.0 NEW CYCLE
+            ('cycle_1234',   lambda v, hu: cls._cycle_signal([x['result'] for x in v], [1, 2, 3, 4])),
+            ('cycle_2341',   lambda v, hu: cls._cycle_signal([x['result'] for x in v], [2, 3, 4, 1])),
+            ('cycle_3456',   lambda v, hu: cls._cycle_signal([x['result'] for x in v], [3, 4, 5, 6])),
+            ('cycle_4_4',    lambda v, hu: cls._cycle_signal([x['result'] for x in v], [4, 4])),
+            # Auto & meta
             ('auto_cycle',   lambda v, hu: cls._auto_cycle_signal([x['result'] for x in v])),
             ('pattern_sim',  lambda v, hu: cls._pattern_similarity([x['result'] for x in v])),
             ('regime',       lambda v, hu: cls._regime_signal(v)),
             ('flip_break',   lambda v, hu: cls._flip_break(v)),
             ('run_break',    lambda v, hu: cls._run_break(v)),
+            # V5.0 N-gram
+            ('ngram_2',      lambda v, hu: cls._ngram_signal([x['result'] for x in v], 2)),
+            ('ngram_3',      lambda v, hu: cls._ngram_signal([x['result'] for x in v], 3)),
+            ('ngram_4',      lambda v, hu: cls._ngram_signal([x['result'] for x in v], 4)),
+            ('ngram_5',      lambda v, hu: cls._ngram_signal([x['result'] for x in v], 5)),
+            # V5.0 Mirror/Reverse
+            ('mirror_pattern',  lambda v, hu: cls._mirror_pattern([x['result'] for x in v])),
+            ('reverse_trend',   lambda v, hu: cls._reverse_trend(v)),
+            ('palindrome_check', lambda v, hu: cls._palindrome_check([x['result'] for x in v])),
+            # V5.0 Statistical
+            ('bayes_recent',      lambda v, hu: cls._bayes_recent(v)),
+            ('chi_square',        lambda v, hu: cls._chi_square(v)),
+            ('runs_prediction',   lambda v, hu: cls._runs_prediction(v)),
+            ('transition_matrix', lambda v, hu: cls._transition_matrix(v)),
+            # V5.0 Complex patterns
+            ('double_break',      lambda v, hu: cls._cycle_signal([x['result'] for x in v], [2, 2])),
+            # V5.0 Meta
+            ('signal_consensus',  lambda v, hu: cls._signal_consensus(v)),
+            ('signal_dissent',    lambda v, hu: cls._signal_dissent(v)),
+            ('entropy_adaptive',  lambda v, hu: cls._entropy_adaptive(v)),
+            ('streak_maturity',   lambda v, hu: cls._streak_maturity(v)),
         ]
         if include_hu_specific:
             base.extend([
@@ -998,12 +1324,11 @@ class MultiStrategyPredictor:
                 'reason': 'Không có dữ liệu', 'flipped': False,
             }
 
-        # ===== FALLBACK 2: Ít dữ liệu (<5) =====
+        # ===== FALLBACK: Ít dữ liệu (<5) =====
         if len(valid) < 5:
             r = [v['result'] for v in valid]
             streak, last = cls._tail_run(r)
             opp = 'Xỉu' if last == 'Tài' else 'Tài'
-
             if streak == 1:
                 method = f'Đảo {last}'
                 reason = f'1 phiên {last}'
@@ -1016,7 +1341,6 @@ class MultiStrategyPredictor:
                 method = f'Bẻ {last}×{streak}'
                 reason = f'{streak} phiên {last}'
                 conf = min(60 + (streak - 3) * 3, 70)
-
             if use_cross and valid_hu and len(valid_hu) >= 3:
                 hu_streak, hu_last = cls._tail_run([v['result'] for v in valid_hu])
                 if hu_last == last and hu_streak >= 2:
@@ -1340,14 +1664,14 @@ _load_log()
 
 
 # =====================================================================
-# HTML - V4.2 (ẩn method ở panel Hũ)
+# HTML - V5.0
 # =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH V4.2</title>
+<title>LE MINH V5.0</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -1395,7 +1719,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 </head>
 <body>
 <div class="header">
-    <div class="logo">LE MINH <span>V4.2</span></div>
+    <div class="logo">LE MINH <span>V5.0</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="fetchAll()">↻</button>
@@ -1405,7 +1729,7 @@ td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--border);font
 <div class="wrap">
     <div class="tabs">
         <div class="tab active" data-tab="tx" onclick="switchTab('tx')">MD5</div>
-        <div class="tab hu" data-tab="hu" onclick="switchTab('hu')">TX THƯỜNG</div>
+        <div class="tab hu" data-tab="hu" onclick="switchTab('hu')">HŨ</div>
     </div>
     <div class="panel active" id="panel-tx">
         <div class="scorebar">
@@ -1549,14 +1873,12 @@ def history():
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'tai': 0, 'xiu': 0},
                             'ai_stats': _log_stats()})
-
         next_phien = valid[-1]['phien'] + 1
         pred = MultiStrategyPredictor.predict(
             valid, [], use_cross=False, log=PREDICTION_LOG, is_hu=False)
         _log_prediction(next_phien, pred)
         stats = _honest_stats(valid)
         ai_stats = _log_stats()
-
         out = [{
             'phien': next_phien, 'is_next': True, 'result': 'Chờ...',
             'dice': '? + ? + ?', 'total': None,
@@ -1564,7 +1886,6 @@ def history():
             'ai_confidence': pred['confidence'],
             'ai_correct': None,
         }]
-
         for v in reversed(valid[-200:]):
             if v['phien'] <= RESET_ID:
                 continue
@@ -1576,7 +1897,6 @@ def history():
                 'ai_confidence': log['confidence'] if log else None,
                 'ai_correct': log['correct'] if log else None,
             })
-
         return jsonify({'rows': out, 'stats': stats, 'ai_stats': ai_stats})
     except Exception as e:
         traceback.print_exc()
@@ -1591,19 +1911,16 @@ def hu_history():
             return jsonify({'error': 'Không thể kết nối Hũ API'}), 500
         if not valid_hu:
             return jsonify({'rows': [], 'prediction': None, 'next_phien': None})
-
         next_phien = valid_hu[-1]['phien'] + 1
         pred = MultiStrategyPredictor.predict(
             valid_hu, [], use_cross=False, log=HU_PREDICTION_LOG, is_hu=True)
         _log_hu_prediction(next_phien, pred)
-
         out = [{
             'phien': next_phien, 'is_next': True, 'result': 'Chờ...',
             'dice': '? + ? + ?', 'total': None,
             'ai_prediction': pred['prediction'],
             'ai_confidence': pred['confidence'],
         }]
-
         for v in reversed(valid_hu[-60:]):
             if v['phien'] <= HU_RESET_ID:
                 continue
@@ -1615,7 +1932,6 @@ def hu_history():
                 'ai_confidence': log['confidence'] if log else None,
                 'ai_correct': log['correct'] if log else None,
             })
-
         return jsonify({
             'rows': out,
             'next_phien': next_phien,
@@ -1642,11 +1958,9 @@ def lc79md5():
             return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
         if not valid:
             return jsonify({
-                'Id': 'LE MINH V4.2 MD5',
-                'Phien': None, 'Du_doan': None,
+                'Id': 'LE MINH V5.0 MD5', 'Phien': None, 'Du_doan': None,
                 'message': 'Chưa có dữ liệu'
             })
-
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(
@@ -1654,9 +1968,8 @@ def lc79md5():
         _log_prediction(next_phien, pred)
         stats = _honest_stats(valid)
         ai_stats = _log_stats(PREDICTION_LOG)
-
         return jsonify({
-            'Id': 'LE MINH V4.2 MD5',
+            'Id': 'LE MINH V5.0 MD5',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Xuc_xac_truoc': last['dice'],
@@ -1667,6 +1980,7 @@ def lc79md5():
             'Tin_hieu_chinh': pred.get('top_signals', []),
             'Ly_do': pred['reason'],
             'Da_dao': pred.get('flipped', False),
+            'So_tin_hieu': len(pred['signals']),
             'Tong_phien': stats['total'],
             'So_Tai': stats['tai'],
             'So_Xiu': stats['xiu'],
@@ -1675,7 +1989,6 @@ def lc79md5():
             'AI_cho': ai_stats['pending'],
             'Ti_le_AI': round(
                 ai_stats['correct'] / max(ai_stats['evaluated'], 1) * 100, 1),
-            'Chi_tiet_tin_hieu': pred['signals'][:10],
         })
     except Exception as e:
         traceback.print_exc()
@@ -1690,11 +2003,9 @@ def lc79hu():
             return jsonify({'error': 'Không thể kết nối Hũ API'}), 500
         if not valid_hu:
             return jsonify({
-                'Id': 'LE MINH V4.2 HU',
-                'Phien': None, 'Du_doan': None,
+                'Id': 'LE MINH V5.0 HU', 'Phien': None, 'Du_doan': None,
                 'message': 'Chưa có dữ liệu Hũ'
             })
-
         last_hu = valid_hu[-1]
         next_phien = last_hu['phien'] + 1
         pred = MultiStrategyPredictor.predict(
@@ -1702,9 +2013,8 @@ def lc79hu():
         _log_hu_prediction(next_phien, pred)
         stats = _honest_stats(valid_hu)
         ai_stats = _log_stats(HU_PREDICTION_LOG)
-
         return jsonify({
-            'Id': 'LE MINH V4.2 HU',
+            'Id': 'LE MINH V5.0 HU',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last_hu['result'].lower(),
             'Xuc_xac_truoc': last_hu['dice'],
@@ -1715,6 +2025,7 @@ def lc79hu():
             'Tin_hieu_chinh': pred.get('top_signals', []),
             'Ly_do': pred['reason'],
             'Da_dao': pred.get('flipped', False),
+            'So_tin_hieu': len(pred['signals']),
             'Tong_phien': stats['total'],
             'So_Tai': stats['tai'],
             'So_Xiu': stats['xiu'],
@@ -1723,7 +2034,6 @@ def lc79hu():
             'AI_cho': ai_stats['pending'],
             'Ti_le_AI': round(
                 ai_stats['correct'] / max(ai_stats['evaluated'], 1) * 100, 1),
-            'Chi_tiet_tin_hieu': pred['signals'][:10],
         })
     except Exception as e:
         traceback.print_exc()
@@ -1738,8 +2048,7 @@ def lc79():
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'LE MINH V4.2', 'Phien': None, 'Du_doan': None})
-
+            return jsonify({'Id': 'LE MINH V5.0', 'Phien': None, 'Du_doan': None})
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(
@@ -1747,9 +2056,8 @@ def lc79():
         _log_prediction(next_phien, pred)
         stats = _honest_stats(valid)
         ai_stats = _log_stats(PREDICTION_LOG)
-
         return jsonify({
-            'Id': 'LE MINH V4.2 COMBINED',
+            'Id': 'LE MINH V5.0 COMBINED',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
@@ -1758,6 +2066,7 @@ def lc79():
             'Tin_hieu_chinh': pred.get('top_signals', []),
             'Ly_do': pred['reason'],
             'Da_dao': pred.get('flipped', False),
+            'So_tin_hieu': len(pred['signals']),
             'Tong_phien': stats['total'],
             'So_Tai': stats['tai'],
             'So_Xiu': stats['xiu'],
@@ -1784,15 +2093,13 @@ def predict():
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
             return jsonify({'prediction': None, 'ai_stats': _log_stats()})
-
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(
             valid, [], use_cross=False, log=PREDICTION_LOG, is_hu=False)
         _log_prediction(next_phien, pred)
-
         return jsonify({
-            'version': 'V4.2',
+            'version': 'V5.0',
             'last_phien': last['phien'],
             'next_phien': next_phien,
             'last_result': last['result'],
@@ -1804,6 +2111,7 @@ def predict():
             'top_signals': pred.get('top_signals', []),
             'reason': pred['reason'],
             'signals': pred['signals'],
+            'signals_count': len(pred['signals']),
             'flipped': pred.get('flipped', False),
             'stats': _honest_stats(valid),
             'ai_stats': _log_stats(),
@@ -1822,15 +2130,13 @@ def hu_predict():
             return jsonify({'error': 'Không thể kết nối Hũ API'}), 500
         if not valid_hu:
             return jsonify({'prediction': None})
-
         last_hu = valid_hu[-1]
         next_phien = last_hu['phien'] + 1
         pred = MultiStrategyPredictor.predict(
             valid_hu, [], use_cross=False, log=HU_PREDICTION_LOG, is_hu=True)
         _log_hu_prediction(next_phien, pred)
-
         return jsonify({
-            'version': 'V4.2',
+            'version': 'V5.0',
             'game': 'Hũ',
             'last_phien': last_hu['phien'],
             'next_phien': next_phien,
@@ -1843,6 +2149,7 @@ def hu_predict():
             'top_signals': pred.get('top_signals', []),
             'reason': pred['reason'],
             'signals': pred['signals'],
+            'signals_count': len(pred['signals']),
             'flipped': pred.get('flipped', False),
             'stats': _honest_stats(valid_hu),
             'ai_stats': _log_stats(HU_PREDICTION_LOG),
@@ -1892,7 +2199,6 @@ def algo_info():
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
             return jsonify({'error': 'Chưa có dữ liệu'}), 400
-
         pred = MultiStrategyPredictor.predict(
             valid, [], use_cross=False, log=PREDICTION_LOG, is_hu=False)
         results = [v['result'] for v in valid]
@@ -1901,27 +2207,23 @@ def algo_info():
         if valid_hu:
             cyc_hu = MultiStrategyPredictor._detect_cycle(
                 [v['result'] for v in valid_hu], max_period=6, min_repeats=2)
-
         return jsonify({
-            'version': 'V4.2',
+            'version': 'V5.0',
             'prediction': pred['prediction'],
             'confidence': pred['confidence'],
             'method': pred['method'],
             'top_signals': pred.get('top_signals', []),
             'all_signals': pred['signals'],
+            'signals_count': len(pred['signals']),
             'flipped': pred.get('flipped', False),
             'reason': pred['reason'],
             'recent_runs': _run_lengths(results[-40:]),
             'entropy': round(_entropy(results[-20:]), 3),
             'detected_cycle': {
-                'period': cyc['period'],
-                'pattern': cyc['pattern'],
-                'next': cyc['next'],
+                'period': cyc['period'], 'pattern': cyc['pattern'], 'next': cyc['next'],
             } if cyc else None,
             'hu_detected_cycle': {
-                'period': cyc_hu['period'],
-                'pattern': cyc_hu['pattern'],
-                'next': cyc_hu['next'],
+                'period': cyc_hu['period'], 'pattern': cyc_hu['pattern'], 'next': cyc_hu['next'],
             } if cyc_hu else None,
             'num_phien': len(valid),
             'num_phien_hu': len(valid_hu),
@@ -1967,25 +2269,21 @@ def reset_api():
     try:
         raw_rows, success = fetch_sessions()
         raw_hu, success_hu = fetch_hu_sessions()
-
         if success and raw_rows:
             valid = sorted(raw_rows, key=lambda x: x['phien'])
             if valid:
                 RESET_ID = valid[-1]['phien']
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
-
         if success_hu and raw_hu:
             valid_hu = sorted(raw_hu, key=lambda x: x['phien'])
             if valid_hu:
                 HU_RESET_ID = valid_hu[-1]['phien']
                 HU_HISTORY_CACHE = {valid_hu[-1]['phien']: valid_hu[-1]}
-
         PREDICTION_LOG = {}
         HU_PREDICTION_LOG = {}
         MultiStrategyPredictor._STRATEGY_TRACK = defaultdict(
             lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
         _save_log()
-
         return jsonify({
             'status': 'success',
             'reset_tx_to': RESET_ID + 1 if RESET_ID else None,
@@ -2029,6 +2327,7 @@ def _build_all_cau_tests():
         ('3-4-6', [3, 4, 6]), ('6-4-3', [6, 4, 3]),
         ('1-1-2', [1, 1, 2]), ('2-1-2', [2, 1, 2]),
         ('1-2-2', [1, 2, 2]), ('2-2-1', [2, 2, 1]),
+        ('1-2-3-4', [1, 2, 3, 4]),
         ('1-1-1-1', [1, 1, 1, 1]),
     ]
 
@@ -2095,6 +2394,7 @@ def test_all_cau():
                 'expect': t['expect'], 'correct': is_correct,
                 'method': pred['method'],
                 'top_signals': pred.get('top_signals', []),
+                'signals_count': len(pred['signals']),
             })
 
         acc = round(correct / total * 100, 2) if total > 0 else 0
@@ -2106,7 +2406,7 @@ def test_all_cau():
 
         fmt = request.args.get('format', 'json').lower()
         if fmt == 'txt':
-            lines = [f"=== TEST ALL CẦU LE MINH V4.2 ===",
+            lines = [f"=== TEST ALL CẦU LE MINH V5.0 ===",
                      f"Tổng: {total} | Đúng: {correct} ({acc}%)", ""]
             lines.append("--- THEO NHÓM ---")
             for k, v in group_stats.items():
@@ -2122,7 +2422,7 @@ def test_all_cau():
             return '\n'.join(lines), 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
         return jsonify({
-            'version': 'V4.2',
+            'version': 'V5.0',
             'total': total, 'correct': correct, 'accuracy': acc,
             'group_stats': group_stats, 'results': results,
         })
@@ -2140,15 +2440,13 @@ def detect_cycle():
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
             return jsonify({'error': 'Chưa có dữ liệu'}), 400
-
         r = [v['result'] for v in valid]
         r_hu = [v['result'] for v in valid_hu] if valid_hu else []
         cyc = MultiStrategyPredictor._detect_cycle(r, max_period=8, min_repeats=2)
         cyc_hu = MultiStrategyPredictor._detect_cycle(
             r_hu, max_period=8, min_repeats=2) if len(r_hu) >= 8 else None
-
         return jsonify({
-            'version': 'V4.2',
+            'version': 'V5.0',
             'tx_cycle': {
                 'period': cyc['period'], 'pattern': cyc['pattern'],
                 'phase': cyc['phase'], 'next_prediction': cyc['next'],
