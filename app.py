@@ -101,7 +101,6 @@ SIGNAL_NAMES = {
     'rsi_signal':       'RSI cầu',
     'fibonacci_break':  'Fibonacci bẻ',
     'zscore_extreme':   'Z-Score cực trị',
-    # V7.0 NEW
     'harmonic_pattern': 'Mẫu hài hòa',
     'wavelet_trend':    'Xu hướng sóng',
     'seasonal_cycle':   'Chu kỳ mùa',
@@ -172,7 +171,7 @@ def _entropy(results):
 
 
 # =====================================================================
-# PREDICTOR V7.0
+# PREDICTOR V7.1
 # =====================================================================
 class MultiStrategyPredictor:
     _STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
@@ -389,17 +388,14 @@ class MultiStrategyPredictor:
             return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 62, 1.10
         return None, 0, 0
 
-    # ==================== V7.0 NEW SIGNALS ====================
     @classmethod
     def _harmonic_pattern(cls, r):
-        """Phát hiện mẫu hài hòa: 1-2-1-3, 2-1-2-1..."""
         if len(r) < 12:
             return None, 0, 0
-        # Ma trận chuyển đôi (2 ký tự → kế tiếp) có trọng số
         trans = defaultdict(lambda: {'Tài': 0.0, 'Xỉu': 0.0})
         for i in range(len(r) - 2):
             key = (r[i], r[i + 1])
-            w = 1.0 + (i / len(r)) * 0.5  # recent weight
+            w = 1.0 + (i / len(r)) * 0.5
             trans[key][r[i + 2]] += w
         key = (r[-2], r[-1])
         counts = trans[key]
@@ -415,21 +411,18 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _wavelet_trend(cls, valid):
-        """Phân rã xu hướng đa tầng (short/medium/long)."""
         if len(valid) < 30:
             return None, 0, 0
         r = [v['result'] for v in valid]
         p_short = cls._seg_ratio(r, 5)
         p_medium = cls._seg_ratio(r, 15)
         p_long = cls._seg_ratio(r, 30)
-        # Short + medium + long cùng hướng
         if p_short > 0.65 and p_medium > 0.58 and p_long > 0.52:
             conf = min(60 + int((p_short - 0.6) * 100), 80)
             return 'Tài', conf, 1.15
         if p_short < 0.35 and p_medium < 0.42 and p_long < 0.48:
             conf = min(60 + int((0.4 - p_short) * 100), 80)
             return 'Xỉu', conf, 1.15
-        # Short đảo so với long → đảo chiều
         if p_short > 0.7 and p_long < 0.45:
             return 'Xỉu', 63, 1.10
         if p_short < 0.3 and p_long > 0.55:
@@ -438,13 +431,11 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _seasonal_cycle(cls, r):
-        """Phát hiện chu kỳ mùa (period 10-15)."""
         if len(r) < 40:
             return None, 0, 0
         for period in (12, 10, 14, 15, 11, 13):
             if len(r) < period * 3:
                 continue
-            # So sánh vị trí modulo
             matches = []
             target_pos = len(r) % period
             for i in range(len(r) - period):
@@ -461,7 +452,6 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _markov_weighted(cls, valid):
-        """Markov bậc 2 nhưng trọng số giảm dần theo tuổi."""
         if len(valid) < 25:
             return None, 0, 0
         r = [v['result'] for v in valid]
@@ -484,17 +474,16 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _ensemble_boost(cls, valid):
-        """Boost từ 3 signals ổn định nhất lịch sử."""
         if len(valid) < 20:
             return None, 0, 0
         stable_signals = [
-            ('markov2', cls._markov_order2(valid)),
-            ('trend', cls._trend(valid)),
-            ('transition_matrix', cls._transition_matrix(valid)),
+            cls._markov_order2(valid),
+            cls._trend(valid),
+            cls._transition_matrix(valid),
         ]
         votes = {'Tài': 0.0, 'Xỉu': 0.0}
         count = 0
-        for name, (p, c, w) in stable_signals:
+        for p, c, w in stable_signals:
             if p:
                 votes[p] += c
                 count += 1
@@ -503,7 +492,6 @@ class MultiStrategyPredictor:
         total = votes['Tài'] + votes['Xỉu']
         if total == 0:
             return None, 0, 0
-        # Chỉ signal khi đồng thuận mạnh
         if votes['Tài'] >= 0.75 * total:
             return 'Tài', min(int(votes['Tài'] / total * 100), 85), 1.15
         if votes['Xỉu'] >= 0.75 * total:
@@ -512,18 +500,13 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _decision_tree(cls, valid):
-        """Cây quyết định đơn giản 3 tầng."""
         if len(valid) < 20:
             return None, 0, 0
         r = [v['result'] for v in valid]
         tail_len, tail_val = cls._tail_run(r)
-
-        # Tầng 1: Streak dài ≥5 → bẻ
         if tail_len >= 5:
             opp = 'Xỉu' if tail_val == 'Tài' else 'Tài'
             return opp, 68, 1.15
-
-        # Tầng 2: Streak 3-4 → check trend
         if 3 <= tail_len <= 4:
             p10 = cls._seg_ratio(r, 10)
             if p10 > 0.65 and tail_val == 'Tài':
@@ -532,15 +515,12 @@ class MultiStrategyPredictor:
                 return tail_val, 62, 1.05
             opp = 'Xỉu' if tail_val == 'Tài' else 'Tài'
             return opp, 58, 1.00
-
-        # Tầng 3: Streak 1-2 → theo alternation
         if tail_len <= 2:
             p_alt = sum(1 for i in range(1, len(r[-10:]))
                         if r[-10:][i] != r[-10:][i - 1]) / 9
             if p_alt >= 0.65:
                 opp = 'Xỉu' if tail_val == 'Tài' else 'Tài'
                 return opp, 64, 1.10
-
         return None, 0, 0
 
     # ==================== N-GRAM ====================
@@ -1474,7 +1454,7 @@ class MultiStrategyPredictor:
             return min(88, raw_conf + 3)
         return raw_conf
 
-    # ==================== STRATEGY LIST (V7.0) ====================
+    # ==================== STRATEGY LIST ====================
     @classmethod
     def _strategy_list(cls, include_cross=False, include_hu_specific=False):
         base = [
@@ -1543,7 +1523,6 @@ class MultiStrategyPredictor:
             ('rsi_signal',        lambda v, hu: cls._rsi_signal(v)),
             ('fibonacci_break',   lambda v, hu: cls._fibonacci_break(v)),
             ('zscore_extreme',    lambda v, hu: cls._zscore_extreme(v)),
-            # V7.0 NEW
             ('harmonic_pattern',  lambda v, hu: cls._harmonic_pattern([x['result'] for x in v])),
             ('wavelet_trend',     lambda v, hu: cls._wavelet_trend(v)),
             ('seasonal_cycle',    lambda v, hu: cls._seasonal_cycle([x['result'] for x in v])),
@@ -1947,31 +1926,27 @@ _load_log()
 
 
 # =====================================================================
-# HTML - V7.0 (Trắng hồng nhạt + Xanh than nhạt)
+# HTML - V7.1 (Ẩn top tín hiệu + Hũ đúng/sai)
 # =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH V7.0</title>
+<title>LE MINH Bon</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
 :root{
   --bg-1:#fdf2f8;
   --bg-2:#f0f9ff;
-  --bg-3:#fef3f9;
   --card:#ffffff;
   --card-soft:#f8fafc;
-  --card-mint:#ecfeff;
-  --card-pink:#fce7f3;
   --text:#1e293b;
   --text-soft:#475569;
   --muted:#94a3b8;
   --border:#e2e8f0;
   --border-pink:#fbcfe8;
-  --border-mint:#a7f3d0;
   --tai:#0284c7;
   --tai-bg:#e0f2fe;
   --xiu:#db2777;
@@ -1992,10 +1967,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 body{
   background:linear-gradient(135deg,#fdf2f8 0%,#f0f9ff 50%,#fef3f9 100%);
   background-attachment:fixed;
-  color:var(--text);
-  min-height:100vh;
-  padding-bottom:30px;
-  font-size:13px;
+  color:var(--text);min-height:100vh;padding-bottom:30px;font-size:13px;
 }
 body::before{
   content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
@@ -2004,21 +1976,16 @@ body::before{
     radial-gradient(circle at 85% 80%, rgba(167,243,208,.28), transparent 40%);
 }
 .header{
-  background:rgba(255,255,255,.85);
-  backdrop-filter:blur(20px);
-  -webkit-backdrop-filter:blur(20px);
-  border-bottom:1px solid var(--border-pink);
-  padding:12px 16px;
-  display:flex;justify-content:space-between;align-items:center;
-  position:sticky;top:0;z-index:100;
-  box-shadow:0 2px 12px rgba(219,39,119,.06);
+  background:rgba(255,255,255,.85);backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border-pink);
+  padding:12px 16px;display:flex;justify-content:space-between;align-items:center;
+  position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(219,39,119,.06);
 }
 .logo{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px}
 .logo-text{
   background:linear-gradient(90deg,#ec4899,#a855f7,#0ea5e9);
-  background-size:200% auto;
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-  animation:shine 4s linear infinite;
+  background-size:200% auto;-webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;animation:shine 4s linear infinite;
 }
 @keyframes shine{to{background-position:200% center}}
 .logo span.ver{
@@ -2035,43 +2002,24 @@ body::before{
 }
 .btn:hover{background:var(--card-soft);transform:translateY(-1px);box-shadow:var(--shadow)}
 .btn:active{transform:scale(.95)}
-.btn-reset{
-  background:linear-gradient(135deg,#fee2e2,#fce7f3);
-  color:var(--fail);border-color:var(--border-pink);
-}
+.btn-reset{background:linear-gradient(135deg,#fee2e2,#fce7f3);color:var(--fail);border-color:var(--border-pink)}
 .spin{animation:spin .5s}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 .wrap{max-width:780px;margin:0 auto;padding:12px;position:relative;z-index:1}
 
-.tabs{
-  display:flex;gap:6px;margin-bottom:12px;background:#fff;
-  padding:5px;border-radius:11px;border:1px solid var(--border);
-  box-shadow:var(--shadow-sm);
-}
-.tab{
-  flex:1;padding:10px;text-align:center;border-radius:8px;
-  font-weight:700;font-size:12px;cursor:pointer;color:var(--muted);
-  transition:.3s;position:relative;z-index:1;
-}
-.tab.active{
-  background:linear-gradient(135deg,#ec4899,#f472b6);color:#fff;
-  box-shadow:0 4px 15px rgba(236,72,153,.35);
-}
-.tab.hu.active{
-  background:linear-gradient(135deg,#9333ea,#ec4899);
-  box-shadow:0 4px 15px rgba(147,51,234,.35);
-}
+.tabs{display:flex;gap:6px;margin-bottom:12px;background:#fff;padding:5px;border-radius:11px;border:1px solid var(--border);box-shadow:var(--shadow-sm)}
+.tab{flex:1;padding:10px;text-align:center;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;color:var(--muted);transition:.3s;position:relative;z-index:1}
+.tab.active{background:linear-gradient(135deg,#ec4899,#f472b6);color:#fff;box-shadow:0 4px 15px rgba(236,72,153,.35)}
+.tab.hu.active{background:linear-gradient(135deg,#9333ea,#ec4899);box-shadow:0 4px 15px rgba(147,51,234,.35)}
 
 .panel{display:none}.panel.active{display:block;animation:fadeIn .3s}
 @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 
-/* PREDICTION BOX */
 .pred-box{
   background:linear-gradient(135deg,#ffffff,#fdf2f8);
   border:1px solid var(--border-pink);border-radius:16px;padding:18px;
-  margin-bottom:12px;position:relative;overflow:hidden;
-  box-shadow:var(--shadow-lg);
+  margin-bottom:12px;position:relative;overflow:hidden;box-shadow:var(--shadow-lg);
 }
 .pred-box::before{
   content:'';position:absolute;inset:0;
@@ -2092,94 +2040,11 @@ body::before{
 }
 .conf-bar{height:5px;background:var(--bg-1);border-radius:3px;overflow:hidden;margin-top:14px;position:relative;z-index:1}
 .conf-bar-fill{
-  height:100%;
-  background:linear-gradient(90deg,#ec4899,#a855f7,#0ea5e9);
+  height:100%;background:linear-gradient(90deg,#ec4899,#a855f7,#0ea5e9);
   border-radius:3px;transition:width 1s ease;
   box-shadow:0 0 10px rgba(236,72,153,.4);
 }
-.signals-wrap{margin-top:12px;position:relative;z-index:1}
-.signals-title{font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;letter-spacing:.5px}
-.signals-list{display:flex;flex-wrap:wrap;gap:5px}
-.signal-badge{
-  padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;
-  display:inline-flex;align-items:center;gap:4px;
-  animation:pop .3s ease backwards;box-shadow:var(--shadow-sm);
-}
-@keyframes pop{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:scale(1)}}
-.signal-badge.t{background:var(--tai-bg);color:var(--tai);border:1px solid #bae6fd}
-.signal-badge.x{background:var(--xiu-bg);color:var(--xiu);border:1px solid var(--border-pink)}
-.signal-badge .strength{opacity:.65;font-size:9px}
-
-/* SCORE BAR */
-.scorebar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
-.sc{
-  background:#fff;border:1px solid var(--border);border-radius:11px;
-  padding:12px 8px;text-align:center;transition:.2s;box-shadow:var(--shadow-sm);
-  position:relative;overflow:hidden;
-}
-.sc::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:3px;
-  background:linear-gradient(90deg,transparent,currentColor,transparent);
-  opacity:.15;
-}
-.sc:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--border-pink)}
-.sc-l{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:4px;letter-spacing:.5px}
-.sc-v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;transition:.3s}
-.sc-v.ok{color:var(--ok)}
-.sc-v.fail{color:var(--fail)}
-.sc-v.warn{color:var(--warn)}
-.sc-v.pulse{animation:pulse .4s}
-@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
-
-/* TABLE */
-.tbl{
-  background:#fff;border:1px solid var(--border);border-radius:14px;
-  overflow:hidden;max-height:60vh;overflow-y:auto;box-shadow:var(--shadow);
-}
-table{width:100%;border-collapse:separate;border-spacing:0}
-th{
-  background:linear-gradient(135deg,#fdf2f8,#f0f9ff);
-  color:var(--text-soft);font-size:10px;font-weight:700;
-  padding:12px 6px;text-align:center;
-  border-bottom:1px solid var(--border-pink);
-  position:sticky;top:0;z-index:10;text-transform:uppercase;letter-spacing:.3px;
-}
-td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--bg-1);font-size:12px;font-weight:600;transition:.15s}
-tr:hover td{background:#fdf2f8}
-.row-next{
-  background:linear-gradient(90deg,#fdf2f8,#fff);
-  border-left:3px solid var(--xiu);
-  animation:glow 2.5s ease infinite;
-}
-@keyframes glow{
-  0%,100%{box-shadow:inset 0 0 20px rgba(236,72,153,.06)}
-  50%{box-shadow:inset 0 0 25px rgba(236,72,153,.18)}
-}
-.row-next.hu{background:linear-gradient(90deg,#f3e8ff,#fff);border-left:3px solid var(--hu)}
-.badge{
-  display:inline-block;padding:3px 10px;border-radius:14px;
-  font-size:10px;font-weight:800;min-width:52px;text-align:center;
-}
-.b-tai{background:var(--tai-bg);color:var(--tai);border:1px solid #bae6fd}
-.b-xiu{background:var(--xiu-bg);color:var(--xiu);border:1px solid var(--border-pink)}
-.b-none{background:var(--bg-1);color:var(--muted);border:1px solid var(--border)}
-.b-ok{
-  background:var(--ok-bg);color:var(--ok);border:1px solid #6ee7b7;
-  font-size:10px;padding:4px 10px;font-weight:800;animation:checkIn .3s;
-}
-@keyframes checkIn{from{transform:scale(0)}to{transform:scale(1)}}
-.b-fail{background:var(--fail-bg);color:var(--fail);border:1px solid #fca5a5;font-size:10px;padding:4px 10px;font-weight:800}
-.b-pending{
-  background:var(--warn-bg);color:var(--warn);border:1px solid #fcd34d;
-  font-size:10px;padding:4px 10px;font-weight:800;animation:blink 2s infinite;
-}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.65}}
-.dice{font-size:10px;color:var(--muted);display:block;margin-top:2px;font-variant-numeric:tabular-nums}
-.pred-mini{font-size:11px;font-weight:800}
-.pred-mini.tai{color:var(--tai)}.pred-mini.xiu{color:var(--xiu)}
-.hu-pred{font-size:11px;font-weight:800;color:var(--hu)}
-.loading{text-align:center;padding:30px;color:var(--xiu);font-weight:600}
-
+.hu-value{font-size:34px;font-weight:800;line-height:1;color:var(--hu);text-shadow:0 2px 12px rgba(147,51,234,.2);position:relative;z-index:1;letter-spacing:-1px}
 .hu-pred-box{
   background:linear-gradient(135deg,#fdf2f8,#f3e8ff);
   border:1px solid #e9d5ff;border-radius:16px;padding:18px;
@@ -2191,11 +2056,54 @@ tr:hover td{background:#fdf2f8}
   background:linear-gradient(45deg,transparent 30%,rgba(233,213,255,.5) 50%,transparent 70%);
   animation:sweep 4s linear infinite;
 }
-.hu-value{
-  font-size:34px;font-weight:800;line-height:1;
-  color:var(--hu);text-shadow:0 2px 12px rgba(147,51,234,.2);
-  position:relative;z-index:1;letter-spacing:-1px;
+
+.scorebar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.sc{
+  background:#fff;border:1px solid var(--border);border-radius:11px;
+  padding:12px 8px;text-align:center;transition:.2s;box-shadow:var(--shadow-sm);
+  position:relative;overflow:hidden;
 }
+.sc::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,transparent,currentColor,transparent);opacity:.15;
+}
+.sc:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--border-pink)}
+.sc-l{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:4px;letter-spacing:.5px}
+.sc-v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;transition:.3s}
+.sc-v.ok{color:var(--ok)}.sc-v.fail{color:var(--fail)}.sc-v.warn{color:var(--warn)}
+.sc-v.pulse{animation:pulse .4s}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+
+.tbl{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;max-height:60vh;overflow-y:auto;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:separate;border-spacing:0}
+th{
+  background:linear-gradient(135deg,#fdf2f8,#f0f9ff);
+  color:var(--text-soft);font-size:10px;font-weight:700;
+  padding:12px 6px;text-align:center;border-bottom:1px solid var(--border-pink);
+  position:sticky;top:0;z-index:10;text-transform:uppercase;letter-spacing:.3px;
+}
+td{padding:10px 6px;text-align:center;border-bottom:1px solid var(--bg-1);font-size:12px;font-weight:600;transition:.15s}
+tr:hover td{background:#fdf2f8}
+.row-next{background:linear-gradient(90deg,#fdf2f8,#fff);border-left:3px solid var(--xiu);animation:glow 2.5s ease infinite}
+@keyframes glow{
+  0%,100%{box-shadow:inset 0 0 20px rgba(236,72,153,.06)}
+  50%{box-shadow:inset 0 0 25px rgba(236,72,153,.18)}
+}
+.row-next.hu{background:linear-gradient(90deg,#f3e8ff,#fff);border-left:3px solid var(--hu)}
+.badge{display:inline-block;padding:3px 10px;border-radius:14px;font-size:10px;font-weight:800;min-width:52px;text-align:center}
+.b-tai{background:var(--tai-bg);color:var(--tai);border:1px solid #bae6fd}
+.b-xiu{background:var(--xiu-bg);color:var(--xiu);border:1px solid var(--border-pink)}
+.b-none{background:var(--bg-1);color:var(--muted);border:1px solid var(--border)}
+.b-ok{background:var(--ok-bg);color:var(--ok);border:1px solid #6ee7b7;font-size:10px;padding:4px 10px;font-weight:800;animation:checkIn .3s}
+@keyframes checkIn{from{transform:scale(0)}to{transform:scale(1)}}
+.b-fail{background:var(--fail-bg);color:var(--fail);border:1px solid #fca5a5;font-size:10px;padding:4px 10px;font-weight:800}
+.b-pending{background:var(--warn-bg);color:var(--warn);border:1px solid #fcd34d;font-size:10px;padding:4px 10px;font-weight:800;animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.65}}
+.dice{font-size:10px;color:var(--muted);display:block;margin-top:2px;font-variant-numeric:tabular-nums}
+.pred-mini{font-size:11px;font-weight:800}
+.pred-mini.tai{color:var(--tai)}.pred-mini.xiu{color:var(--xiu)}
+.hu-pred{font-size:11px;font-weight:800;color:var(--hu)}
+.loading{text-align:center;padding:30px;color:var(--xiu);font-weight:600}
 
 @media(max-width:520px){
   th,td{padding:8px 4px;font-size:11px}
@@ -2209,7 +2117,7 @@ tr:hover td{background:#fdf2f8}
 </head>
 <body>
 <div class="header">
-    <div class="logo"><span class="logo-text">LE MINH</span> <span class="ver">V3</span></div>
+    <div class="logo"><span class="logo-text">LE MINH</span> <span class="ver">Bon</span></div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
         <button class="btn" onclick="manualRefresh(this)">↻</button>
@@ -2223,7 +2131,7 @@ tr:hover td{background:#fdf2f8}
     </div>
     
     <div class="panel active" id="panel-tx">
-        <div class="pred-box" id="tx-pred-box">
+        <div class="pred-box">
             <div class="pred-row">
                 <div>
                     <div class="pred-label">Dự đoán phiên tiếp theo</div>
@@ -2233,12 +2141,6 @@ tr:hover td{background:#fdf2f8}
             </div>
             <div class="conf-bar">
                 <div class="conf-bar-fill" id="tx-conf-bar" style="width:0%"></div>
-            </div>
-            <div class="signals-wrap">
-                <div class="signals-title">Top tín hiệu</div>
-                <div class="signals-list" id="tx-signals-list">
-                    <span class="signal-badge" style="opacity:.5">Đang tải...</span>
-                </div>
             </div>
         </div>
         
@@ -2268,18 +2170,18 @@ tr:hover td{background:#fdf2f8}
             <div class="conf-bar">
                 <div class="conf-bar-fill" id="hu-conf-bar" style="width:0%;background:linear-gradient(90deg,#9333ea,#ec4899)"></div>
             </div>
-            <div class="signals-wrap">
-                <div class="signals-title">Top tín hiệu Hũ</div>
-                <div class="signals-list" id="hu-signals-list">
-                    <span class="signal-badge" style="opacity:.5">Đang tải...</span>
-                </div>
-            </div>
+        </div>
+        
+        <div class="scorebar">
+            <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="hu-sc-correct">0</div></div>
+            <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="hu-sc-wrong">0</div></div>
+            <div class="sc"><div class="sc-l">⏳ Chờ</div><div class="sc-v warn" id="hu-sc-pending">0</div></div>
         </div>
         
         <div class="tbl">
             <table>
-                <thead><tr><th>Phiên</th><th>Dự đoán</th><th>Kết quả</th><th>Điểm</th></tr></thead>
-                <tbody id="tbody-hu"><tr><td colspan="4" class="loading">Đang kết nối...</td></tr></tbody>
+                <thead><tr><th>Phiên</th><th>Dự đoán</th><th>Kết quả</th><th>Đúng/Sai</th><th>Điểm</th></tr></thead>
+                <tbody id="tbody-hu"><tr><td colspan="5" class="loading">Đang kết nối...</td></tr></tbody>
             </table>
         </div>
     </div>
@@ -2311,6 +2213,7 @@ async function fetchAll(){
     try{
         const r=await fetch('/api/hu_history',{cache:'no-store'});
         const d=await r.json();
+        renderHuScore(d.ai_stats||{});
         renderHuPred(d);
     }catch(e){console.error(e);}
 }
@@ -2326,30 +2229,30 @@ function renderScore(ai){
     cv.innerText=newC;wv.innerText=newW;pv.innerText=newP;
 }
 
+function renderHuScore(ai){
+    const cv=document.getElementById('hu-sc-correct');
+    const wv=document.getElementById('hu-sc-wrong');
+    const pv=document.getElementById('hu-sc-pending');
+    const newC=ai.correct||0, newW=ai.wrong||0, newP=ai.pending||0;
+    if(parseInt(cv.innerText)!==newC && cv.innerText!=='0'){
+        cv.classList.add('pulse');setTimeout(()=>cv.classList.remove('pulse'),400);
+    }
+    cv.innerText=newC;wv.innerText=newW;pv.innerText=newP;
+}
+
 function renderTxPred(pred, rows){
     const pv=document.getElementById('tx-pred-value');
     const cb=document.getElementById('tx-conf-badge');
     const bar=document.getElementById('tx-conf-bar');
-    const sl=document.getElementById('tx-signals-list');
     if(!pred){
         pv.innerText='—';pv.className='pred-value';
         cb.innerText='--%';bar.style.width='0%';
-        sl.innerHTML='<span class="signal-badge" style="opacity:.5">Không có tín hiệu</span>';
     } else {
         const p=pred.prediction, c=pred.confidence||0;
         pv.innerText=p;
         pv.className='pred-value '+(p==='Tài'?'tai':'xiu');
         cb.innerText=c+'%';
         bar.style.width=c+'%';
-        const sigs=pred.signals_strength||[];
-        if(sigs.length){
-            sl.innerHTML=sigs.map((s,i)=>{
-                const cls=s.prediction==='Tài'?'t':'x';
-                return `<span class="signal-badge ${cls}" style="animation-delay:${i*0.05}s" title="${s.prediction} · ${s.confidence}% · weight ${s.weight}">${s.display}<span class="strength">${s.strength}</span></span>`;
-            }).join('');
-        } else {
-            sl.innerHTML='<span class="signal-badge" style="opacity:.5">Không có tín hiệu</span>';
-        }
     }
     renderTableTX(rows);
 }
@@ -2384,25 +2287,15 @@ function renderHuPred(d){
     const pv=document.getElementById('hu-pred-value');
     const cb=document.getElementById('hu-conf-badge');
     const bar=document.getElementById('hu-conf-bar');
-    const sl=document.getElementById('hu-signals-list');
     pv.innerText=pred.prediction||'—';
     cb.innerText=(pred.confidence||0)+'%';
     bar.style.width=(pred.confidence||0)+'%';
-    const sigs=pred.signals_strength||[];
-    if(sigs.length){
-        sl.innerHTML=sigs.map((s,i)=>{
-            const cls=s.prediction==='Tài'?'t':'x';
-            return `<span class="signal-badge ${cls}" style="animation-delay:${i*0.05}s">${s.display}<span class="strength">${s.strength}</span></span>`;
-        }).join('');
-    } else {
-        sl.innerHTML='<span class="signal-badge" style="opacity:.5">Đang tải...</span>';
-    }
     renderTableHu(d.rows||[]);
 }
 
 function renderTableHu(rows){
     const tb=document.getElementById('tbody-hu');
-    if(!rows.length){tb.innerHTML='<tr><td colspan="4" class="loading">Chưa có dữ liệu Hũ.</td></tr>';return;}
+    if(!rows.length){tb.innerHTML='<tr><td colspan="5" class="loading">Chưa có dữ liệu Hũ.</td></tr>';return;}
     let html='';
     rows.forEach(row=>{
         const trCls=row.is_next?'class="row-next hu"':'';
@@ -2415,9 +2308,13 @@ function renderTableHu(rows){
         if(row.result==='Xỉu')resBadge='<span class="badge b-xiu">XỈU</span>';
         let dice='';
         if(row.dice&&row.dice!=='? + ? + ?')dice=`<span class="dice">${row.dice}</span>`;
+        let evalCell='<span class="badge b-none">—</span>';
+        if(row.ai_correct===true)evalCell='<span class="badge b-ok">✓ ĐÚNG</span>';
+        else if(row.ai_correct===false)evalCell='<span class="badge b-fail">✗ SAI</span>';
+        else if(row.ai_prediction&&row.ai_correct===null)evalCell='<span class="badge b-pending">⏳ CHỜ</span>';
         let point='';
         if(row.total!==null&&row.total!==undefined)point=`<span style="font-weight:800;color:var(--hu)">${row.total}</span>`;
-        html+=`<tr ${trCls}><td>#${row.phien}${row.is_next?'<br><span style="font-size:9px;color:var(--hu)">NEXT</span>':''}</td><td>${predCell}</td><td>${resBadge}${dice}</td><td>${point}</td></tr>`;
+        html+=`<tr ${trCls}><td>#${row.phien}${row.is_next?'<br><span style="font-size:9px;color:var(--hu)">NEXT</span>':''}</td><td>${predCell}</td><td>${resBadge}${dice}</td><td>${evalCell}</td><td>${point}</td></tr>`;
     });
     tb.innerHTML=html;
 }
@@ -2425,8 +2322,7 @@ function renderTableHu(rows){
 async function confirmReset(){
     Swal.fire({
         title:'Reset?',text:'Xoá toàn bộ cache và log?',icon:'warning',
-        background:'#fff',color:'#1e293b',
-        showCancelButton:true,
+        background:'#fff',color:'#1e293b',showCancelButton:true,
         confirmButtonColor:'#ec4899',cancelButtonColor:'#94a3b8',
         confirmButtonText:'Đồng ý',cancelButtonText:'Hủy'
     }).then(async r=>{
@@ -2501,7 +2397,6 @@ def history():
                 'prediction': pred['prediction'],
                 'confidence': pred['confidence'],
                 'method': pred['method'],
-                'signals_strength': pred.get('signals_strength', []),
             }
         })
     except Exception as e:
@@ -2516,7 +2411,8 @@ def hu_history():
         if not success:
             return jsonify({'error': 'Không thể kết nối Hũ API'}), 500
         if not valid_hu:
-            return jsonify({'rows': [], 'prediction': None, 'next_phien': None})
+            return jsonify({'rows': [], 'prediction': None, 'next_phien': None,
+                            'ai_stats': _log_stats(HU_PREDICTION_LOG)})
         next_phien = valid_hu[-1]['phien'] + 1
         pred = MultiStrategyPredictor.predict(
             valid_hu, [], use_cross=False, log=HU_PREDICTION_LOG, is_hu=True)
@@ -2526,6 +2422,7 @@ def hu_history():
             'dice': '? + ? + ?', 'total': None,
             'ai_prediction': pred['prediction'],
             'ai_confidence': pred['confidence'],
+            'ai_correct': None,
         }]
         for v in reversed(valid_hu[-60:]):
             if v['phien'] <= HU_RESET_ID:
@@ -2544,7 +2441,6 @@ def hu_history():
                 'prediction': pred['prediction'],
                 'confidence': pred['confidence'],
                 'method': pred['method'],
-                'signals_strength': pred.get('signals_strength', []),
             },
             'stats': _honest_stats(valid_hu),
             'ai_stats': _log_stats(HU_PREDICTION_LOG),
@@ -2561,7 +2457,7 @@ def lc79md5():
         if not success:
             return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
         if not valid:
-            return jsonify({'Id': 'LE MINH V7.0 MD5', 'Phien': None,
+            return jsonify({'Id': 'LE MINH V7.1 MD5', 'Phien': None,
                             'Du_doan': None, 'message': 'Chưa có dữ liệu'})
         last = valid[-1]
         next_phien = last['phien'] + 1
@@ -2571,7 +2467,7 @@ def lc79md5():
         stats = _honest_stats(valid)
         ai_stats = _log_stats(PREDICTION_LOG)
         return jsonify({
-            'Id': 'LE MINH V7.0 MD5',
+            'Id': 'LE MINH V7.1 MD5',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Xuc_xac_truoc': last['dice'],
@@ -2605,7 +2501,7 @@ def lc79hu():
         if not success:
             return jsonify({'error': 'Không thể kết nối Hũ API'}), 500
         if not valid_hu:
-            return jsonify({'Id': 'LE MINH V7.0 HU', 'Phien': None,
+            return jsonify({'Id': 'LE MINH V7.1 HU', 'Phien': None,
                             'Du_doan': None, 'message': 'Chưa có dữ liệu Hũ'})
         last_hu = valid_hu[-1]
         next_phien = last_hu['phien'] + 1
@@ -2615,7 +2511,7 @@ def lc79hu():
         stats = _honest_stats(valid_hu)
         ai_stats = _log_stats(HU_PREDICTION_LOG)
         return jsonify({
-            'Id': 'LE MINH V7.0 HU',
+            'Id': 'LE MINH V7.1 HU',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last_hu['result'].lower(),
             'Xuc_xac_truoc': last_hu['dice'],
@@ -2650,7 +2546,7 @@ def lc79():
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
-            return jsonify({'Id': 'LE MINH V7.0', 'Phien': None, 'Du_doan': None})
+            return jsonify({'Id': 'LE MINH V7.1', 'Phien': None, 'Du_doan': None})
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(
@@ -2659,7 +2555,7 @@ def lc79():
         stats = _honest_stats(valid)
         ai_stats = _log_stats(PREDICTION_LOG)
         return jsonify({
-            'Id': 'LE MINH V7.0 COMBINED',
+            'Id': 'LE MINH V7.1 COMBINED',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Du_doan': pred['prediction'],
@@ -2702,7 +2598,7 @@ def predict():
             valid, [], use_cross=False, log=PREDICTION_LOG, is_hu=False)
         _log_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V7.0',
+            'version': 'V7.1',
             'last_phien': last['phien'],
             'next_phien': next_phien,
             'last_result': last['result'],
@@ -2740,7 +2636,7 @@ def hu_predict():
             valid_hu, [], use_cross=False, log=HU_PREDICTION_LOG, is_hu=True)
         _log_hu_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V7.0', 'game': 'Hũ',
+            'version': 'V7.1', 'game': 'Hũ',
             'last_phien': last_hu['phien'],
             'next_phien': next_phien,
             'last_result': last_hu['result'],
@@ -2812,7 +2708,7 @@ def algo_info():
             cyc_hu = MultiStrategyPredictor._detect_cycle(
                 [v['result'] for v in valid_hu], max_period=6, min_repeats=2)
         return jsonify({
-            'version': 'V7.0',
+            'version': 'V7.1',
             'prediction': pred['prediction'],
             'confidence': pred['confidence'],
             'method': pred['method'],
