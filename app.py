@@ -24,7 +24,6 @@ PREDICTION_LOG = {}
 MAX_LOG_SIZE = 3000
 LOG_FILE = "prediction_log.json"
 
-# Chỉ cần 3 phiên là chạy được
 MIN_HISTORY = 3
 
 PATTERN_MEMORY = deque(maxlen=200)
@@ -2274,7 +2273,7 @@ class MultiStrategyPredictor:
                 'signals': [], 'top_signals': ['Chưa có DL'],
                 'signals_strength': [],
                 'reason': 'Không có dữ liệu', 'flipped': False,
-                'cau': 'unknown', 'cau_label': 'Chưa đủ DL',
+                'cau': 'unknown', 'cau_label': '',
                 'recovery_active': False, 'fail_streak': 0,
             }
 
@@ -2301,7 +2300,7 @@ class MultiStrategyPredictor:
                 'method': method, 'signals': [],
                 'top_signals': [method], 'signals_strength': [],
                 'reason': reason, 'flipped': False,
-                'cau': 'unknown', 'cau_label': 'Chưa đủ DL',
+                'cau': 'unknown', 'cau_label': '',
                 'recovery_active': False, 'fail_streak': 0,
             }
 
@@ -2405,7 +2404,7 @@ class MultiStrategyPredictor:
                 'signals_strength': [],
                 'reason': f'Bẻ streak {streak}',
                 'flipped': False, 'cau': cau_type,
-                'cau_label': 'Cầu hỗn hợp',
+                'cau_label': '',
                 'recovery_active': cls._RECOVERY_MODE['active'],
                 'fail_streak': cls._RECOVERY_MODE['fail_count'],
             }
@@ -2521,17 +2520,15 @@ class MultiStrategyPredictor:
             'cau_1_2': 'Cầu 1-2', 'cau_2_1': 'Cầu 2-1', 'cau_3_2': 'Cầu 3-2',
             'nghieng': 'Cầu nghiêng', 'bac_thang': 'Cầu bậc thang',
             'ziczac': 'Cầu ziczac', 'hon_hop': 'Cầu hỗn hợp',
-            'unknown': 'Chưa đủ DL',
+            'unknown': '',  # Ẩn nếu chưa đủ data
         }
-        cau_label = cau_label_map.get(cau_type, cau_type)
+        cau_label = cau_label_map.get(cau_type, '')
         if trend_dir_final:
             cau_label += f' · Trend {trend_dir_final}'
         if cls._RECOVERY_MODE['active']:
             cau_label += ' · 🛡️ Recovery'
 
-        reason = f"{cau_label} · {len(signals)} tín hiệu"
-        if trend_dir_final:
-            reason += f" · trend={trend_dir_final}"
+        reason = f"{cau_label}"
         if flipped_by_recovery:
             reason += " · 🛡️ RECOVERY"
 
@@ -2553,7 +2550,7 @@ class MultiStrategyPredictor:
             'reason': reason,
             'flipped': flipped_by_recovery,
             'cau': cau_type,
-            'cau_label': cau_label,
+            'cau_label': cau_label.strip(' ·'),
             'recovery_active': cls._RECOVERY_MODE['active'],
             'fail_streak': cls._RECOVERY_MODE['fail_count'],
         }
@@ -2808,8 +2805,8 @@ tr:hover td{background:#eff6ff}
 <div class="header">
     <div class="logo">
         <span class="logo-text">LE MINH</span>
-        <span class="ver">V11</span>
-        <span class="md5-badge">MD5</span>
+        <span class="ver">Bon</span>
+        <span class="md5-badge">ctew</span>
     </div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
@@ -2831,7 +2828,8 @@ tr:hover td{background:#eff6ff}
                 <div>
                     <div class="pred-label">Dự đoán phiên tiếp theo</div>
                     <div class="pred-value" id="pred-value">—</div>
-                    <div class="cau-badge" id="cau-badge">—</div>
+                    <!-- Đã thêm id và display none để ẩn khi không có data -->
+                    <div class="cau-badge" id="cau-badge" style="display:none;">—</div>
                 </div>
                 <div class="pred-conf-badge" id="conf-badge">--%</div>
             </div>
@@ -2840,7 +2838,7 @@ tr:hover td{background:#eff6ff}
         <div class="scorebar">
             <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="sc-correct">0</div></div>
             <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="sc-wrong">0</div></div>
-            <div class="sc"><div class="sc-l">⏳ Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
+            <div class="sc"><div class="sc-l">Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
         </div>
         <div class="tbl">
             <table>
@@ -2880,14 +2878,22 @@ function renderPred(pred, rows){
     const cb=document.getElementById('conf-badge');
     const bar=document.getElementById('conf-bar');
     const cauB=document.getElementById('cau-badge');
-    if(!pred){pv.innerText='—';pv.className='pred-value';cb.innerText='--%';bar.style.width='0%';cauB.innerText='—';}
-    else{
+    if(!pred){
+        pv.innerText='—';pv.className='pred-value';cb.innerText='--%';bar.style.width='0%';cauB.style.display='none';
+    } else {
         const p=pred.prediction, c=pred.confidence||0;
         pv.innerText=p;
         pv.className='pred-value '+(p==='Tài'?'tai':'xiu');
         cb.innerText=c+'%';
         bar.style.width=c+'%';
-        cauB.innerText=pred.cau_label||'—';
+        
+        // Xử lý ẩn/hiện nhãn cầu
+        if(pred.cau_label && pred.cau_label.trim() !== '' && pred.cau_label !== '—'){
+            cauB.innerText = pred.cau_label;
+            cauB.style.display = 'inline-block';
+        } else {
+            cauB.style.display = 'none'; // Ẩn đi nếu không có dữ liệu
+        }
     }
     renderTable(rows);
 }
@@ -2983,7 +2989,7 @@ def history():
                 'prediction': pred['prediction'],
                 'confidence': pred['confidence'],
                 'method': pred['method'],
-                'cau_label': pred.get('cau_label', '—'),
+                'cau_label': pred.get('cau_label', ''),
                 'cau': pred.get('cau', 'unknown'),
                 'recovery_active': pred.get('recovery_active', False),
             }
@@ -3020,7 +3026,7 @@ def lc79md5():
             'Du_doan': pred['prediction'],
             'Do_tin_cay': f"{pred['confidence']}%",
             'Phuong_phap': pred['method'],
-            'Loai_cau': pred.get('cau_label', '—'),
+            'Loai_cau': pred.get('cau_label', ''),
             'Tin_hieu_chinh': pred.get('top_signals', []),
             'Ly_do': pred['reason'],
             'Da_dao': pred.get('flipped', False),
@@ -3067,7 +3073,7 @@ def lc79():
             'Du_doan': pred['prediction'],
             'Do_tin_cay': f"{pred['confidence']}%",
             'Phuong_phap': pred['method'],
-            'Loai_cau': pred.get('cau_label', '—'),
+            'Loai_cau': pred.get('cau_label', ''),
             'Ket_qua': ket_qua,
             'Xuc_xac_truoc': last['dice'],
             'Diem_truoc': last['total'],
@@ -3115,7 +3121,7 @@ def predict():
             'confidence': pred['confidence'],
             'method': pred['method'],
             'cau': pred.get('cau', 'unknown'),
-            'cau_label': pred.get('cau_label', '—'),
+            'cau_label': pred.get('cau_label', ''),
             'top_signals': pred.get('top_signals', []),
             'signals_strength': pred.get('signals_strength', []),
             'reason': pred['reason'],
@@ -3174,7 +3180,7 @@ def algo_info():
             'confidence': pred['confidence'],
             'method': pred['method'],
             'cau': cau,
-            'cau_label': pred.get('cau_label', '—'),
+            'cau_label': pred.get('cau_label', ''),
             'cau_streak_len': cur_len,
             'cau_tai_ratio': round(p_tai, 3),
             'top_signals': pred.get('top_signals', []),
