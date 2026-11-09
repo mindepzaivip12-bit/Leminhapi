@@ -25,14 +25,12 @@ MAX_LOG_SIZE = 3000
 LOG_FILE = "prediction_log.json"
 
 # ============ V11: NGƯỠNG DỮ LIỆU TỐI THIỂU ============
-MIN_HISTORY = 50           # Số phiên tối thiểu để hiển thị giao diện + dự đoán chuẩn
-MIN_FOR_JSON = 20          # Số phiên tối thiểu để trả JSON (dạng đơn giản)
+MIN_HISTORY = 50
 
 PATTERN_MEMORY = deque(maxlen=200)
 STRATEGY_BLACKLIST = set()
 
 SIGNAL_NAMES = {
-    # Core
     'markov3': 'Markov bậc 3', 'markov2': 'Markov bậc 2', 'markov1': 'Markov bậc 1',
     'streak': 'Bẻ chuỗi', 'pattern': 'Khớp mẫu', 'weighted': 'Tần suất',
     'dice': 'Lệch xúc xắc', 'alternation': 'Cầu 1-1', 'momentum': 'Đà',
@@ -54,11 +52,9 @@ SIGNAL_NAMES = {
     'wavelet_trend': 'Xu hướng sóng', 'seasonal_cycle': 'Chu kỳ mùa',
     'markov_weighted': 'Markov trọng số', 'ensemble_boost': 'Ensemble boost',
     'decision_tree': 'Cây quyết định',
-    # Trend
     'macro_trend': 'Xu hướng vĩ mô', 'drift_trend': 'Độ trôi xu hướng',
     'weighted_trend': 'Xu hướng trọng số', 'momentum_trend': 'Đà xu hướng',
     'regime_trend': 'Chế độ xu hướng', 'trend_alignment': 'Căn xu hướng',
-    # Full cầu
     'cau_1_2': 'Cầu 1-2', 'cau_2_1': 'Cầu 2-1', 'cau_3_2': 'Cầu 3-2',
     'cau_nghieng': 'Cầu nghiêng', 'cau_bac_thang': 'Cầu bậc thang',
     'cau_ziczac': 'Cầu ziczac',
@@ -66,7 +62,6 @@ SIGNAL_NAMES = {
     'follow_dao': 'Theo cầu đảo', 'follow_22': 'Theo cầu 2-2',
     'follow_33': 'Theo cầu 3-3', 'cau_momentum': 'Đà cầu',
     'reversal_signal': 'Tín hiệu đảo chiều',
-    # Regret/Recovery
     'meta_learner': 'Học máy meta', 'anti_streak': 'Chống chuỗi thua',
     'contrarian': 'Phản biện thị trường', 'pivot_signal': 'Tín hiệu xoay cầu',
     'safe_mode': 'Chế độ an toàn', 'win_streak_follow': 'Theo chuỗi thắng',
@@ -74,23 +69,14 @@ SIGNAL_NAMES = {
     'adaptive_invert': 'Đảo thích ứng', 'recovery_mode': 'Chế độ phục hồi',
     'history_match': 'Khớp lịch sử', 'microtrend': 'Vi xu hướng',
     'change_point': 'Điểm đổi cầu',
-    # V11 NEW
-    'spectral_trend': 'Xu hướng phổ',
-    'kalman_smooth': 'Kalman mượt',
-    'recurrence_plot': 'Đồ họa tái diễn',
-    'cross_window_corr': 'Tương quan đa cửa sổ',
-    'multi_scale_entropy': 'Entropy đa thang',
-    'voting_classifier': 'Phân loại bỏ phiếu',
-    'regime_switch': 'Chuyển chế độ',
-    'wavelet_detail': 'Chi tiết sóng',
-    'bayesian_hierarchical': 'Bayes phân cấp',
-    'quantum_superposition': 'Chồng chập lượng tử',
+    'spectral_trend': 'Xu hướng phổ', 'kalman_smooth': 'Kalman mượt',
+    'recurrence_plot': 'Đồ họa tái diễn', 'cross_window_corr': 'Tương quan đa cửa sổ',
+    'multi_scale_entropy': 'Entropy đa thang', 'voting_classifier': 'Phân loại bỏ phiếu',
+    'regime_switch': 'Chuyển chế độ', 'wavelet_detail': 'Chi tiết sóng',
+    'bayesian_hierarchical': 'Bayes phân cấp', 'quantum_superposition': 'Chồng chập lượng tử',
 }
 
 
-# =====================================================================
-# PERSISTENCE
-# =====================================================================
 def _load_log():
     global PREDICTION_LOG, RESET_ID
     if not os.path.exists(LOG_FILE):
@@ -113,9 +99,6 @@ def _save_log():
         print(f"[LOG] Save failed: {e}")
 
 
-# =====================================================================
-# UTILS
-# =====================================================================
 def _run_lengths(results):
     if not results:
         return []
@@ -160,12 +143,10 @@ def _linreg_slope(vals):
 
 
 def _multi_scale_entropy(seq, scales=(2, 4, 8)):
-    """V11: Entropy đa thang."""
     results = []
     for scale in scales:
         if len(seq) < scale:
             continue
-        # Coarse-grain
         n_blocks = len(seq) // scale
         blocks = []
         for i in range(n_blocks):
@@ -178,7 +159,6 @@ def _multi_scale_entropy(seq, scales=(2, 4, 8)):
 
 
 def _autocorrelation(seq, lag):
-    """V11: Tự tương quan."""
     if len(seq) <= lag:
         return 0.0
     vals = [1 if x == 'Tài' else -1 for x in seq]
@@ -194,14 +174,10 @@ def _autocorrelation(seq, lag):
     return cov / var
 
 
-# =====================================================================
-# PREDICTOR V11 - HIDDEN DATA + 10 SIGNAL MỚI
-# =====================================================================
 class MultiStrategyPredictor:
     _STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
     _RECENT_OUTCOMES = deque(maxlen=10)
     _RECOVERY_MODE = {'active': False, 'fail_count': 0, 'invert_next': False}
-    # V11: Kalman state
     _KALMAN_STATE = {'x': 0.5, 'p': 1.0, 'last_len': 0}
 
     @staticmethod
@@ -226,7 +202,6 @@ class MultiStrategyPredictor:
     def _seg_ratio(seq, win):
         return _tai_ratio(seq, win)
 
-    # ============ NHẬN DIỆN CẦU ============
     @classmethod
     def _detect_cau_type(cls, r):
         if len(r) < 12:
@@ -294,14 +269,11 @@ class MultiStrategyPredictor:
 
         return 'hon_hop', cur_len, p_tai
 
-    # ============ XU HƯỚNG ============
     @classmethod
     def _macro_trend(cls, valid, win=40):
         if len(valid) < 25:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        w = min(win, len(r))
-        seg = r[-w:]
         p20 = _tai_ratio(r, 20)
         p10 = _tai_ratio(r, 10)
         drift = p10 - p20
@@ -404,15 +376,12 @@ class MultiStrategyPredictor:
                 return top, min(55 + cnt * 4, 76), 1.25
         return None, 0, 0
 
-    # ============ V11: SIGNAL MỚI ============
     @classmethod
     def _spectral_trend(cls, valid):
-        """V11: Xu hướng phổ - phát hiện chu kỳ ẩn."""
         if len(valid) < 30:
             return None, 0, 0
         r = [v['result'] for v in valid]
         vals = [1 if x == 'Tài' else -1 for x in r[-30:]]
-        # DFT đơn giản cho các tần số thấp
         n = len(vals)
         best_period, best_power = 0, 0
         for period in (2, 3, 4, 5, 6, 8, 10, 12):
@@ -426,9 +395,7 @@ class MultiStrategyPredictor:
                 best_power = power
                 best_period = period
         if best_period > 0 and abs(best_power) >= 0.5:
-            # Dự đoán theo phổ
             phase = n % best_period
-            # Lấy pattern
             hist_vals = []
             for i in range(len(r) - best_period):
                 if i % best_period == phase:
@@ -443,7 +410,6 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _kalman_smooth(cls, valid):
-        """V11: Kalman filter mượt."""
         if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
@@ -453,9 +419,7 @@ class MultiStrategyPredictor:
             x, p = 0.5, 1.0
             q, r_noise = 0.01, 0.1
             for v in r[-30:]:
-                # Predict
                 p = p + q
-                # Update
                 z = 1.0 if v == 'Tài' else 0.0
                 k = p / (p + r_noise)
                 x = x + k * (z - x)
@@ -471,16 +435,13 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _recurrence_plot(cls, valid):
-        """V11: Đồ họa tái diễn - tìm đoạn giống trong lịch sử."""
         if len(valid) < 40:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        # Vector hóa 10 phiên gần
         cur = tuple(r[-10:])
         matches = []
         for i in range(len(r) - 15):
             window = tuple(r[i:i + 10])
-            # Tính similarity
             sim = sum(1 for a, b in zip(cur, window) if a == b) / 10
             if sim >= 0.80:
                 matches.append((sim, r[i + 10]))
@@ -501,17 +462,12 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _cross_window_corr(cls, valid):
-        """V11: Tương quan đa cửa sổ."""
         if len(valid) < 30:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        # Tương quan lag 1,2,3
         ac1 = _autocorrelation(r, 1)
         ac2 = _autocorrelation(r, 2)
-        ac3 = _autocorrelation(r, 3)
-        # Nếu autocorrelation cao => có pattern
         if ac1 >= 0.5:
-            # pattern khác biệt mạnh ở lag 1
             if r[-1] == 'Tài':
                 return 'Tài', 62, 1.10
             return 'Xỉu', 62, 1.10
@@ -521,35 +477,30 @@ class MultiStrategyPredictor:
                     return 'Tài', 61, 1.05
                 return 'Xỉu', 61, 1.05
         if ac1 <= -0.5:
-            # Đảo mạnh
             nxt = 'Xỉu' if r[-1] == 'Tài' else 'Tài'
             return nxt, 63, 1.15
         return None, 0, 0
 
     @classmethod
     def _multi_scale_entropy_signal(cls, valid):
-        """V11: Entropy đa thang."""
         if len(valid) < 30:
             return None, 0, 0
         r = [v['result'] for v in valid]
         entropies = _multi_scale_entropy(r, scales=(2, 4, 8))
         if not entropies:
             return None, 0, 0
-        # Entropy giảm dần => trend mạnh
         if len(entropies) >= 3 and entropies[0] < entropies[1] < entropies[2]:
             p_tai = _tai_ratio(r, 15)
             if p_tai >= 0.58:
                 return 'Tài', 64, 1.15
             if p_tai <= 0.42:
                 return 'Xỉu', 64, 1.15
-        # Entropy tăng => hỗn loạn
         if len(entropies) >= 2 and entropies[-1] > 0.9:
             return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 58, 0.95
         return None, 0, 0
 
     @classmethod
     def _voting_classifier(cls, valid):
-        """V11: Phân loại bỏ phiếu từ signal tốt nhất."""
         if len(valid) < 40 or not cls._STRATEGY_TRACK:
             return None, 0, 0
         scored = []
@@ -588,7 +539,6 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _regime_switch(cls, valid):
-        """V11: Phát hiện chuyển chế độ."""
         if len(valid) < 30:
             return None, 0, 0
         r = [v['result'] for v in valid]
@@ -597,7 +547,6 @@ class MultiStrategyPredictor:
         if p_before is None:
             return None, 0, 0
         diff = p_after - p_before
-        # Chuyển regime mạnh
         if diff >= 0.35:
             return 'Tài', min(60 + int(diff * 40), 78), 1.20
         if diff <= -0.35:
@@ -606,18 +555,15 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _wavelet_detail(cls, valid):
-        """V11: Chi tiết sóng - phân rã đa mức."""
         if len(valid) < 24:
             return None, 0, 0
         r = [v['result'] for v in valid]
         vals = [1 if x == 'Tài' else 0 for x in r[-24:]]
-        # Simple Haar wavelet
         approx = []
         for i in range(0, len(vals) - 1, 2):
             approx.append((vals[i] + vals[i + 1]) / 2)
         if len(approx) < 4:
             return None, 0, 0
-        # Level 2
         approx2 = []
         for i in range(0, len(approx) - 1, 2):
             approx2.append((approx[i] + approx[i + 1]) / 2)
@@ -632,17 +578,13 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _bayesian_hierarchical(cls, valid):
-        """V11: Bayes phân cấp."""
         if len(valid) < 20:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        # Prior từ 50 phiên
         p_short = _tai_ratio(r, 10)
         p_mid = _tai_ratio(r, 25)
         p_long = _tai_ratio(r, min(50, len(r)))
-        # Hierarchical: kết hợp
         p = 0.5 * p_short + 0.3 * p_mid + 0.2 * p_long
-        # Confidence từ variance
         variance = (p_short - p_mid) ** 2 + (p_mid - p_long) ** 2
         if variance < 0.05 and p >= 0.58:
             return 'Tài', min(int(p * 100) + 4, 78), 1.15
@@ -652,28 +594,22 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _quantum_superposition(cls, valid):
-        """V11: Chồng chập lượng tử - xác suất mềm."""
         if len(valid) < 30:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        # Tính xác suất chồng chập từ 3 yếu tố
         p1 = _tai_ratio(r, 10)
         p2 = _tai_ratio(r, 20)
         vals = [1 if x == 'Tài' else 0 for x in r[-15:]]
         slope = _linreg_slope(vals)
-        # Trend direction từ slope
         trend_signal = 0.5 + slope * 2
         trend_signal = max(0.0, min(1.0, trend_signal))
-        # Chồng chập
         p_combined = 0.4 * p1 + 0.3 * p2 + 0.3 * trend_signal
-        # Chỉ fire khi rất tự tin
         if p_combined >= 0.68:
             return 'Tài', min(int(p_combined * 100), 80), 1.20
         if p_combined <= 0.32:
             return 'Xỉu', min(int((1 - p_combined) * 100), 80), 1.20
         return None, 0, 0
 
-    # ============ CẦU SIGNALS ============
     @classmethod
     def _follow_bet_early(cls, valid):
         if len(valid) < 20:
@@ -885,7 +821,6 @@ class MultiStrategyPredictor:
             return opp, conf, 1.15
         return None, 0, 0
 
-    # ============ REGRET LEARNING ============
     @classmethod
     def _meta_learner(cls, valid):
         if len(valid) < 40 or not cls._STRATEGY_TRACK:
@@ -942,8 +877,7 @@ class MultiStrategyPredictor:
             conf = min(55 + (cur_len - 5) * 4, 72)
             weight = 1.05
         else:
-            p_break = 1.0
-            conf = min(56 + int(p_break * 22) + (cur_len - 5) * 2, 76)
+            conf = min(56 + 22 + (cur_len - 5) * 2, 76)
             weight = 1.05 + (cur_len - 5) * 0.08
         opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
         return opp, conf, min(weight, 1.5)
@@ -1156,7 +1090,6 @@ class MultiStrategyPredictor:
             return top, conf, 1.30
         return None, 0, 0
 
-    # ============ SIGNAL CỔ ĐIỂN ============
     @staticmethod
     def _markov_order3(valid):
         if len(valid) < 25:
@@ -2084,7 +2017,6 @@ class MultiStrategyPredictor:
             return best[1], conf, 1.15
         return None, 0, 0
 
-    # ============ ADAPTIVE ============
     @classmethod
     def _get_adaptive_weight(cls, name, base_weight):
         tr = cls._STRATEGY_TRACK.get(name)
@@ -2190,11 +2122,9 @@ class MultiStrategyPredictor:
             return min(84, raw_conf + 2)
         return raw_conf
 
-    # ============ STRATEGY LIST V11 ============
     @classmethod
     def _strategy_list(cls):
         return [
-            # V11 Signal mới
             ('spectral_trend',        cls._spectral_trend),
             ('kalman_smooth',         cls._kalman_smooth),
             ('recurrence_plot',       cls._recurrence_plot),
@@ -2205,7 +2135,6 @@ class MultiStrategyPredictor:
             ('wavelet_detail',        cls._wavelet_detail),
             ('bayesian_hierarchical', cls._bayesian_hierarchical),
             ('quantum_superposition', cls._quantum_superposition),
-            # V10 Regret + Recovery
             ('meta_learner',       cls._meta_learner),
             ('recovery_mode',      cls._recovery_mode),
             ('anti_streak',        cls._anti_streak),
@@ -2219,7 +2148,6 @@ class MultiStrategyPredictor:
             ('safe_mode',          cls._safe_mode),
             ('win_streak_follow',  cls._win_streak_follow),
             ('variance_reduction', cls._variance_reduction),
-            # V9.3 Trend + Full cầu
             ('macro_trend',      cls._macro_trend),
             ('drift_trend',      cls._drift_trend),
             ('weighted_trend',   cls._weighted_trend),
@@ -2238,7 +2166,6 @@ class MultiStrategyPredictor:
             ('cau_ziczac',       cls._cau_ziczac),
             ('cau_momentum',     cls._cau_momentum),
             ('reversal_signal',  cls._reversal_signal),
-            # Cổ điển
             ('markov3',      cls._markov_order3),
             ('markov2',      cls._markov_order2),
             ('markov1',      cls._markov_order1),
@@ -2291,7 +2218,6 @@ class MultiStrategyPredictor:
             ('dice_parity',       cls._dice_parity),
         ]
 
-    # ============ RECOVERY UPDATE ============
     @classmethod
     def _update_recovery_mode(cls, log=None):
         if log is None:
@@ -2320,7 +2246,6 @@ class MultiStrategyPredictor:
             cls._RECOVERY_MODE['fail_count'] = 0
             cls._RECOVERY_MODE['invert_next'] = False
 
-    # ============ MAIN PREDICT V11 ============
     @classmethod
     def predict(cls, valid, log=None):
         if log is None:
@@ -2587,9 +2512,8 @@ class MultiStrategyPredictor:
         if trend_dir_final:
             cau_label += f' · Trend {trend_dir_final}'
         if cls._RECOVERY_MODE['active']:
-            cau_label += f" · 🛡️ Recovery"
+            cau_label += ' · 🛡️ Recovery'
 
-        # V11: Reason ẩn thông tin nhạy cảm (không hiện số phiên, entropy chi tiết)
         reason = f"{cau_label} · {len(signals)} tín hiệu"
         if trend_dir_final:
             reason += f" · trend={trend_dir_final}"
@@ -2664,9 +2588,6 @@ class MultiStrategyPredictor:
                 })
 
 
-# =====================================================================
-# DATA FETCHERS
-# =====================================================================
 def fetch_sessions():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -2779,15 +2700,12 @@ def _log_stats(log=None):
 _load_log()
 
 
-# =====================================================================
-# HTML - BLUE/WHITE (V11: Ẩn dung lượng, chưa đủ data thì báo "Đang tải...")
-# =====================================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH  V2</title>
+<title>LE MINH MD5 V2</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -2875,8 +2793,8 @@ tr:hover td{background:#eff6ff}
 <div class="header">
     <div class="logo">
         <span class="logo-text">LE MINH</span>
-        <span class="ver">Bon</span>
-        <span class="md5-badge">V2</span>
+        <span class="ver">V11</span>
+        <span class="md5-badge">MD5</span>
     </div>
     <div class="actions">
         <div class="clock" id="clock">--:--:--</div>
@@ -2885,14 +2803,14 @@ tr:hover td{background:#eff6ff}
     </div>
 </div>
 <div class="wrap">
-    <div id="loading-screen" class="loading-screen">
+    <div id="loading-screen" class="loading-screen" style="display:none;">
         <div class="loading-icon">🌊</div>
         <div class="loading-title">Đang tải dữ liệu</div>
         <div class="loading-text">Hệ thống đang thu thập dữ liệu để phân tích...</div>
         <div class="loading-progress"><div class="loading-progress-fill"></div></div>
     </div>
 
-    <div id="main-content" style="display:none;">
+    <div id="main-content">
         <div class="pred-box">
             <div class="pred-row">
                 <div>
@@ -2907,7 +2825,7 @@ tr:hover td{background:#eff6ff}
         <div class="scorebar">
             <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="sc-correct">0</div></div>
             <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="sc-wrong">0</div></div>
-            <div class="sc"><div class="sc-l">Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
+            <div class="sc"><div class="sc-l">⏳ Chờ</div><div class="sc-v warn" id="sc-pending">0</div></div>
         </div>
         <div class="tbl">
             <table>
@@ -2919,7 +2837,6 @@ tr:hover td{background:#eff6ff}
 </div>
 <script>
 let isResetting=false;
-let lastPayloadReady=false;
 function manualRefresh(btn){btn.classList.add('spin');setTimeout(()=>btn.classList.remove('spin'),500);fetchData();}
 async function fetchData(){
     if(isResetting)return;
@@ -2927,7 +2844,6 @@ async function fetchData(){
     try{
         const r=await fetch('/api/history',{cache:'no-store'});
         const d=await r.json();
-        // V11: Nếu chưa đủ data -> hiện loading, ẩn main
         if(!d.ready){
             document.getElementById('loading-screen').style.display='block';
             document.getElementById('main-content').style.display='none';
@@ -3004,9 +2920,6 @@ setInterval(fetchData,5000);
 </html>"""
 
 
-# =====================================================================
-# ROUTES
-# =====================================================================
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -3018,7 +2931,6 @@ def history():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        # V11: Chưa đủ data -> trả ready=false, KHÔNG trả rows/prediction
         if len(valid) < MIN_HISTORY:
             return jsonify({
                 'ready': False,
@@ -3050,7 +2962,6 @@ def history():
                 'ai_confidence': log['confidence'] if log else None,
                 'ai_correct': log['correct'] if log else None,
             })
-        # V11: KHÔNG trả 'stats' (chứa tổng phiên) — ẩn dung lượng DL
         return jsonify({
             'ready': True,
             'rows': out,
@@ -3075,14 +2986,6 @@ def lc79md5():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
-        # V11: Chưa đủ data -> không trả prediction, không trả stats
-        if len(valid) < MIN_FOR_JSON:
-            return jsonify({
-                'Id': 'LE MINH V11 MD5',
-                'Phien': None,
-                'Du_doan': None,
-                'message': 'Đang tải dữ liệu...',
-            })
         if len(valid) < MIN_HISTORY:
             return jsonify({
                 'Id': 'LE MINH V11 MD5',
@@ -3095,7 +2998,6 @@ def lc79md5():
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
         ai_stats = _log_stats(PREDICTION_LOG)
-        # V11: KHÔNG trả Tong_phien, So_Tai, So_Xiu (ẩn dung lượng)
         return jsonify({
             'Id': 'LE MINH V11 MD5',
             'Phien': str(next_phien),
@@ -3124,12 +3026,10 @@ def lc79md5():
 
 @app.route('/lc79')
 def lc79():
-    """Format: @cskhleminh | Kết quả: Tài 6-4-5"""
     try:
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        # V11: Chưa đủ data -> ẩn dung lượng
         if len(valid) < MIN_HISTORY:
             return jsonify({
                 'Id': '@cskhleminh',
@@ -3148,7 +3048,6 @@ def lc79():
 
         ai_stats = _log_stats(PREDICTION_LOG)
 
-        # V11: KHÔNG trả Tong_phien/So_Tai/So_Xiu (ẩn dung lượng)
         return jsonify({
             'Id': '@cskhleminh',
             'Phien': str(next_phien),
@@ -3182,7 +3081,6 @@ def predict():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        # V11: Ẩn nếu chưa đủ data
         if len(valid) < MIN_HISTORY:
             return jsonify({
                 'ready': False,
@@ -3193,7 +3091,6 @@ def predict():
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
-        # V11: Bỏ 'stats' + 'num_phien' để ẩn dung lượng
         return jsonify({
             'version': 'V11',
             'last_phien': last['phien'],
@@ -3231,7 +3128,6 @@ def stats_only():
         if len(valid) < MIN_HISTORY:
             return jsonify({'ready': False, 'message': 'Đang tải dữ liệu...'})
         last = valid[-1] if valid else None
-        # V11: Không trả 'stats' (tổng phiên) - ẩn dung lượng
         return jsonify({
             'ready': True,
             'ai_stats': _log_stats(),
@@ -3258,7 +3154,6 @@ def algo_info():
         results = [v['result'] for v in valid]
         cyc = MultiStrategyPredictor._detect_cycle(results, max_period=6, min_repeats=2)
         cau, cur_len, p_tai = MultiStrategyPredictor._detect_cau_type(results)
-        # V11: Không expose num_phien
         return jsonify({
             'version': 'V11',
             'ready': True,
