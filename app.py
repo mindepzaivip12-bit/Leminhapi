@@ -3,29 +3,33 @@ import time
 import json
 import hashlib
 import base64
-import threading
+import traceback
 import requests
-import logging
 from flask import Flask, render_template, request
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO
+import eventlet
+
+eventlet.monkey_patch()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'leminh_secret'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # ==========================================
-# API ENDPOINTS
+# API ENDPOINTS (GIẢ LẬP TRÌNH DUYỆT)
 # ==========================================
 API_LOGIN_1 = "https://apifo88daigia.tele68.com/api?c=3&un={username}&pw={password_md5}&cp=R&cl=R&pf=web&at="
 API_LOGIN_2 = "https://wlb.tele68.com/v1/lobby/auth/login?cp=R&cl=R&pf=web&at="
-# API để đặt cược (Dựa trên cấu trúc của tele68)
-API_BET = "https://wtxmd52.tele68.com/v1/txmd5/bet?cp=R&cl=R&pf=web&at="
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Origin": "https://wtxmd52.tele68.com",
+    "Referer": "https://wtxmd52.tele68.com/"
+}
 
 # ==========================================
-# QUẢN LÝ PHIÊN (SESSION)
+# QUẢN LÝ PHIÊN
 # ==========================================
 class UserSession:
     def __init__(self, sid):
@@ -42,7 +46,6 @@ class UserSession:
         self.ai_correct = 0
         self.ai_wrong = 0
         self.win_streak = 0
-        self.last_prediction = None
 
 sessions = {}
 
@@ -52,63 +55,39 @@ def get_session(sid):
     return sessions[sid]
 
 # ==========================================
-# THUẬT TOÁN DỰ ĐOÁN (CƠ BẢN)
-# ==========================================
-def predict_result(history):
-    # Logic giả lập dựa trên 3 phiên gần nhất
-    if not history or len(history) < 3:
-        return "TAI", 65
-    
-    last3 = [h['result'] for h in history[-3:]]
-    if len(set(last3)) == 1:
-        # Bẻ cầu bệt
-        return ("XIU" if last3[0] == "TAI" else "TAI"), 75
-    else:
-        # Theo cầu 1-1
-        return ("TAI" if last3[-1] == "XIU" else "XIU"), 60
-
-# ==========================================
-# LOGIC AUTO CƯỢC (CHẠY NGẦM)
+# LOGIC AUTO CƯỢC
 # ==========================================
 def auto_bet_worker(sid):
     sess = get_session(sid)
-    if not sess.logged_in:
-        return
+    if not sess.logged_in: return
 
-    logger.info(f"[{sid}] Bắt đầu Auto Bet")
-    session_id = 1000000 # Fake ID để test
+    socketio.emit('log', {'msg': "Hệ thống Auto Cược đã khởi động!", 'type': 'info'}, to=sid)
+    session_id = 1000000 
     
     while sess.auto_bet and sess.logged_in:
         try:
-            # 1. Dự đoán
-            # (Thực tế sẽ lấy lịch sử từ API, ở đây giả lập)
-            pred, conf = predict_result([])
-            sess.last_prediction = pred
-            
-            # Tính tiền cược (X2 nếu thua)
+            # Tính cược X2 nếu thua
             if sess.win_streak < 0:
-                sess.current_bet = sess.base_bet * 2
+                sess.current_bet = sess.base_bet * (2 ** abs(sess.win_streak))
             else:
                 sess.current_bet = sess.base_bet
             
-            # 2. Gửi tín hiệu xuống giao diện
-            socketio.emit('log', {'msg': f"Phiên mới #{session_id} | Dự đoán: {pred} ({conf}%)", 'type': 'info'}, to=sid)
+            socketio.emit('log', {'msg': f"Phiên #{session_id} | Dự đoán: TÀI | Cược: {sess.current_bet:,}", 'type': 'info'}, to=sid)
             
             if sess.current_bet > sess.balance:
-                socketio.emit('log', {'msg': "Số dư không đủ! Tắt Auto.", 'type': 'error'}, to=sid)
+                socketio.emit('log', {'msg': "Số dư không đủ! Dừng Auto.", 'type': 'error'}, to=sid)
                 sess.auto_bet = False
                 break
 
-            # 3. Tiến hành đặt cược (Gọi API)
-            socketio.emit('log', {'msg': f"Đang cược {pred} - {sess.current_bet:,} Win...", 'type': 'warn'}, to=sid)
+            # (Đây là nơi gọi API đặt cược thật)
+            socketio.emit('log', {'msg': "Đang gửi lệnh cược lên Server...", 'type': 'warn'}, to=sid)
+            eventlet.sleep(2) # Giả lập chờ API
             
-            # --- MOCK ĐẶT CƯỢC THÀNH CÔNG ---
-            # (Nếu có API thật, thay bằng requests.post)
-            time.sleep(2) 
-            is_win = (hashlib.md5(str(session_id).encode()).hexdigest()[0] in '0123456') # Random thắng 70%
+            # Giả lập kết quả 60% thắng
+            is_win = (hashlib.md5(str(session_id).encode()).hexdigest()[0] in '0123456')
             
             if is_win:
-                sess.balance += sess.current_bet * 0.98
+                sess.balance += int(sess.current_bet * 0.98)
                 sess.ai_correct += 1
                 sess.win_streak = 0
                 socketio.emit('log', {'msg': f"✅ THẮNG! +{int(sess.current_bet*0.98):,} Win", 'type': 'success'}, to=sid)
@@ -122,7 +101,7 @@ def auto_bet_worker(sid):
                     sess.auto_bet = False
                     socketio.emit('log', {'msg': "Gãy 2 tay! Tự động dừng.", 'type': 'error'}, to=sid)
 
-            # 4. Cập nhật UI
+            # Cập nhật UI
             socketio.emit('state', {
                 'balance': sess.balance,
                 'ai_correct': sess.ai_correct,
@@ -131,50 +110,61 @@ def auto_bet_worker(sid):
             }, to=sid)
             
             session_id += 1
-            time.sleep(5) # Chờ phiên tiếp theo
+            eventlet.sleep(4)
             
         except Exception as e:
-            logger.error(f"Lỗi Auto Bet: {e}")
-            time.sleep(2)
+            socketio.emit('log', {'msg': f"Lỗi Auto: {str(e)}", 'type': 'error'}, to=sid)
+            eventlet.sleep(2)
 
 # ==========================================
 # SOCKET EVENTS
 # ==========================================
 @socketio.on('connect')
 def on_connect():
-    sid = request.sid
-    logger.info(f"Client connected: {sid}")
-    get_session(sid)
+    get_session(request.sid)
 
 @socketio.on('login')
 def handle_login(data):
     sid = request.sid
     sess = get_session(sid)
     
-    username = data.get('username')
-    password = data.get('password')
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
     
-    socketio.emit('log', {'msg': "Đang kết nối server game...", 'type': 'info'}, to=sid)
-    
-    pw_md5 = hashlib.md5(password.encode('utf-8')).hexdigest()
-    url = API_LOGIN_1.format(username=username, password_md5=pw_md5)
+    socketio.emit('log', {'msg': "Đang kết nối Server Game...", 'type': 'info'}, to=sid)
     
     try:
-        r = requests.get(url, timeout=10)
+        pw_md5 = hashlib.md5(password.encode('utf-8')).hexdigest()
+        url = API_LOGIN_1.format(username=username, password_md5=pw_md5)
+        
+        # Gọi API 1 với timeout 8s
+        r = requests.get(url, headers=HEADERS, timeout=8)
         res = r.json()
+        
         if not res.get("success"):
-            socketio.emit('log', {'msg': f"Lỗi: {res.get('message')}", 'type': 'error'}, to=sid)
+            socketio.emit('log', {'msg': f"Lỗi Game: {res.get('message', 'Sai tài khoản')}", 'type': 'error'}, to=sid)
             socketio.emit('login_failed', to=sid)
             return
             
-        session_key = res["sessionKey"]
+        # Lấy sessionKey
+        session_key = res.get("sessionKey")
+        if not session_key:
+            raise ValueError("Không có sessionKey từ API")
+            
         session_key += "=" * ((4 - len(session_key) % 4) % 4)
-        nick = json.loads(base64.b64decode(session_key).decode('utf-8')).get("nickname")
+        session_data = json.loads(base64.b64decode(session_key).decode('utf-8'))
+        nick = session_data.get("nickname") or session_data.get("nickName", username)
         
-        r2 = requests.post(API_LOGIN_2, json={"nickName": nick, "accessToken": res["accessToken"]}, timeout=10)
+        # Gọi API 2 lấy Token & Money
+        payload = {"nickName": nick, "accessToken": res.get("accessToken")}
+        r2 = requests.post(API_LOGIN_2, json=payload, headers=HEADERS, timeout=8)
         lobby = r2.json()
         
-        sess.token = lobby.get("token")
+        token = lobby.get("token")
+        if not token:
+            raise ValueError("Không lấy được Token Lobby")
+            
+        sess.token = token
         sess.nickname = nick
         sess.balance = lobby.get("remoteLoginResp", {}).get("money", 0)
         sess.logged_in = True
@@ -182,8 +172,14 @@ def handle_login(data):
         socketio.emit('log', {'msg': f"Đăng nhập OK: {nick} | Dư: {sess.balance:,} Win", 'type': 'success'}, to=sid)
         socketio.emit('login_success', {'nickname': nick, 'balance': sess.balance}, to=sid)
         
+    except requests.exceptions.Timeout:
+        socketio.emit('log', {'msg': "Lỗi: Server Game không phản hồi (Timeout).", 'type': 'error'}, to=sid)
+        socketio.emit('login_failed', to=sid)
+    except requests.exceptions.RequestException as e:
+        socketio.emit('log', {'msg': f"Lỗi mạng: {str(e)}", 'type': 'error'}, to=sid)
+        socketio.emit('login_failed', to=sid)
     except Exception as e:
-        socketio.emit('log', {'msg': f"Lỗi mạng: {e}", 'type': 'error'}, to=sid)
+        socketio.emit('log', {'msg': f"Lỗi hệ thống: {str(e)}", 'type': 'error'}, to=sid)
         socketio.emit('login_failed', to=sid)
 
 @socketio.on('start_auto')
@@ -198,7 +194,7 @@ def handle_start_auto(data):
     sess.win_streak = 0
     
     socketio.emit('log', {'msg': f"BẬT AUTO CƯỢC ({sess.base_bet:,} Win)", 'type': 'info'}, to=sid)
-    # Chạy luồng auto bet ngầm
+    # Dùng start_background_task của socketio
     socketio.start_background_task(auto_bet_worker, sid)
 
 @socketio.on('stop_auto')
@@ -207,11 +203,7 @@ def handle_stop_auto():
     sess = get_session(sid)
     sess.auto_bet = False
     socketio.emit('log', {'msg': "ĐÃ TẮT AUTO CƯỢC", 'type': 'error'}, to=sid)
-    socketio.emit('state', {'auto_bet': False}, to=sid)
 
-# ==========================================
-# ROUTES
-# ==========================================
 @app.route('/')
 def index():
     return render_template('index.html')
