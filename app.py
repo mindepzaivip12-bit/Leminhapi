@@ -29,6 +29,7 @@ MIN_HISTORY = 3
 PATTERN_MEMORY = deque(maxlen=200)
 STRATEGY_BLACKLIST = set()
 
+# Tên nội bộ - KHÔNG hiển thị ra giao diện
 SIGNAL_NAMES = {
     'markov3': 'Markov bậc 3', 'markov2': 'Markov bậc 2', 'markov1': 'Markov bậc 1',
     'streak': 'Bẻ chuỗi', 'pattern': 'Khớp mẫu', 'weighted': 'Tần suất',
@@ -268,6 +269,7 @@ class MultiStrategyPredictor:
 
         return 'hon_hop', cur_len, p_tai
 
+    # ---------- TREND ----------
     @classmethod
     def _macro_trend(cls, valid, win=40):
         if len(valid) < 15:
@@ -611,6 +613,7 @@ class MultiStrategyPredictor:
             return 'Xỉu', min(int((1 - p_combined) * 100), 80), 1.20
         return None, 0, 0
 
+    # ---------- CẦU / BỆT ----------
     @classmethod
     def _follow_bet_early(cls, valid):
         if len(valid) < 10:
@@ -2270,7 +2273,7 @@ class MultiStrategyPredictor:
             return {
                 'prediction': cls._deterministic_choice(['Tài', 'Xỉu'], seed),
                 'confidence': 50, 'method': 'Chưa có DL',
-                'signals': [], 'top_signals': ['Chưa có DL'],
+                'signals': [], 'top_signals': [],
                 'signals_strength': [],
                 'reason': 'Không có dữ liệu', 'flipped': False,
                 'cau': 'unknown', 'cau_label': '',
@@ -2284,21 +2287,21 @@ class MultiStrategyPredictor:
             streak, last = cls._tail_run(r)
             opp = 'Xỉu' if last == 'Tài' else 'Tài'
             if streak == 1:
-                method = f'Đảo {last}'
-                reason = f'1 phiên {last}'
+                method = 'Đảo nhịp'
+                reason = 'Ngắn hạn'
                 conf = 52
             elif streak <= 3:
-                method = f'Bẻ {last}×{streak}'
-                reason = f'{streak} phiên {last}'
+                method = 'Bẻ nhịp'
+                reason = 'Bẻ nhịp'
                 conf = 52 + streak * 2
             else:
-                method = f'Bẻ {last}×{streak}'
-                reason = f'{streak} phiên {last}'
+                method = 'Bẻ nhịp'
+                reason = 'Bẻ nhịp'
                 conf = min(60 + (streak - 3) * 3, 70)
             return {
                 'prediction': opp, 'confidence': conf,
                 'method': method, 'signals': [],
-                'top_signals': [method], 'signals_strength': [],
+                'top_signals': [], 'signals_strength': [],
                 'reason': reason, 'flipped': False,
                 'cau': 'unknown', 'cau_label': '',
                 'recovery_active': False, 'fail_streak': 0,
@@ -2399,10 +2402,10 @@ class MultiStrategyPredictor:
             opp = 'Xỉu' if last == 'Tài' else 'Tài'
             return {
                 'prediction': opp, 'confidence': 52,
-                'method': f'Bẻ {last}×{streak}',
-                'signals': [], 'top_signals': [f'Bẻ {last}×{streak}'],
+                'method': 'Tổng hợp',
+                'signals': [], 'top_signals': [],
                 'signals_strength': [],
-                'reason': f'Bẻ streak {streak}',
+                'reason': 'Bẻ nhịp',
                 'flipped': False, 'cau': cau_type,
                 'cau_label': '',
                 'recovery_active': cls._RECOVERY_MODE['active'],
@@ -2508,29 +2511,19 @@ class MultiStrategyPredictor:
             key=lambda s: s['weight'] * (s['confidence'] - 50),
             reverse=True
         )
+
+        # Giao diện chỉ hiển thị dự đoán, KHÔNG hiển thị thuật toán / tên cầu
+        # nhưng API vẫn giữ top_signals / method nội bộ để bot ngoài dùng.
         top_signals = [SIGNAL_NAMES.get(s['name'], s['name'])
                        for s in signals_sorted[:5]]
 
-        cau_label_map = {
-            'bet_short': f'Bệt ngắn {cur_streak_val}×{cur_streak_len}',
-            'bet_mid': f'Bệt vừa {cur_streak_val}×{cur_streak_len}',
-            'bet_long': f'Bệt dài {cur_streak_val}×{cur_streak_len}',
-            'dao_1_1': 'Cầu đảo 1-1',
-            'cau_2_2': 'Cầu 2-2', 'cau_3_3': 'Cầu 3-3',
-            'cau_1_2': 'Cầu 1-2', 'cau_2_1': 'Cầu 2-1', 'cau_3_2': 'Cầu 3-2',
-            'nghieng': 'Cầu nghiêng', 'bac_thang': 'Cầu bậc thang',
-            'ziczac': 'Cầu ziczac', 'hon_hop': 'Cầu hỗn hợp',
-            'unknown': '',  # Ẩn nếu chưa đủ data
-        }
-        cau_label = cau_label_map.get(cau_type, '')
+        cau_label = ''
         if trend_dir_final:
-            cau_label += f' · Trend {trend_dir_final}'
-        if cls._RECOVERY_MODE['active']:
-            cau_label += ' · 🛡️ Recovery'
+            cau_label = f'· {trend_dir_final}'
 
-        reason = f"{cau_label}"
+        reason = 'Tổng hợp tín hiệu'
         if flipped_by_recovery:
-            reason += " · 🛡️ RECOVERY"
+            reason += ' · Đảo'
 
         result = {
             'prediction': pred, 'confidence': final_conf,
@@ -2550,7 +2543,7 @@ class MultiStrategyPredictor:
             'reason': reason,
             'flipped': flipped_by_recovery,
             'cau': cau_type,
-            'cau_label': cau_label.strip(' ·'),
+            'cau_label': '',
             'recovery_active': cls._RECOVERY_MODE['active'],
             'fail_streak': cls._RECOVERY_MODE['fail_count'],
         }
@@ -2560,8 +2553,8 @@ class MultiStrategyPredictor:
             if fail_streak >= 2 and not cls._was_flipped_last(log):
                 result['prediction'] = 'Xỉu' if result['prediction'] == 'Tài' else 'Tài'
                 result['confidence'] = max(55, min(result['confidence'], 72))
-                result['method'] = '⚠ ' + result['method']
-                result['reason'] += " · SAI → ĐẢO"
+                result['method'] = 'Tổng hợp'
+                result['reason'] = 'Tổng hợp tín hiệu'
                 result['flipped'] = True
 
         result['confidence'] = cls._calibrate_confidence(result['confidence'], log)
@@ -2770,7 +2763,6 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;bac
 .pred-value{font-size:34px;font-weight:800;line-height:1;letter-spacing:-1px}
 .pred-value.tai{color:var(--tai);text-shadow:0 2px 12px rgba(2,132,199,.25)}
 .pred-value.xiu{color:var(--xiu);text-shadow:0 2px 12px rgba(8,145,178,.25)}
-.cau-badge{display:inline-block;font-size:10px;padding:3px 10px;border-radius:12px;background:linear-gradient(135deg,#e0f2fe,#bae6fd);color:#0369a1;font-weight:700;margin-top:8px;border:1px solid #7dd3fc}
 .pred-conf-badge{background:linear-gradient(135deg,#dbeafe,#bfdbfe);border:1px solid var(--border-strong);color:var(--primary-dark);padding:7px 16px;border-radius:20px;font-weight:800;font-size:15px;font-variant-numeric:tabular-nums;box-shadow:0 2px 8px rgba(14,165,233,.2)}
 .conf-bar{height:5px;background:var(--bg-1);border-radius:3px;overflow:hidden;margin-top:14px;position:relative;z-index:1}
 .conf-bar-fill{height:100%;background:linear-gradient(90deg,#0284c7,#0ea5e9,#38bdf8);border-radius:3px;transition:width 1s ease;box-shadow:0 0 10px rgba(14,165,233,.5)}
@@ -2828,8 +2820,6 @@ tr:hover td{background:#eff6ff}
                 <div>
                     <div class="pred-label">Dự đoán phiên tiếp theo</div>
                     <div class="pred-value" id="pred-value">—</div>
-                    <!-- Đã thêm id và display none để ẩn khi không có data -->
-                    <div class="cau-badge" id="cau-badge" style="display:none;">—</div>
                 </div>
                 <div class="pred-conf-badge" id="conf-badge">--%</div>
             </div>
@@ -2877,23 +2867,14 @@ function renderPred(pred, rows){
     const pv=document.getElementById('pred-value');
     const cb=document.getElementById('conf-badge');
     const bar=document.getElementById('conf-bar');
-    const cauB=document.getElementById('cau-badge');
     if(!pred){
-        pv.innerText='—';pv.className='pred-value';cb.innerText='--%';bar.style.width='0%';cauB.style.display='none';
+        pv.innerText='—';pv.className='pred-value';cb.innerText='--%';bar.style.width='0%';
     } else {
         const p=pred.prediction, c=pred.confidence||0;
         pv.innerText=p;
         pv.className='pred-value '+(p==='Tài'?'tai':'xiu');
         cb.innerText=c+'%';
         bar.style.width=c+'%';
-        
-        // Xử lý ẩn/hiện nhãn cầu
-        if(pred.cau_label && pred.cau_label.trim() !== '' && pred.cau_label !== '—'){
-            cauB.innerText = pred.cau_label;
-            cauB.style.display = 'inline-block';
-        } else {
-            cauB.style.display = 'none'; // Ẩn đi nếu không có dữ liệu
-        }
     }
     renderTable(rows);
 }
@@ -2952,7 +2933,6 @@ def history():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        # Chỉ loading khi KHÔNG có phiên nào
         if not valid:
             return jsonify({
                 'ready': False,
@@ -2988,10 +2968,7 @@ def history():
             'prediction': {
                 'prediction': pred['prediction'],
                 'confidence': pred['confidence'],
-                'method': pred['method'],
-                'cau_label': pred.get('cau_label', ''),
-                'cau': pred.get('cau', 'unknown'),
-                'recovery_active': pred.get('recovery_active', False),
+                # KHÔNG trả cau_label / method / top_signals ra giao diện
             }
         })
     except Exception as e:
