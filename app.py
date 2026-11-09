@@ -24,8 +24,8 @@ PREDICTION_LOG = {}
 MAX_LOG_SIZE = 3000
 LOG_FILE = "prediction_log.json"
 
-# ============ V11: NGƯỠNG DỮ LIỆU TỐI THIỂU ============
-MIN_HISTORY = 50
+# Chỉ cần 3 phiên là chạy được
+MIN_HISTORY = 3
 
 PATTERN_MEMORY = deque(maxlen=200)
 STRATEGY_BLACKLIST = set()
@@ -271,11 +271,11 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _macro_trend(cls, valid, win=40):
-        if len(valid) < 25:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p20 = _tai_ratio(r, 20)
-        p10 = _tai_ratio(r, 10)
+        p20 = _tai_ratio(r, min(20, len(r)))
+        p10 = _tai_ratio(r, min(10, len(r)))
         drift = p10 - p20
         if p20 >= 0.58 and drift >= -0.05:
             conf = min(int((p20 - 0.5) * 180) + 54, 76)
@@ -291,10 +291,10 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _drift_trend(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        vals = [1 if x == 'Tài' else 0 for x in r[-20:]]
+        vals = [1 if x == 'Tài' else 0 for x in r[-min(20, len(r)):]]
         slope = _linreg_slope(vals)
         if slope >= 0.06:
             return 'Tài', min(int(slope * 200) + 55, 75), 1.20
@@ -304,13 +304,13 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _weighted_trend(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
         scores = {}
         for alpha in (0.85, 0.92, 0.97):
             s_tai, s_xiu = 0.0, 0.0
-            seg = r[-30:]
+            seg = r[-min(30, len(r)):]
             for i, x in enumerate(seg):
                 w = alpha ** (len(seg) - i - 1)
                 if x == 'Tài':
@@ -331,12 +331,12 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _momentum_trend(cls, valid):
-        if len(valid) < 12:
+        if len(valid) < 8:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p5 = _tai_ratio(r, 5)
-        p10 = _tai_ratio(r, 10)
-        p15 = _tai_ratio(r, 15) if len(r) >= 15 else p10
+        p5 = _tai_ratio(r, min(5, len(r)))
+        p10 = _tai_ratio(r, min(10, len(r)))
+        p15 = _tai_ratio(r, min(15, len(r)))
         if p5 >= 0.70 and p10 >= 0.60 and p5 >= p10 >= p15 - 0.05:
             return 'Tài', min(int(p5 * 100), 75), 1.10
         if p5 <= 0.30 and p10 <= 0.40 and p5 <= p10 <= p15 + 0.05:
@@ -345,11 +345,11 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _regime_trend(cls, valid):
-        if len(valid) < 25:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p10 = _tai_ratio(r, 10)
-        p20 = _tai_ratio(r, 20)
+        p10 = _tai_ratio(r, min(10, len(r)))
+        p20 = _tai_ratio(r, min(20, len(r)))
         if abs(p20 - 0.5) >= 0.10 and abs(p10 - p20) <= 0.15:
             if p20 >= 0.60:
                 return 'Tài', 64, 1.15
@@ -359,29 +359,31 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _trend_alignment(cls, valid):
-        if len(valid) < 25:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         votes = []
         for win in (8, 12, 16, 20, 25):
+            if len(r) < win:
+                continue
             p = _tai_ratio(r, win)
             if p >= 0.60:
                 votes.append('Tài')
             elif p <= 0.40:
                 votes.append('Xỉu')
-        if len(votes) >= 4:
+        if len(votes) >= 3:
             c = Counter(votes)
             top, cnt = c.most_common(1)[0]
-            if cnt >= 4:
+            if cnt >= 3:
                 return top, min(55 + cnt * 4, 76), 1.25
         return None, 0, 0
 
     @classmethod
     def _spectral_trend(cls, valid):
-        if len(valid) < 30:
+        if len(valid) < 20:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        vals = [1 if x == 'Tài' else -1 for x in r[-30:]]
+        vals = [1 if x == 'Tài' else -1 for x in r[-min(30, len(r)):]]
         n = len(vals)
         best_period, best_power = 0, 0
         for period in (2, 3, 4, 5, 6, 8, 10, 12):
@@ -410,7 +412,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _kalman_smooth(cls, valid):
-        if len(valid) < 15:
+        if len(valid) < 8:
             return None, 0, 0
         r = [v['result'] for v in valid]
         if cls._KALMAN_STATE['last_len'] == len(r):
@@ -418,7 +420,7 @@ class MultiStrategyPredictor:
         else:
             x, p = 0.5, 1.0
             q, r_noise = 0.01, 0.1
-            for v in r[-30:]:
+            for v in r[-min(30, len(r)):]:
                 p = p + q
                 z = 1.0 if v == 'Tài' else 0.0
                 k = p / (p + r_noise)
@@ -435,17 +437,18 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _recurrence_plot(cls, valid):
-        if len(valid) < 40:
+        if len(valid) < 20:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        cur = tuple(r[-10:])
+        wlen = 10 if len(r) >= 15 else max(3, len(r) - 1)
+        cur = tuple(r[-wlen:])
         matches = []
-        for i in range(len(r) - 15):
-            window = tuple(r[i:i + 10])
-            sim = sum(1 for a, b in zip(cur, window) if a == b) / 10
+        for i in range(len(r) - wlen - 1):
+            window = tuple(r[i:i + wlen])
+            sim = sum(1 for a, b in zip(cur, window) if a == b) / wlen
             if sim >= 0.80:
-                matches.append((sim, r[i + 10]))
-        if len(matches) < 3:
+                matches.append((sim, r[i + wlen]))
+        if len(matches) < 2:
             return None, 0, 0
         weighted = {'Tài': 0.0, 'Xỉu': 0.0}
         for sim, nv in matches:
@@ -462,7 +465,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _cross_window_corr(cls, valid):
-        if len(valid) < 30:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         ac1 = _autocorrelation(r, 1)
@@ -471,11 +474,10 @@ class MultiStrategyPredictor:
             if r[-1] == 'Tài':
                 return 'Tài', 62, 1.10
             return 'Xỉu', 62, 1.10
-        if ac2 >= 0.5:
-            if len(r) >= 2:
-                if r[-2] == 'Tài':
-                    return 'Tài', 61, 1.05
-                return 'Xỉu', 61, 1.05
+        if ac2 >= 0.5 and len(r) >= 2:
+            if r[-2] == 'Tài':
+                return 'Tài', 61, 1.05
+            return 'Xỉu', 61, 1.05
         if ac1 <= -0.5:
             nxt = 'Xỉu' if r[-1] == 'Tài' else 'Tài'
             return nxt, 63, 1.15
@@ -483,7 +485,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _multi_scale_entropy_signal(cls, valid):
-        if len(valid) < 30:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         entropies = _multi_scale_entropy(r, scales=(2, 4, 8))
@@ -501,19 +503,19 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _voting_classifier(cls, valid):
-        if len(valid) < 40 or not cls._STRATEGY_TRACK:
+        if len(valid) < 20 or not cls._STRATEGY_TRACK:
             return None, 0, 0
         scored = []
         for name, tr in cls._STRATEGY_TRACK.items():
             if name.startswith('__'):
                 continue
             n = tr['hit'] + tr['miss']
-            if n < 8:
+            if n < 5:
                 continue
             acc = tr['hit'] / n
-            if acc >= 0.58:
+            if acc >= 0.55:
                 scored.append((acc, name))
-        if len(scored) < 5:
+        if len(scored) < 4:
             return None, 0, 0
         scored.sort(reverse=True)
         top_names = set(name for _, name in scored[:8])
@@ -539,7 +541,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _regime_switch(cls, valid):
-        if len(valid) < 30:
+        if len(valid) < 20:
             return None, 0, 0
         r = [v['result'] for v in valid]
         p_before = _tai_ratio(r[:-10], 10) if len(r) >= 20 else None
@@ -555,10 +557,10 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _wavelet_detail(cls, valid):
-        if len(valid) < 24:
+        if len(valid) < 16:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        vals = [1 if x == 'Tài' else 0 for x in r[-24:]]
+        vals = [1 if x == 'Tài' else 0 for x in r[-min(24, len(r)):]]
         approx = []
         for i in range(0, len(vals) - 1, 2):
             approx.append((vals[i] + vals[i + 1]) / 2)
@@ -578,11 +580,11 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _bayesian_hierarchical(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p_short = _tai_ratio(r, 10)
-        p_mid = _tai_ratio(r, 25)
+        p_short = _tai_ratio(r, min(10, len(r)))
+        p_mid = _tai_ratio(r, min(25, len(r)))
         p_long = _tai_ratio(r, min(50, len(r)))
         p = 0.5 * p_short + 0.3 * p_mid + 0.2 * p_long
         variance = (p_short - p_mid) ** 2 + (p_mid - p_long) ** 2
@@ -594,12 +596,12 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _quantum_superposition(cls, valid):
-        if len(valid) < 30:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p1 = _tai_ratio(r, 10)
-        p2 = _tai_ratio(r, 20)
-        vals = [1 if x == 'Tài' else 0 for x in r[-15:]]
+        p1 = _tai_ratio(r, min(10, len(r)))
+        p2 = _tai_ratio(r, min(20, len(r)))
+        vals = [1 if x == 'Tài' else 0 for x in r[-min(15, len(r)):]]
         slope = _linreg_slope(vals)
         trend_signal = 0.5 + slope * 2
         trend_signal = max(0.0, min(1.0, trend_signal))
@@ -612,23 +614,23 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _follow_bet_early(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
         if cau != 'bet_short':
             return None, 0, 0
         cur_val = r[-1]
-        runs = _run_lengths(r[-40:])
+        runs = _run_lengths(r[-min(40, len(r)):])
         prev_long = sum(1 for x in runs[:-1] if x >= 3)
-        if prev_long < 2:
+        if prev_long < 1:
             return None, 0, 0
         conf = min(58 + cur_len * 4 + prev_long * 2, 76)
         return cur_val, conf, 1.30
 
     @classmethod
     def _break_bet_late(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
@@ -638,7 +640,7 @@ class MultiStrategyPredictor:
             return None, 0, 0
         cur_val = r[-1]
         opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
-        runs = _run_lengths(r[-40:])
+        runs = _run_lengths(r[-min(40, len(r)):])
         max_prev = max(runs[:-1]) if len(runs) > 1 else 0
         conf, weight = 0, 0
         if cur_len > max_prev and cur_len >= 5:
@@ -656,13 +658,13 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _follow_dao(cls, valid):
-        if len(valid) < 14:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, _, _ = cls._detect_cau_type(r)
         if cau != 'dao_1_1':
             return None, 0, 0
-        recent = r[-14:]
+        recent = r[-min(14, len(r)):]
         flips = sum(1 for i in range(1, len(recent)) if recent[i] != recent[i - 1])
         ratio = flips / (len(recent) - 1)
         nxt = 'Xỉu' if r[-1] == 'Tài' else 'Tài'
@@ -672,7 +674,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _follow_22(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
@@ -688,7 +690,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _follow_33(cls, valid):
-        if len(valid) < 24:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
@@ -704,7 +706,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _cau_1_2(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
@@ -720,7 +722,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _cau_3_2(cls, valid):
-        if len(valid) < 24:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
@@ -736,7 +738,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _cau_nghieng(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, _, p_tai = cls._detect_cau_type(r)
@@ -750,13 +752,13 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _cau_bac_thang(cls, valid):
-        if len(valid) < 24:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
         if cau != 'bac_thang':
             return None, 0, 0
-        runs = _run_lengths(r[-25:])
+        runs = _run_lengths(r[-min(25, len(r)):])
         tail = runs[-4:]
         cur_val = r[-1]
         opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
@@ -770,13 +772,13 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _cau_ziczac(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 12:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
         if cau != 'ziczac':
             return None, 0, 0
-        runs = _run_lengths(r[-20:])
+        runs = _run_lengths(r[-min(20, len(r)):])
         if len(runs) < 5:
             return None, 0, 0
         tail5 = runs[-5:]
@@ -791,7 +793,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _cau_momentum(cls, valid):
-        if len(valid) < 15:
+        if len(valid) < 8:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
@@ -800,20 +802,20 @@ class MultiStrategyPredictor:
         if cau == 'dao_1_1':
             return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 62, 1.20
         if cau == 'nghieng':
-            p_tai = _tai_ratio(r, 20)
+            p_tai = _tai_ratio(r, min(20, len(r)))
             return ('Tài' if p_tai >= 0.5 else 'Xỉu'), 60, 1.05
         return None, 0, 0
 
     @classmethod
     def _reversal_signal(cls, valid):
-        if len(valid) < 25:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
         if cau not in ('bet_mid', 'bet_long'):
             return None, 0, 0
         cur_val = r[-1]
-        runs = _run_lengths(r[-40:])
+        runs = _run_lengths(r[-min(40, len(r)):])
         max_prev = max(runs[:-1]) if len(runs) > 1 else 0
         if cur_len >= max_prev and max_prev >= 3:
             opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
@@ -823,17 +825,17 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _meta_learner(cls, valid):
-        if len(valid) < 40 or not cls._STRATEGY_TRACK:
+        if len(valid) < 20 or not cls._STRATEGY_TRACK:
             return None, 0, 0
         scored = []
         for name, tr in cls._STRATEGY_TRACK.items():
             if name.startswith('__'):
                 continue
             n = tr['hit'] + tr['miss']
-            if n < 10:
+            if n < 5:
                 continue
             acc = tr['hit'] / n
-            if acc >= 0.62:
+            if acc >= 0.60:
                 scored.append((acc * n ** 0.5, name, acc))
         if not scored:
             return None, 0, 0
@@ -865,7 +867,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _anti_streak(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cur_len, cur_val = cls._tail_run(r)
@@ -884,16 +886,16 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _contrarian(cls, valid):
-        if len(valid) < 30:
+        if len(valid) < 15:
             return None, 0, 0
-        if not cls._RECENT_OUTCOMES or len(cls._RECENT_OUTCOMES) < 5:
+        if not cls._RECENT_OUTCOMES or len(cls._RECENT_OUTCOMES) < 3:
             return None, 0, 0
         recent = list(cls._RECENT_OUTCOMES)[-5:]
         wrong = sum(1 for x in recent if x is False)
         if wrong < 3:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p10 = _tai_ratio(r, 10)
+        p10 = _tai_ratio(r, min(10, len(r)))
         if p10 >= 0.55:
             return 'Xỉu', 60, 1.10
         if p10 <= 0.45:
@@ -902,10 +904,10 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _pivot_signal(cls, valid):
-        if len(valid) < 25:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p_before = _tai_ratio(r[:-8], 10) if len(r) >= 18 else None
+        p_before = _tai_ratio(r[:-8], min(10, len(r[:-8]))) if len(r) >= 15 else None
         p_after = _tai_ratio(r[-8:], 8)
         if p_before is None:
             return None, 0, 0
@@ -918,11 +920,12 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _microtrend(cls, valid):
-        if len(valid) < 8:
+        if len(valid) < 6:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        seg = r[-6:]
-        p = sum(1 for x in seg if x == 'Tài') / 6
+        n = min(6, len(r))
+        seg = r[-n:]
+        p = sum(1 for x in seg if x == 'Tài') / n
         if p >= 0.83:
             return 'Tài', 62, 1.15
         if p <= 0.17:
@@ -931,13 +934,15 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _change_point(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        a = r[-20:-10]
-        b = r[-10:]
-        pa = sum(1 for x in a if x == 'Tài') / 10
-        pb = sum(1 for x in b if x == 'Tài') / 10
+        a = r[-min(20, len(r)):-10] if len(r) >= 20 else r[:-8]
+        b = r[-10:] if len(r) >= 10 else r[-5:]
+        if not a or not b:
+            return None, 0, 0
+        pa = sum(1 for x in a if x == 'Tài') / len(a)
+        pb = sum(1 for x in b if x == 'Tài') / len(b)
         diff = pb - pa
         if abs(diff) >= 0.40:
             if diff > 0:
@@ -948,12 +953,12 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _safe_mode(cls, valid):
-        if len(valid) < 30:
+        if len(valid) < 20:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p8 = _tai_ratio(r, 8)
-        p16 = _tai_ratio(r, 16)
-        p30 = _tai_ratio(r, 30)
+        p8 = _tai_ratio(r, min(8, len(r)))
+        p16 = _tai_ratio(r, min(16, len(r)))
+        p30 = _tai_ratio(r, min(30, len(r)))
         if p8 >= 0.65 and p16 >= 0.60 and p30 >= 0.55:
             return 'Tài', min(60 + int(p8 * 20), 76), 1.15
         if p8 <= 0.35 and p16 <= 0.40 and p30 <= 0.45:
@@ -962,14 +967,14 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _win_streak_follow(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         if not cls._RECENT_OUTCOMES or len(cls._RECENT_OUTCOMES) < 3:
             return None, 0, 0
         recent = list(cls._RECENT_OUTCOMES)[-3:]
         if all(x is True for x in recent):
             r = [v['result'] for v in valid]
-            p5 = _tai_ratio(r, 5)
+            p5 = _tai_ratio(r, min(5, len(r)))
             if p5 >= 0.60:
                 return 'Tài', 62, 1.10
             if p5 <= 0.40:
@@ -978,14 +983,14 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _variance_reduction(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        seg = r[-15:]
+        seg = r[-min(15, len(r)):]
         flips = sum(1 for i in range(1, len(seg)) if seg[i] != seg[i - 1])
-        vol = flips / 14
+        vol = flips / max(len(seg) - 1, 1)
         if vol < 0.30:
-            p10 = _tai_ratio(r, 10)
+            p10 = _tai_ratio(r, min(10, len(r)))
             if p10 >= 0.60:
                 return 'Tài', 60, 1.05
             if p10 <= 0.40:
@@ -994,7 +999,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _consensus_strong(cls, valid):
-        if len(valid) < 25:
+        if len(valid) < 15:
             return None, 0, 0
         sigs = [
             cls._macro_trend(valid),
@@ -1010,7 +1015,7 @@ class MultiStrategyPredictor:
             if p:
                 votes[p] += c * w
                 cnt += 1
-        if cnt < 4:
+        if cnt < 3:
             return None, 0, 0
         total = votes['Tài'] + votes['Xỉu']
         if total == 0:
@@ -1023,14 +1028,14 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _adaptive_invert(cls, valid):
-        if len(valid) < 25 or not cls._STRATEGY_TRACK:
+        if len(valid) < 15 or not cls._STRATEGY_TRACK:
             return None, 0, 0
         bad_count, good_count = 0, 0
         for name, tr in cls._STRATEGY_TRACK.items():
             if name.startswith('__'):
                 continue
             n = tr['hit'] + tr['miss']
-            if n < 8:
+            if n < 5:
                 continue
             acc = tr['hit'] / n
             if acc < 0.42:
@@ -1040,8 +1045,8 @@ class MultiStrategyPredictor:
         if bad_count < 5 or bad_count <= good_count:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p10 = _tai_ratio(r, 10)
-        p20 = _tai_ratio(r, 20)
+        p10 = _tai_ratio(r, min(10, len(r)))
+        p20 = _tai_ratio(r, min(20, len(r)))
         if p10 >= p20:
             return 'Xỉu', 60, 1.15
         return 'Tài', 60, 1.15
@@ -1072,15 +1077,15 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _history_match(cls, valid):
-        if len(valid) < 40:
+        if len(valid) < 20:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        cur = r[-8:]
+        cur = r[-min(8, len(r) - 1):]
         matches = []
-        for i in range(len(r) - 12):
-            if r[i:i + 8] == cur and i + 8 < len(r) - 1:
-                matches.append(r[i + 8])
-        if len(matches) < 3:
+        for i in range(len(r) - len(cur) - 1):
+            if r[i:i + len(cur)] == cur and i + len(cur) < len(r) - 1:
+                matches.append(r[i + len(cur)])
+        if len(matches) < 2:
             return None, 0, 0
         c = Counter(matches)
         top, cnt = c.most_common(1)[0]
@@ -1092,7 +1097,7 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _markov_order3(valid):
-        if len(valid) < 25:
+        if len(valid) < 15:
             return None, 0, 0
         trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
         for i in range(len(valid) - 3):
@@ -1112,7 +1117,7 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _markov_order2(valid, window=None):
-        if len(valid) < 15:
+        if len(valid) < 8:
             return None, 0, 0
         data = valid[-window:] if window and len(valid) > window else valid
         trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
@@ -1122,7 +1127,7 @@ class MultiStrategyPredictor:
         key = (data[-2]['result'], data[-1]['result'])
         counts = trans[key]
         total = counts['Tài'] + counts['Xỉu']
-        if total < 3:
+        if total < 2:
             return None, 0, 0
         p_tai = (counts['Tài'] + 1) / (total + 2)
         if p_tai > 0.58:
@@ -1133,7 +1138,7 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _markov_order1(valid, window=None):
-        if len(valid) < 8:
+        if len(valid) < 5:
             return None, 0, 0
         data = valid[-window:] if window and len(valid) > window else valid
         trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
@@ -1141,7 +1146,7 @@ class MultiStrategyPredictor:
             trans[data[i]['result']][data[i + 1]['result']] += 1
         counts = trans[data[-1]['result']]
         total = counts['Tài'] + counts['Xỉu']
-        if total < 4:
+        if total < 2:
             return None, 0, 0
         p_tai = (counts['Tài'] + 1) / (total + 2)
         if p_tai > 0.56:
@@ -1171,37 +1176,38 @@ class MultiStrategyPredictor:
                 if run >= 4:
                     breaks += 1
                 run = 1
-        if breaks < 2:
+        if breaks < 1:
             return None, 0, 0
         p_break = breaks / (breaks + continues + 1)
-        if p_break >= 0.55:
+        if p_break >= 0.50:
             conf = min(56 + int(p_break * 20) + (streak - 4) * 2, 74)
             return opp, conf, 1.1
         return None, 0, 0
 
     @staticmethod
     def _exhaustion(valid):
-        if len(valid) < 10:
+        if len(valid) < 7:
             return None, 0, 0
         r = [v['result'] for v in valid]
         streak, last = MultiStrategyPredictor._tail_run(r)
         cau, _, _ = MultiStrategyPredictor._detect_cau_type(r)
         if cau in ('bet_short', 'bet_mid', 'bet_long'):
             return None, 0, 0
-        if streak < 7:
+        if streak < 5:
             return None, 0, 0
         opp = 'Xỉu' if last == 'Tài' else 'Tài'
-        base = 60 + (streak - 7) * 3
+        base = 60 + (streak - 5) * 3
         conf = max(55, min(int(base), 80))
-        weight = 1.1 + (streak - 7) * 0.08
+        weight = 1.1 + (streak - 5) * 0.08
         return opp, conf, min(weight, 1.5)
 
     @staticmethod
     def _dominance_flip(valid):
-        if len(valid) < 20:
+        if len(valid) < 15:
             return None, 0, 0
-        r = [v['result'] for v in valid[-20:]]
-        t = sum(1 for x in r if x == 'Tài') / 20
+        n = min(20, len(valid))
+        r = [v['result'] for v in valid[-n:]]
+        t = sum(1 for x in r if x == 'Tài') / n
         if t >= 0.85:
             return 'Xỉu', max(min(int((t - 0.75) * 200), 75), 58), 0.90
         if t <= 0.15:
@@ -1210,7 +1216,7 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _follow_trend(valid):
-        if len(valid) < 8:
+        if len(valid) < 6:
             return None, 0, 0
         r = [v['result'] for v in valid]
         streak, last = MultiStrategyPredictor._tail_run(r)
@@ -1225,11 +1231,11 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _invert_cau(valid):
-        if len(valid) < 12:
+        if len(valid) < 8:
             return None, 0, 0
-        r = [v['result'] for v in valid[-16:]]
+        r = [v['result'] for v in valid[-min(16, len(valid)):]]
         alt = sum(1 for i in range(1, len(r)) if r[i] != r[i - 1])
-        alt_ratio = alt / (len(r) - 1)
+        alt_ratio = alt / (len(r) - 1) if len(r) > 1 else 0
         if alt_ratio >= 0.65:
             nxt = 'Xỉu' if r[-1] == 'Tài' else 'Tài'
             return nxt, min(56 + int(alt_ratio * 30), 82), 1.30
@@ -1237,12 +1243,12 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _trend(valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p10 = _tai_ratio(r, 10)
-        p20 = _tai_ratio(r, 20)
-        p40 = _tai_ratio(r, 40) if len(r) >= 40 else p20
+        p10 = _tai_ratio(r, min(10, len(r)))
+        p20 = _tai_ratio(r, min(20, len(r)))
+        p40 = _tai_ratio(r, min(40, len(r)))
         if p10 > 0.55 and p20 > 0.52 and p10 >= p20 - 0.05 and p10 - p40 >= 0.05:
             return 'Tài', min(int((p10 - 0.5) * 200 + 52), 78), 1.20
         if p10 < 0.45 and p20 < 0.48 and p10 <= p20 + 0.05 and p40 - p10 >= 0.05:
@@ -1251,12 +1257,16 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _bias_run(valid):
-        if len(valid) < 24:
+        if len(valid) < 15:
             return None, 0, 0
-        r = [v['result'] for v in valid[-24:]]
-        first, second = r[:12], r[12:]
-        r_first = sum(1 for x in first if x == 'Tài') / 12
-        r_second = sum(1 for x in second if x == 'Tài') / 12
+        n = min(24, len(valid))
+        r = [v['result'] for v in valid[-n:]]
+        half = n // 2
+        if half < 3:
+            return None, 0, 0
+        first, second = r[:half], r[half:]
+        r_first = sum(1 for x in first if x == 'Tài') / half
+        r_second = sum(1 for x in second if x == 'Tài') / half
         if r_second - r_first >= 0.25 and r_second >= 0.60:
             return 'Tài', min(int((r_second - 0.5) * 180 + 55), 80), 1.15
         if r_first - r_second >= 0.25 and (1 - r_second) >= 0.60:
@@ -1265,19 +1275,19 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _pattern_match(valid, window=None):
-        if len(valid) < 15:
+        if len(valid) < 8:
             return None, 0, 0
         results = [v['result'] for v in valid]
         best_hit, best_conf, best_len = None, 0, 0
-        for plen in (7, 6, 5, 4, 3):
-            if len(results) < plen + 5:
+        for plen in (7, 6, 5, 4, 3, 2):
+            if len(results) < plen + 3:
                 continue
             pattern = tuple(results[-plen:])
             matches = []
             for i in range(len(results) - plen):
                 if tuple(results[i:i + plen]) == pattern and i + plen < len(results):
                     matches.append(results[i + plen])
-            if len(matches) >= 3:
+            if len(matches) >= 2:
                 c = Counter(matches)
                 top, count = c.most_common(1)[0]
                 conf = int(count / len(matches) * 100)
@@ -1292,7 +1302,7 @@ class MultiStrategyPredictor:
     @staticmethod
     def _weighted_freq(valid, window=30):
         recent = valid[-window:]
-        if len(recent) < 8:
+        if len(recent) < 5:
             return None, 0, 0
         tai, xiu = 0.0, 0.0
         for i, v in enumerate(recent):
@@ -1327,7 +1337,7 @@ class MultiStrategyPredictor:
     @staticmethod
     def _alternation(valid, window=12):
         recent = [v['result'] for v in valid[-window:]]
-        if len(recent) < 6:
+        if len(recent) < 5:
             return None, 0, 0
         alt = sum(1 for i in range(1, len(recent)) if recent[i] != recent[i - 1])
         alt_ratio = alt / (len(recent) - 1)
@@ -1339,7 +1349,7 @@ class MultiStrategyPredictor:
     @staticmethod
     def _momentum(valid, window=10):
         recent = [v['result'] for v in valid[-window:]]
-        if len(recent) < 6:
+        if len(recent) < 5:
             return None, 0, 0
         tai = sum(1 for r in recent if r == 'Tài')
         p = tai / len(recent)
@@ -1351,10 +1361,10 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _recency_streak(valid):
-        if len(valid) < 10:
+        if len(valid) < 5:
             return None, 0, 0
         weights = {'Tài': 0.0, 'Xỉu': 0.0}
-        n = 10
+        n = min(10, len(valid))
         for i in range(len(valid) - n, len(valid)):
             w = ((i - (len(valid) - n) + 1) / n) ** 2
             weights[valid[i]['result']] += w
@@ -1370,14 +1380,14 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _ngram_signal(cls, r, n):
-        if len(r) < n + 6:
+        if len(r) < n + 3:
             return None, 0, 0
         pattern = tuple(r[-n:])
         matches = []
         for i in range(len(r) - n):
             if tuple(r[i:i + n]) == pattern and i + n < len(r):
                 matches.append(r[i + n])
-        if len(matches) < 3:
+        if len(matches) < 2:
             return None, 0, 0
         c = Counter(matches)
         top, count = c.most_common(1)[0]
@@ -1391,9 +1401,9 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _mirror_pattern(cls, r):
-        if len(r) < 16:
+        if len(r) < 12:
             return None, 0, 0
-        n = 6
+        n = 6 if len(r) >= 8 else max(3, len(r) - 1)
         recent = r[-n:]
         mirrored = tuple('Xỉu' if x == 'Tài' else 'Tài' for x in reversed(recent))
         matches = []
@@ -1412,13 +1422,16 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _reverse_trend(cls, valid):
-        if len(valid) < 24:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        first = r[-20:-10]
-        second = r[-10:]
-        t_first = sum(1 for x in first if x == 'Tài') / 10
-        t_second = sum(1 for x in second if x == 'Tài') / 10
+        n = min(10, len(r) // 2)
+        if n < 3:
+            return None, 0, 0
+        first = r[-2 * n:-n]
+        second = r[-n:]
+        t_first = sum(1 for x in first if x == 'Tài') / n
+        t_second = sum(1 for x in second if x == 'Tài') / n
         if t_first >= 0.7 and t_second <= 0.3:
             return 'Xỉu', 62, 1.15
         if t_first <= 0.3 and t_second >= 0.7:
@@ -1427,7 +1440,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _palindrome_check(cls, r):
-        if len(r) < 8:
+        if len(r) < 6:
             return None, 0, 0
         for plen in (5, 4, 3):
             if len(r) < plen * 2:
@@ -1443,9 +1456,9 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _bayes_recent(cls, valid, prior_strength=4.0):
-        if len(valid) < 10:
+        if len(valid) < 5:
             return None, 0, 0
-        recent = [v['result'] for v in valid[-25:]]
+        recent = [v['result'] for v in valid[-min(25, len(valid)):]]
         tai = sum(1 for x in recent if x == 'Tài')
         n = len(recent)
         a = tai + prior_strength / 2
@@ -1459,9 +1472,9 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _chi_square(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
-        recent = [v['result'] for v in valid[-30:]]
+        recent = [v['result'] for v in valid[-min(30, len(valid)):]]
         n = len(recent)
         tai = sum(1 for x in recent if x == 'Tài')
         xiu = n - tai
@@ -1476,16 +1489,16 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _runs_prediction(cls, valid):
-        if len(valid) < 15:
+        if len(valid) < 8:
             return None, 0, 0
         r = [v['result'] for v in valid]
         runs = _run_lengths(r)
-        if len(runs) < 5:
+        if len(runs) < 3:
             return None, 0, 0
         cur_len, cur_val = cls._tail_run(r)
         run_dist = Counter(runs[:-1])
         total_runs = sum(run_dist.values())
-        if total_runs < 5:
+        if total_runs < 3:
             return None, 0, 0
         end_count = sum(c for l, c in run_dist.items() if l <= cur_len)
         p_end = end_count / total_runs
@@ -1498,7 +1511,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _transition_matrix(cls, valid, window=40):
-        if len(valid) < 15:
+        if len(valid) < 8:
             return None, 0, 0
         data = valid[-window:] if len(valid) > window else valid
         r = [v['result'] for v in data]
@@ -1509,7 +1522,7 @@ class MultiStrategyPredictor:
         key = (r[-2], r[-1])
         counts = trans[key]
         total = counts['Tài'] + counts['Xỉu']
-        if total < 4:
+        if total < 2:
             return None, 0, 0
         p_tai = (counts['Tài'] + 1) / (total + 2)
         if p_tai >= 0.62:
@@ -1520,7 +1533,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _signal_consensus(cls, valid):
-        if len(valid) < 10:
+        if len(valid) < 8:
             return None, 0, 0
         key_signals = [
             cls._markov_order2(valid),
@@ -1535,7 +1548,7 @@ class MultiStrategyPredictor:
             if p:
                 votes[p] += c * w
                 count += 1
-        if count < 3:
+        if count < 2:
             return None, 0, 0
         if votes['Tài'] > votes['Xỉu'] * 1.3:
             return 'Tài', min(int(votes['Tài'] / (votes['Tài'] + votes['Xỉu']) * 100), 82), 1.15
@@ -1545,11 +1558,11 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _entropy_adaptive(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
-        r = [v['result'] for v in valid[-20:]]
+        r = [v['result'] for v in valid[-min(20, len(valid)):]]
         entropy = _entropy(r)
-        p_tai = cls._seg_ratio(r, 20)
+        p_tai = cls._seg_ratio(r, len(r))
         if entropy < 0.7:
             if p_tai >= 0.6:
                 return 'Tài', 62, 1.05
@@ -1561,7 +1574,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _streak_maturity(cls, valid):
-        if len(valid) < 12:
+        if len(valid) < 8:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cur_len, cur_val = cls._tail_run(r)
@@ -1582,7 +1595,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _harmonic_pattern(cls, r):
-        if len(r) < 12:
+        if len(r) < 8:
             return None, 0, 0
         trans = defaultdict(lambda: {'Tài': 0.0, 'Xỉu': 0.0})
         for i in range(len(r) - 2):
@@ -1592,7 +1605,7 @@ class MultiStrategyPredictor:
         key = (r[-2], r[-1])
         counts = trans[key]
         total = counts['Tài'] + counts['Xỉu']
-        if total < 3:
+        if total < 2:
             return None, 0, 0
         p_tai = counts['Tài'] / total
         if p_tai >= 0.65:
@@ -1603,12 +1616,12 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _wavelet_trend(cls, valid):
-        if len(valid) < 30:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
-        p_short = cls._seg_ratio(r, 5)
-        p_medium = cls._seg_ratio(r, 15)
-        p_long = cls._seg_ratio(r, 30)
+        p_short = cls._seg_ratio(r, min(5, len(r)))
+        p_medium = cls._seg_ratio(r, min(15, len(r)))
+        p_long = cls._seg_ratio(r, min(30, len(r)))
         if p_short > 0.65 and p_medium > 0.58 and p_long > 0.52:
             conf = min(60 + int((p_short - 0.6) * 100), 80)
             return 'Tài', conf, 1.15
@@ -1619,17 +1632,17 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _seasonal_cycle(cls, r):
-        if len(r) < 40:
+        if len(r) < 20:
             return None, 0, 0
-        for period in (12, 10, 14, 15, 11, 13):
-            if len(r) < period * 3:
+        for period in (12, 10, 14, 15, 11, 13, 8, 6):
+            if len(r) < period * 2:
                 continue
             matches = []
             target_pos = len(r) % period
             for i in range(len(r) - period):
                 if i % period == target_pos and i < len(r) - 1:
                     matches.append(r[i])
-            if len(matches) >= 3:
+            if len(matches) >= 2:
                 c = Counter(matches)
                 top, cnt = c.most_common(1)[0]
                 ratio = cnt / len(matches)
@@ -1640,7 +1653,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _markov_weighted(cls, valid):
-        if len(valid) < 25:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
         trans = defaultdict(lambda: {'Tài': 0.0, 'Xỉu': 0.0})
@@ -1651,7 +1664,7 @@ class MultiStrategyPredictor:
         key = (r[-2], r[-1])
         counts = trans[key]
         total = counts['Tài'] + counts['Xỉu']
-        if total < 2:
+        if total < 1:
             return None, 0, 0
         p_tai = (counts['Tài'] + 0.5) / (total + 1.0)
         if p_tai >= 0.62:
@@ -1662,7 +1675,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _ensemble_boost(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         stable_signals = [
             cls._markov_order2(valid),
@@ -1688,7 +1701,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _decision_tree(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, cur_len, _ = cls._detect_cau_type(r)
@@ -1709,13 +1722,13 @@ class MultiStrategyPredictor:
                 opp = 'Xỉu' if tail_val == 'Tài' else 'Tài'
                 return opp, 64, 1.30
         if cau == 'nghieng':
-            p20 = _tai_ratio(r, 20)
+            p20 = _tai_ratio(r, min(20, len(r)))
             if p20 >= 0.68:
                 return 'Tài', 62, 1.15
             if p20 <= 0.32:
                 return 'Xỉu', 62, 1.15
-        p10 = _tai_ratio(r, 10)
-        p20 = _tai_ratio(r, 20)
+        p10 = _tai_ratio(r, min(10, len(r)))
+        p20 = _tai_ratio(r, min(20, len(r)))
         if p10 >= 0.62 and p20 >= 0.58:
             return 'Tài', 60, 1.10
         if p10 <= 0.38 and p20 <= 0.42:
@@ -1724,7 +1737,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _auto_cycle_signal(cls, r):
-        if len(r) < 12:
+        if len(r) < 8:
             return None, 0, 0
         cyc = cls._detect_cycle(r, max_period=6, min_repeats=2)
         if not cyc:
@@ -1733,7 +1746,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _detect_cycle(cls, r, max_period=6, min_repeats=2):
-        if len(r) < 8:
+        if len(r) < 6:
             return None
         best = None
         for period in range(2, min(max_period * 2, len(r) // min_repeats) + 1):
@@ -1755,7 +1768,7 @@ class MultiStrategyPredictor:
                     if r[i] == pattern[i % period]:
                         hits += 1
                     total += 1
-                if total >= 6 and hits / total >= 0.65:
+                if total >= 4 and hits / total >= 0.65:
                     score = hits / total
                     if best is None or score > best[0]:
                         best = (score, period, phase, pattern)
@@ -1767,10 +1780,10 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _pattern_similarity(cls, r):
-        if len(r) < 15:
+        if len(r) < 10:
             return None, 0, 0
         for wlen in (8, 7, 6, 5, 4):
-            if len(r) < wlen + 6:
+            if len(r) < wlen + 3:
                 continue
             cur = r[-wlen:]
             matches = []
@@ -1779,7 +1792,7 @@ class MultiStrategyPredictor:
                 sim = sum(1 for a, b in zip(cur, window) if a == b) / wlen
                 if sim >= 0.85 and i + wlen < len(r):
                     matches.append((sim, r[i + wlen]))
-            if len(matches) >= 3:
+            if len(matches) >= 2:
                 weighted = {'Tài': 0.0, 'Xỉu': 0.0}
                 for sim, nv in matches:
                     weighted[nv] += sim
@@ -1795,7 +1808,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _regime_signal(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, _, _ = cls._detect_cau_type(r)
@@ -1804,7 +1817,7 @@ class MultiStrategyPredictor:
         if cau == 'dao_1_1':
             return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 62, 1.2
         if cau == 'nghieng':
-            p20 = _tai_ratio(r, 20)
+            p20 = _tai_ratio(r, min(20, len(r)))
             if p20 >= 0.68:
                 return 'Tài', 62, 1.10
             if p20 <= 0.32:
@@ -1813,31 +1826,31 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _run_break(cls, valid):
-        if len(valid) < 8:
+        if len(valid) < 6:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, _, _ = cls._detect_cau_type(r)
         if cau in ('bet_short', 'bet_mid', 'bet_long'):
             return None, 0, 0
         cur_len, cur_val = cls._tail_run(r)
-        if cur_len < 5 or cur_len > 10:
+        if cur_len < 4 or cur_len > 10:
             return None, 0, 0
         runs = _run_lengths(r)
         breaks, totals = 0, 0
         for rlen in runs[:-1]:
-            if rlen >= 5:
+            if rlen >= 4:
                 totals += 1
                 breaks += 1
         p = breaks / totals if totals > 0 else 0.5
         if p >= 0.55:
             next_val = 'Xỉu' if cur_val == 'Tài' else 'Tài'
-            conf = min(56 + int(p * 20) + (cur_len - 5) * 2, 78)
+            conf = min(56 + int(p * 20) + (cur_len - 4) * 2, 78)
             return next_val, conf, 1.15
         return None, 0, 0
 
     @classmethod
     def _rsi_signal(cls, valid, period=14):
-        if len(valid) < period + 5:
+        if len(valid) < period + 2:
             return None, 0, 0
         r = [v['result'] for v in valid]
         changes = []
@@ -1863,9 +1876,9 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _zscore_extreme(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
-        r = [v['result'] for v in valid[-20:]]
+        r = [v['result'] for v in valid[-min(20, len(valid)):]]
         vals = [1 if x == 'Tài' else 0 for x in r]
         mean = sum(vals) / len(vals)
         variance = sum((v - mean) ** 2 for v in vals) / len(vals)
@@ -1881,9 +1894,9 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _kelly_optimal(cls, valid):
-        if len(valid) < 15:
+        if len(valid) < 10:
             return None, 0, 0
-        recent = [v['result'] for v in valid[-15:]]
+        recent = [v['result'] for v in valid[-min(15, len(valid)):]]
         tai = sum(1 for x in recent if x == 'Tài')
         p = tai / len(recent)
         kelly = 2 * p - 1
@@ -1895,12 +1908,14 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _multi_window(cls, valid):
-        if len(valid) < 25:
+        if len(valid) < 15:
             return None, 0, 0
         r = [v['result'] for v in valid]
         windows = [5, 10, 15, 20]
         votes = []
         for w in windows:
+            if len(r) < w:
+                continue
             seg = r[-w:]
             t = sum(1 for x in seg if x == 'Tài') / w
             if t >= 0.60:
@@ -1917,7 +1932,7 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _fibonacci_break(cls, valid):
-        if len(valid) < 15:
+        if len(valid) < 8:
             return None, 0, 0
         r = [v['result'] for v in valid]
         cau, _, _ = cls._detect_cau_type(r)
@@ -1934,9 +1949,9 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _cusum(cls, valid):
-        if len(valid) < 15:
+        if len(valid) < 10:
             return None, 0, 0
-        r = [v['result'] for v in valid[-20:]]
+        r = [v['result'] for v in valid[-min(20, len(valid)):]]
         vals = [1 if x == 'Tài' else -1 for x in r]
         mean = sum(vals) / len(vals)
         s_pos, s_neg = 0.0, 0.0
@@ -1952,15 +1967,15 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _time_pattern(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 12:
             return None, 0, 0
         r = [v['result'] for v in valid]
         for period in (5, 6, 7, 8, 9, 10):
-            if len(r) < period * 3:
+            if len(r) < period * 2:
                 continue
             target_pos = (len(r) % period)
             matching_pos = [r[i] for i in range(len(r)) if i % period == target_pos and i < len(r) - 1]
-            if len(matching_pos) >= 3:
+            if len(matching_pos) >= 2:
                 c = Counter(matching_pos)
                 top, cnt = c.most_common(1)[0]
                 ratio = cnt / len(matching_pos)
@@ -1971,11 +1986,11 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _volatility(cls, valid):
-        if len(valid) < 20:
+        if len(valid) < 10:
             return None, 0, 0
-        r = [v['result'] for v in valid[-20:]]
+        r = [v['result'] for v in valid[-min(20, len(valid)):]]
         flips = sum(1 for i in range(1, len(r)) if r[i] != r[i - 1])
-        flip_ratio = flips / (len(r) - 1)
+        flip_ratio = flips / max(len(r) - 1, 1)
         if flip_ratio >= 0.85:
             return ('Xỉu' if r[-1] == 'Tài' else 'Tài'), 64, 1.15
         return None, 0, 0
@@ -1995,12 +2010,12 @@ class MultiStrategyPredictor:
 
     @classmethod
     def _pattern_memory_signal(cls, valid):
-        if len(PATTERN_MEMORY) < 5 or len(valid) < 15:
+        if len(PATTERN_MEMORY) < 3 or len(valid) < 8:
             return None, 0, 0
         r = [v['result'] for v in valid]
         best = None
         for entry in list(PATTERN_MEMORY)[-80:]:
-            if entry.get('hits', 0) < 5:
+            if entry.get('hits', 0) < 3:
                 continue
             if entry.get('ratio', 0) < 0.7:
                 continue
@@ -2012,7 +2027,7 @@ class MultiStrategyPredictor:
                 score = entry['hits'] * entry['ratio']
                 if best is None or score > best[0]:
                     best = (score, entry['next'])
-        if best and best[0] >= 3.5:
+        if best and best[0] >= 3.0:
             conf = min(58 + int(best[0] * 3), 80)
             return best[1], conf, 1.15
         return None, 0, 0
@@ -2023,7 +2038,7 @@ class MultiStrategyPredictor:
         if not tr:
             return base_weight
         n = tr['hit'] + tr['miss']
-        if n < 8:
+        if n < 5:
             return base_weight
         acc = tr['hit'] / n
         if acc < 0.45:
@@ -2049,7 +2064,7 @@ class MultiStrategyPredictor:
         if cls._STRATEGY_TRACK.get('__len__', {}).get('last_len') == cur_len:
             return
         cls._STRATEGY_TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0, 'last_len': 0})
-        start = max(15, len(valid) - 60)
+        start = max(5, len(valid) - 60)
         for i in range(start, len(valid) - 1):
             history = valid[:i]
             actual = valid[i]['result']
@@ -2564,7 +2579,7 @@ class MultiStrategyPredictor:
     @classmethod
     def _update_pattern_memory(cls, valid):
         global PATTERN_MEMORY
-        if len(valid) < 10:
+        if len(valid) < 8:
             return
         r = [v['result'] for v in valid]
         for plen in (3, 4, 5):
@@ -2579,7 +2594,7 @@ class MultiStrategyPredictor:
                     total += 1
                     if r[i + plen] == nxt:
                         hits += 1
-            if total >= 3 and hits / total >= 0.65:
+            if total >= 2 and hits / total >= 0.65:
                 PATTERN_MEMORY.append({
                     'pattern': pat,
                     'next': nxt,
@@ -2595,7 +2610,7 @@ def fetch_sessions():
     }
     for attempt in range(3):
         try:
-            r = requests.get(API_URL_MD5, timeout=6, headers=headers)
+            r = requests.get(API_URL_MD5, timeout=8, headers=headers)
             if r.status_code == 200:
                 data = r.json()
                 if 'list' in data and data['list']:
@@ -2931,15 +2946,13 @@ def history():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        if len(valid) < MIN_HISTORY:
+        # Chỉ loading khi KHÔNG có phiên nào
+        if not valid:
             return jsonify({
                 'ready': False,
                 'message': 'Đang tải dữ liệu...',
                 'ai_stats': _log_stats(),
             })
-        if not valid:
-            return jsonify({'ready': False, 'message': 'Chưa có dữ liệu',
-                            'ai_stats': _log_stats(), 'prediction': None})
         next_phien = valid[-1]['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
@@ -2986,7 +2999,7 @@ def lc79md5():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
-        if len(valid) < MIN_HISTORY:
+        if not valid:
             return jsonify({
                 'Id': 'LE MINH V11 MD5',
                 'Phien': None,
@@ -3030,7 +3043,7 @@ def lc79():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        if len(valid) < MIN_HISTORY:
+        if not valid:
             return jsonify({
                 'Id': '@cskhleminh',
                 'Phien': None,
@@ -3081,7 +3094,7 @@ def predict():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        if len(valid) < MIN_HISTORY:
+        if not valid:
             return jsonify({
                 'ready': False,
                 'message': 'Đang tải dữ liệu...',
@@ -3125,7 +3138,7 @@ def stats_only():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        if len(valid) < MIN_HISTORY:
+        if not valid:
             return jsonify({'ready': False, 'message': 'Đang tải dữ liệu...'})
         last = valid[-1] if valid else None
         return jsonify({
@@ -3148,7 +3161,7 @@ def algo_info():
         valid, success = _sync_history()
         if not success:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        if len(valid) < MIN_HISTORY:
+        if not valid:
             return jsonify({'ready': False, 'message': 'Đang tải dữ liệu...'})
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
         results = [v['result'] for v in valid]
