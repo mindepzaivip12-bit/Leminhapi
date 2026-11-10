@@ -25,14 +25,14 @@ PREDICTION_LOG = {}
 MAX_LOG_SIZE = 3000
 LOG_FILE = "prediction_log.json"
 
-# Trạng thái Làm Nét
 SHARP_FOCUS_MODE = False
 
 SIGNAL_NAMES = {
     'markov': 'Markov', 'streak': 'Bẻ chuỗi', 'pattern': 'Khớp mẫu',
     'trend': 'Xu hướng', 'cycle': 'Chu kỳ', 'entropy': 'Entropy',
     'cau11': 'Cầu 1-1', 'cau22': 'Cầu 2-2', 'cau33': 'Cầu 3-3',
-    'breakpoint': 'Điểm gãy', 'dao_cau': 'Đảo cầu', 'meta': 'Meta'
+    'breakpoint': 'Điểm gãy', 'dao_cau': 'Đảo cầu', 'meta': 'Meta',
+    'strict_pattern': 'Mẫu chuẩn xác', 'consensus': 'Đồng thuận'
 }
 
 # ========== HELPER ==========
@@ -63,7 +63,7 @@ def _opp(x):
 
 def _detect_regime(seq):
     if len(seq) < 12: return 'random', 0.0
-    runs = _runs(seq[-26:])
+    runs = _runs(seq[-30:])
     if not runs: return 'random', 0.0
     L = [l for _, l in runs]; n = len(L)
     ones = sum(1 for l in L if l == 1) / n
@@ -81,11 +81,80 @@ def _detect_regime(seq):
     if tr >= 0.68 or tr <= 0.32: return 'trend_strong', abs(tr - 0.5) * 2
     return 'short_run', max(ones, twos, threes)
 
-# ========== PREDICTOR V1 (TÍCH HỢP LÀM NÉT) ==========
+
+# ========== PREDICTOR V2 (HIGH-PRECISION) ==========
 class MultiStrategyPredictor:
     _TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0})
     _RECENT = deque(maxlen=15)
     _RECOVERY = {'active': False, 'fail': 0, 'mode': None}
+
+    # --- 1. NHẬN DIỆN CẦU CHUẨN XÁC (STRICT PATTERN MATCH) ---
+    @staticmethod
+    def _sig_strict_pattern(seq):
+        if len(seq) < 20: return (None, 0, 0)
+        best = (None, 0, 0)
+        
+        # Tìm mẫu lặp lại chính xác (ít nhất 3 chu kỳ)
+        for period in range(2, 12):
+            if len(seq) < period * 3: break
+            pat = seq[-period:]
+            # Kiểm tra xem 3 chu kỳ gần nhất có khớp hoàn toàn không
+            match_count = 0
+            for k in range(1, 4):
+                start = len(seq) - period * (k + 1)
+                end = len(seq) - period * k
+                if start < 0: break
+                if seq[start:end] == pat: match_count += 1
+            
+            if match_count >= 2: # Khớp ít nhất 2 chu kỳ trước đó
+                nxt = pat[len(seq) % period]
+                conf = min(65 + match_count * 5 + period, 92)
+                weight = 1.6 + match_count * 0.2
+                if conf * weight > best[1] * best[2]:
+                    best = (nxt, conf, weight)
+                    
+        # Tìm mẫu 2-2 (Tài Tài Xỉu Xỉu) chính xác
+        if len(seq) >= 8:
+            last_8 = seq[-8:]
+            if last_8 in (['Tài','Tài','Xỉu','Xỉu']*2, ['Xỉu','Xỉu','Tài','Tài']*2):
+                nxt = 'Xỉu' if seq[-1] == 'Tài' and seq[-2] == 'Tài' else 'Tài'
+                if last_8 == ['Tài','Tài','Xỉu','Xỉu']*2:
+                     nxt = 'Tài' # Tiếp tục chu kỳ 2-2
+                else:
+                     nxt = 'Xỉu'
+                # Sửa logic cho cầu 2-2
+                if seq[-2:] == ['Tài','Tài']: nxt = 'Xỉu'
+                elif seq[-2:] == ['Xỉu','Xỉu']: nxt = 'Tài'
+                return (nxt, 88, 1.8)
+                
+        return best
+
+    # --- 2. PHÂN TÍCH CẦU GÃY (BREAK POINT ANALYTICS) ---
+    @staticmethod
+    def _sig_breakpoint(seq):
+        if len(seq) < 25: return (None, 0, 0)
+        runs = _runs(seq[-25:])
+        if len(runs) < 3: return (None, 0, 0)
+        cur_val, cur_len = runs[-1]
+        
+        # Tính tuổi thọ trung bình của cầu bệt trong 100 phiên
+        all_runs = _runs(seq[-100:])
+        streak_lens = [l for _, l in all_runs if l >= 2]
+        if not streak_lens: return (None, 0, 0)
+        avg_streak = sum(streak_lens) / len(streak_lens)
+        
+        # Nếu bệt hiện tại dài hơn trung bình 1.8 lần -> Nguy cơ gãy cực cao
+        if cur_len >= max(4, avg_streak * 1.8):
+            conf = min(65 + int((cur_len / avg_streak) * 8), 95)
+            return (_opp(cur_val), conf, 1.9) # Weight cực cao
+            
+        # Bệt giả (Fake streak): Bệt ngắn trong xu hướng dài -> Không bẻ
+        if cur_len <= 2 and len(all_runs) >= 5:
+            prev_lens = [l for _, l in all_runs[-5:-1]]
+            if sum(prev_lens) / len(prev_lens) >= 3.0:
+                return (cur_val, 70, 1.3)
+                
+        return (None, 0, 0)
 
     @staticmethod
     def _sig_dao_cau(seq):
@@ -95,12 +164,12 @@ class MultiStrategyPredictor:
         cur_val, cur_len = runs[-1]
         if len(runs) >= 6:
             last_6 = [l for _, l in runs[-6:]]
-            if all(l == 1 for l in last_6): return (_opp(cur_val), 75, 1.5)
-        if cur_len >= 5: return (_opp(cur_val), min(58 + cur_len * 4, 85), 1.45)
+            if all(l == 1 for l in last_6): return (_opp(cur_val), 80, 1.6)
+        if cur_len >= 5: return (_opp(cur_val), min(60 + cur_len * 4, 88), 1.5)
         if len(runs) >= 4:
             lens = [l for _, l in runs[-4:]]
-            if lens == [2, 2, 2, 2]: return (_opp(cur_val), 72, 1.4)
-            if lens == [3, 3, 3, 3]: return (_opp(cur_val), 72, 1.4)
+            if lens == [2, 2, 2, 2]: return (_opp(cur_val), 75, 1.4)
+            if lens == [3, 3, 3, 3]: return (_opp(cur_val), 75, 1.4)
         return (None, 0, 0)
 
     @staticmethod
@@ -110,48 +179,30 @@ class MultiStrategyPredictor:
         cur_val, cur_len = runs[-1]
         opp = _opp(cur_val)
         if regime == 'streak':
-            if cur_len <= 4: return (cur_val, min(58 + cur_len * 3, 75), 1.2)
-            if cur_len >= 6: return (opp, min(60 + (cur_len - 5) * 4, 84), 1.35)
-        if regime == 'alternation': return (opp, 66, 1.4)
-        if cur_len >= 5: return (opp, min(58 + (cur_len - 4) * 3, 78), 1.15)
+            if cur_len <= 4: return (cur_val, min(60 + cur_len * 3, 78), 1.3)
+            if cur_len >= 6: return (opp, min(62 + (cur_len - 5) * 4, 86), 1.4)
+        if regime == 'alternation': return (opp, 68, 1.4)
+        if cur_len >= 5: return (opp, min(58 + (cur_len - 4) * 3, 80), 1.2)
         return (None, 0, 0)
 
     @staticmethod
     def _sig_markov(seq):
         best = (None, 0, 0)
         for order in (4, 3, 2):
-            if len(seq) < order + 8: continue
+            if len(seq) < order + 10: continue
             trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
             for i in range(len(seq) - order):
                 trans[tuple(seq[i:i + order])][seq[i + order]] += 1
             c = trans[tuple(seq[-order:])]
             t = c['Tài'] + c['Xỉu']
-            if t < 3: continue
+            if t < 4: continue
             p = (c['Tài'] + 1) / (t + 2)
-            if p >= 0.66 or p <= 0.34:
+            if p >= 0.70 or p <= 0.30:
                 pred = 'Tài' if p >= 0.5 else 'Xỉu'
                 base = max(p, 1 - p)
-                conf = min(int(base * 100) + order * 2, 86)
-                w = 1.30 + order * 0.12
+                conf = min(int(base * 100) + order * 2, 88)
+                w = 1.35 + order * 0.12
                 if conf * w > best[1] * best[2]: best = (pred, conf, w)
-        return best
-
-    @staticmethod
-    def _sig_pattern(seq):
-        if len(seq) < 10: return (None, 0, 0)
-        best = (None, 0, 0)
-        for plen in (7, 6, 5, 4, 3):
-            if len(seq) < plen + 5: continue
-            pat = tuple(seq[-plen:])
-            matches = [seq[i + plen] for i in range(len(seq) - plen - 1) if tuple(seq[i:i + plen]) == pat]
-            if len(matches) < 3: continue
-            c = Counter(matches)
-            top, cnt = c.most_common(1)[0]
-            ratio = cnt / len(matches)
-            if ratio >= 0.68:
-                conf = min(54 + int(ratio * 28) + plen * 2, 88)
-                w = 1.20 + plen * 0.10
-                if conf * w > best[1] * best[2]: best = (top, conf, w)
         return best
 
     @staticmethod
@@ -161,34 +212,15 @@ class MultiStrategyPredictor:
         for w in (5, 8, 12, 18, 25):
             if len(seq) < w: continue
             p = _tai_ratio(seq, w)
-            if p >= 0.64: votes.append(('Tài', p))
-            elif p <= 0.36: votes.append(('Xỉu', p))
+            if p >= 0.65: votes.append(('Tài', p))
+            elif p <= 0.35: votes.append(('Xỉu', p))
         if len(votes) < 3: return (None, 0, 0)
         c = Counter(v[0] for v in votes)
         top, cnt = c.most_common(1)[0]
         if cnt >= 3:
             avg = sum(v[1] if top == 'Tài' else 1 - v[1] for v in votes if v[0] == top) / cnt
-            return (top, min(int(avg * 100) + cnt * 2, 84), 1.30)
+            return (top, min(int(avg * 100) + cnt * 2, 86), 1.35)
         return (None, 0, 0)
-
-    @staticmethod
-    def _sig_cycle(seq):
-        if len(seq) < 14: return (None, 0, 0)
-        best = None
-        for period in range(2, 10):
-            if len(seq) < period * 3: break
-            pat = seq[-period:]
-            ok = all(seq[-period * (k + 1):-period * k] == pat for k in range(3))
-            if not ok: continue
-            hits = sum(1 for i in range(period, len(seq)) if seq[i] == seq[i - period])
-            total = len(seq) - period
-            score = hits / total if total else 0
-            if score >= 0.70 and (best is None or score > best[0]):
-                best = (score, period, pat)
-        if not best: return (None, 0, 0)
-        _, period, pat = best
-        nxt = pat[len(seq) % period]
-        return (nxt, min(58 + int(best[0] * 26), 84), 1.35)
 
     @staticmethod
     def _sig_entropy(seq):
@@ -196,10 +228,10 @@ class MultiStrategyPredictor:
         seg = seq[-22:]
         h = _entropy(seg)
         p = _tai_ratio(seg, len(seg))
-        if h < 0.72:
-            if p >= 0.64: return ('Tài', 66, 1.20)
-            if p <= 0.36: return ('Xỉu', 66, 1.20)
-        if h > 0.97: return (_opp(seq[-1]), 60, 1.05)
+        if h < 0.70:
+            if p >= 0.65: return ('Tài', 70, 1.25)
+            if p <= 0.35: return ('Xỉu', 70, 1.25)
+        if h > 0.97: return (_opp(seq[-1]), 62, 1.1)
         return (None, 0, 0)
 
     @classmethod
@@ -209,11 +241,11 @@ class MultiStrategyPredictor:
         evaluated.sort(reverse=True)
         recent = evaluated[:50]
         acc = sum(1 for _, e in recent if e.get('correct')) / len(recent)
-        if acc < 0.40: return max(50, conf - 14)
+        if acc < 0.40: return max(50, conf - 15)
         if acc < 0.46: return max(50, conf - 8)
         if acc < 0.52: return max(50, conf - 3)
-        if acc > 0.70: return min(90, conf + 6) # Nâng trần lên 90%
-        if acc > 0.62: return min(88, conf + 3)
+        if acc > 0.72: return min(95, conf + 8) # Tăng trần lên 95%
+        if acc > 0.65: return min(90, conf + 4)
         return conf
 
     @classmethod
@@ -231,13 +263,13 @@ class MultiStrategyPredictor:
         else: cls._RECOVERY['active'] = False; cls._RECOVERY['mode'] = None
 
     _REGIME_BOOST = {
-        'streak': {'streak': 1.3, 'markov': 1.2, 'dao_cau': 1.4},
-        'alternation': {'cau11': 1.35, 'dao_cau': 1.4},
-        'cau22': {'cau22': 1.4, 'cycle': 1.15, 'dao_cau': 1.3},
-        'cau33': {'cau33': 1.4, 'cycle': 1.15, 'dao_cau': 1.3},
-        'trend_strong': {'trend': 1.3, 'entropy': 1.15},
-        'chaos': {'entropy': 1.25, 'dao_cau': 1.2},
-        'short_run': {'cycle': 1.15, 'pattern': 1.1},
+        'streak': {'streak': 1.4, 'markov': 1.2, 'dao_cau': 1.5, 'breakpoint': 1.5},
+        'alternation': {'cau11': 1.4, 'dao_cau': 1.5, 'strict_pattern': 1.4},
+        'cau22': {'cau22': 1.5, 'strict_pattern': 1.5, 'dao_cau': 1.3},
+        'cau33': {'cau33': 1.5, 'strict_pattern': 1.5, 'dao_cau': 1.3},
+        'trend_strong': {'trend': 1.4, 'entropy': 1.2},
+        'chaos': {'entropy': 1.3, 'dao_cau': 1.2},
+        'short_run': {'pattern': 1.2, 'strict_pattern': 1.2},
         'random': {},
     }
 
@@ -252,18 +284,19 @@ class MultiStrategyPredictor:
 
         if len(seq) < 5:
             run_val, run_len = _runs(seq)[-1]
-            return cls._empty_result(_opp(run_val), min(52 + run_len * 2, 68), 'Khởi động', 'Khởi động')
+            return cls._empty_result(_opp(run_val), min(55 + run_len * 2, 70), 'Khởi động', 'Khởi động')
 
         regime, regime_strength = _detect_regime(seq)
 
+        # Gọi tất cả tín hiệu
         raw = [
-            ('markov', cls._sig_markov(seq)),
-            ('streak', cls._sig_streak(seq, regime)),
-            ('pattern', cls._sig_pattern(seq)),
-            ('trend', cls._sig_trend(seq)),
-            ('cycle', cls._sig_cycle(seq)),
-            ('entropy', cls._sig_entropy(seq)),
+            ('strict_pattern', cls._sig_strict_pattern(seq)), # Tín hiệu V2
+            ('breakpoint', cls._sig_breakpoint(seq)),         # Tín hiệu V2
             ('dao_cau', cls._sig_dao_cau(seq)),
+            ('streak', cls._sig_streak(seq, regime)),
+            ('markov', cls._sig_markov(seq)),
+            ('trend', cls._sig_trend(seq)),
+            ('entropy', cls._sig_entropy(seq)),
         ]
 
         signals = []
@@ -271,20 +304,20 @@ class MultiStrategyPredictor:
         total_w = 0.0
         regime_boost = cls._REGIME_BOOST.get(regime, {})
 
+        # Lọc đồng thuận
+        consensus_tai = 0
+        consensus_xiu = 0
+
         for name, (pred, conf, weight) in raw:
             if not pred or weight <= 0: continue
             
-            # --- XỬ LÝ LÀM NÉT ---
-            # 1. Lọc nhiễu: Nếu đang Làm Nét mà tín hiệu này winrate < 45%, bỏ qua
+            # Tracking tự động điều chỉnh
             tr = cls._TRACK.get(name)
             if is_sharp and tr and (tr['hit'] + tr['miss']) >= 5:
                 acc = tr['hit'] / (tr['hit'] + tr['miss'])
-                if acc < 0.45:
-                    continue # Bỏ qua tín hiệu rác
-                if acc > 0.60:
-                    weight *= 1.5 # Boost mạnh tín hiệu tốt
+                if acc < 0.45: continue # Bỏ qua tín hiệu rác
+                if acc > 0.60: weight *= 1.6
                     
-            # 2. Điều chỉnh trọng số cơ bản
             if tr and (tr['hit'] + tr['miss']) >= 6:
                 acc = tr['hit'] / (tr['hit'] + tr['miss'])
                 weight *= max(0.45, min(0.60 + (acc - 0.5) * 3.0, 1.70))
@@ -293,14 +326,16 @@ class MultiStrategyPredictor:
                 weight *= regime_boost[name]
                 
             if is_sharp:
-                # Nếu Làm Nét, ưu tiên tuyệt đối các tín hiệu đoán ngược (Bẻ cầu/Đảo cầu)
-                if name in ('dao_cau', 'streak', 'breakpoint'):
+                if name in ('dao_cau', 'streak', 'breakpoint', 'strict_pattern'):
                     weight *= 1.4
-                conf = min(conf + 3, 92) # Cộng thêm 3% tự tin
+                conf = min(conf + 3, 95)
 
             weighted_votes[pred] += weight * (conf / 100.0)
             total_w += weight
             signals.append({'name': name, 'prediction': pred, 'confidence': conf, 'weight': round(weight, 2)})
+
+            if pred == 'Tài': consensus_tai += weight
+            else: consensus_xiu += weight
 
         if not signals or total_w == 0:
             run_val, _ = _runs(seq)[-1]
@@ -309,10 +344,11 @@ class MultiStrategyPredictor:
         v_tai = weighted_votes['Tài']
         v_xiu = weighted_votes['Xỉu']
         pred = 'Tài' if v_tai >= v_xiu else 'Xỉu'
-        raw_conf = int(max(v_tai, v_xiu) / max(v_tai + v_xiu, 1e-6) * 100)
+        
+        # Độ đồng thuận (Consensus)
+        agreement = max(v_tai, v_xiu) / max(v_tai + v_xiu, 1e-6)
+        raw_conf = int(agreement * 100)
 
-        votes_tai = sum(1 for s in signals if s['prediction'] == 'Tài')
-        agreement = max(votes_tai, len(signals) - votes_tai) / len(signals)
         recent_h = _entropy(seq[-22:])
         
         penalty = 0
@@ -320,23 +356,26 @@ class MultiStrategyPredictor:
         if recent_h > 0.96: penalty += 7
         elif recent_h > 0.88: penalty += 4
         elif recent_h < 0.70: bonus += 3
-        if agreement < 0.60: penalty += 6
-        elif agreement < 0.70: penalty += 3
-        elif agreement >= 0.88: bonus += 5
+        
+        # Phạt nếu đồng thuận thấp
+        if agreement < 0.55: penalty += 10
+        elif agreement < 0.65: penalty += 5
+        elif agreement >= 0.85: bonus += 6
+        elif agreement >= 0.75: bonus += 3
+        
         if regime_strength > 0.6: bonus += 3
 
-        # --- LÀM NÉT: Ép xung Confidence ---
-        if is_sharp and agreement >= 0.75:
-            bonus += 5  # Thưởng thêm nếu các tín hiệu đồng thuận cao
+        if is_sharp and agreement >= 0.70:
+            bonus += 5
 
-        final_conf = max(50, min(raw_conf - penalty + bonus, 92 if is_sharp else 86))
+        final_conf = max(50, min(raw_conf - penalty + bonus, 95 if is_sharp else 90))
 
         flipped = False
         mode = cls._RECOVERY.get('mode')
         if mode == 'hard_flip':
-            pred = _opp(pred); final_conf = max(60, min(final_conf + 3, 78)); flipped = True
-        elif mode == 'soft_flip' and agreement < 0.70:
-            pred = _opp(pred); final_conf = max(58, min(final_conf + 1, 74)); flipped = True
+            pred = _opp(pred); final_conf = max(60, min(final_conf + 3, 82)); flipped = True
+        elif mode == 'soft_flip' and agreement < 0.65:
+            pred = _opp(pred); final_conf = max(58, min(final_conf + 1, 78)); flipped = True
 
         final_conf = cls._calibrate(final_conf, log)
         signals.sort(key=lambda s: s['weight'] * (s['confidence'] - 50), reverse=True)
@@ -498,11 +537,11 @@ def _log_stats(log=None):
 
 _load_log()
 
-# ========== GIAO DIỆN LEMINH V1 (CÓ NÚT LÀM NÉT) ==========
+# ========== GIAO DIỆN LEMINH V2 ==========
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>LEMINH V1</title>
+<title>LEMINH V2</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -555,10 +594,10 @@ tr:hover td{background:#eff6ff}
 .loading{text-align:center;padding:30px;color:var(--primary);font-weight:600}
 @media(max-width:520px){th,td{padding:8px 4px;font-size:11px}.clock{display:none}.badge{min-width:44px;font-size:9px}.sc-v{font-size:16px}.pred-value{font-size:26px}.btn span{display:none}}
 </style></head><body>
-<div class="header"><div class="logo"><span class="logo-text">LEMINH</span><span class="ver">V1</span></div>
+<div class="header"><div class="logo"><span class="logo-text">LEMINH</span><span class="ver">V2</span></div>
 <div class="actions">
   <div class="clock" id="clock">--:--:--</div>
-  <button class="btn" id="btn-sharp" onclick="toggleSharp()" title="Làm nét dự đoán"> <span>Làm Nét</span></button>
+  <button class="btn" id="btn-sharp" onclick="toggleSharp()" title="Làm nét dự đoán">🔍 <span>Làm Nét</span></button>
   <button class="btn" onclick="manualRefresh(this)" title="Tải lại">↻</button>
   <button class="btn btn-reset" onclick="confirmReset()" title="Reset">Reset</button>
 </div></div>
@@ -677,7 +716,6 @@ async function confirmReset(){
     }catch(e){isResetting=false;Swal.fire({title:'Lỗi!',text:e.message,icon:'error'});}
   });
 }
-// Khởi chạy
 fetchSharpState();
 fetchData();
 setInterval(fetchData,5000);
@@ -687,7 +725,6 @@ setInterval(fetchData,5000);
 def index():
     return render_template_string(HTML_TEMPLATE)
 
-# API điều khiển Làm Nét
 @app.route('/api/sharp_state')
 def sharp_state():
     global SHARP_FOCUS_MODE
@@ -697,7 +734,7 @@ def sharp_state():
 def toggle_sharp():
     global SHARP_FOCUS_MODE
     SHARP_FOCUS_MODE = not SHARP_FOCUS_MODE
-    _save_log() # Lưu trạng thái
+    _save_log()
     return jsonify({'sharp': SHARP_FOCUS_MODE})
 
 @app.route('/api/history')
@@ -728,7 +765,7 @@ def lc79md5():
     try:
         valid, success = _sync_history()
         if not success: return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
-        if not valid: return jsonify({'Id': 'LEMINH V1', 'Phien': None, 'Du_doan': None, 'message': 'Đang tải dữ liệu...'})
+        if not valid: return jsonify({'Id': 'LEMINH V2', 'Phien': None, 'Du_doan': None, 'message': 'Đang tải dữ liệu...'})
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG, is_sharp=SHARP_FOCUS_MODE)
@@ -740,7 +777,7 @@ def lc79md5():
         du_doan_format = f"{pred['prediction']} {dice_str}"
 
         return jsonify({
-            'Id': 'LEMINH V1',
+            'Id': 'LEMINH V2',
             'Phien': str(next_phien),
             'Ket_qua_truoc': last['result'].lower(),
             'Xuc_xac_truoc': last['dice'],
@@ -778,7 +815,7 @@ def predict():
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG, is_sharp=SHARP_FOCUS_MODE)
         _log_prediction(next_phien, pred)
         return jsonify({
-            'version': 'LEMINH V1', 'last_phien': last['phien'], 'next_phien': next_phien, 'last_result': last['result'],
+            'version': 'LEMINH V2', 'last_phien': last['phien'], 'next_phien': next_phien, 'last_result': last['result'],
             'last_dice': last['dice'], 'last_total': last['total'], 'prediction': pred['prediction'], 'confidence': pred['confidence'],
             'method': pred['method'], 'cau': pred.get('cau', 'unknown'), 'cau_label': pred.get('cau_label', ''),
             'regime_strength': pred.get('regime_strength', 0.0), 'top_signals': pred.get('top_signals', []),
