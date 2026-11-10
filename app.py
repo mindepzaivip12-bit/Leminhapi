@@ -466,7 +466,7 @@ _load_log()
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>LE MINH MD5 V3</title>
+<title>LE MINH MD5 V13</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -518,7 +518,7 @@ tr:hover td{background:#eff6ff}
 .loading{text-align:center;padding:30px;color:var(--primary);font-weight:600}
 @media(max-width:520px){th,td{padding:8px 4px;font-size:11px}.clock{display:none}.badge{min-width:44px;font-size:9px}.sc-v{font-size:16px}.pred-value{font-size:26px}}
 </style></head><body>
-<div class="header"><div class="logo"><span class="logo-text">LE MINH</span><span class="ver">V3</span></div>
+<div class="header"><div class="logo"><span class="logo-text">LE MINH</span><span class="ver">V13</span></div>
 <div class="actions"><div class="clock" id="clock">--:--:--</div>
 <button class="btn" onclick="manualRefresh(this)">↻</button>
 <button class="btn btn-reset" onclick="confirmReset()">Reset</button></div></div>
