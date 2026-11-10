@@ -4,6 +4,8 @@ import time
 import json
 import hashlib
 import math
+import threading
+import random
 from datetime import datetime
 from collections import Counter, defaultdict, deque
 import requests
@@ -24,6 +26,11 @@ PREDICTION_LOG = {}
 MAX_LOG_SIZE = 3000
 LOG_FILE = "prediction_log.json"
 
+_FETCH_LOCK = threading.Lock()
+_LAST_FETCH_TIME = 0.0
+_LAST_FETCH_RESULT = ([], False)
+_FETCH_CACHE_TTL = 15.0
+
 SIGNAL_NAMES = {
     'markov': 'Markov', 'streak': 'Bẻ chuỗi', 'pattern': 'Khớp mẫu',
     'trend': 'Xu hướng', 'cycle': 'Chu kỳ', 'entropy': 'Entropy',
@@ -31,8 +38,7 @@ SIGNAL_NAMES = {
 }
 
 
-# ========== BẢNG TRA CỨU 13 KÝ TỰ (T=1, X=0) ==========
-# Bảng bạn cung cấp: pattern 13 ký tự → kết quả phiên tiếp theo
+# ========== BẢNG TRA CỨU 13 KÝ TỰ ==========
 TABLE_13_RAW = {
     "TTTTTTTTTTTTT": "Tài", "TTTTTTTTTTTTX": "Tài", "TTTTTTTTTTTXT": "Xỉu", "TTTTTTTTTTTXX": "Xỉu",
     "TTTTTTTTTTXTT": "Tài", "TTTTTTTTTTXTX": "Tài", "TTTTTTTTTTXXT": "Tài", "TTTTTTTTTTXXX": "Tài",
@@ -228,12 +234,8 @@ TABLE_13_RAW = {
     "TTTXTXXXXXXTT": "Tài", "TTTXTXXXXXXTX": "Tài", "TTTXTXXXXXXXT": "Xỉu", "TTTXTXXXXXXXX": "Xỉu",
 }
 
-# Sinh đầy đủ 8192 pattern bằng cách đối xứng T↔X nếu bảng gốc thiếu
-# (Bảng bạn cung cấp chỉ có 512 patterns bắt đầu bằng TTT và TTTTX..., 
-#  cần sinh thêm các pattern bắt đầu bằng X hoặc T khác)
+# Sinh đầy đủ 8192 pattern bằng đối xứng T↔X
 TABLE_13 = dict(TABLE_13_RAW)
-
-# Đối xứng: pattern bắt đầu bằng X → đảo T↔X và đảo kết quả
 for pat, res in list(TABLE_13_RAW.items()):
     if pat.startswith('X'):
         continue
@@ -243,14 +245,11 @@ for pat, res in list(TABLE_13_RAW.items()):
 
 
 def _lookup_table13(seq_str):
-    """Tra bảng 13 ký tự, trả (prediction, confidence, weight)"""
     if len(seq_str) < 13:
         return None, 0, 0
-    key = seq_str[-13:]
-    res = TABLE_13.get(key)
+    res = TABLE_13.get(seq_str[-13:])
     if res is None:
         return None, 0, 0
-    # Bảng là rule tường minh → confidence cao + weight cao
     return res, 78, 1.55
 
 
@@ -289,8 +288,43 @@ def _detect_regime(seq):
 
 
 def _to_seq_str(seq):
-    """Chuyển ['Tài','Xỉu',...] thành 'TX...' để tra bảng"""
     return ''.join('T' if x == 'Tài' else 'X' for x in seq)
+
+
+def _generate_dice(prediction, confidence, seed_str=None):
+    """
+    Sinh 3 con xúc xắc (1-6) khớp dự đoán:
+    - Tài: tổng >= 11 (confidence cao → tổng càng cao)
+    - Xỉu: tổng <= 10 (confidence cao → tổng càng thấp)
+    Seed từ phiên → kết quả ổn định (cùng phiên luôn ra cùng bộ xúc xắc).
+    """
+    if seed_str is None:
+        seed_str = str(time.time())
+    h = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
+    rng = random.Random(h)
+
+    if prediction == 'Tài':
+        if confidence >= 75:
+            target = rng.randint(13, 17)
+        elif confidence >= 65:
+            target = rng.randint(12, 15)
+        else:
+            target = rng.randint(11, 13)
+    else:
+        if confidence >= 75:
+            target = rng.randint(4, 8)
+        elif confidence >= 65:
+            target = rng.randint(6, 9)
+        else:
+            target = rng.randint(7, 10)
+
+    for _ in range(60):
+        d1 = rng.randint(1, 6)
+        d2 = rng.randint(1, 6)
+        d3 = target - d1 - d2
+        if 1 <= d3 <= 6:
+            return [d1, d2, d3]
+    return [5, 6, 4] if prediction == 'Tài' else [2, 3, 4]
 
 
 # ========== PREDICTOR ==========
@@ -441,7 +475,6 @@ class MultiStrategyPredictor:
     @classmethod
     def predict(cls, valid, log=None):
         if log is None: log = PREDICTION_LOG
-
         if not valid:
             seed = str(int(time.time()) // 60)
             h = int(hashlib.md5(seed.encode()).hexdigest(), 16)
@@ -470,16 +503,15 @@ class MultiStrategyPredictor:
                 'recovery_active': False, 'fail_streak': 0,
             }
 
-        regime, regime_strength = _detect_regime(seq)
-
+        regime, _ = _detect_regime(seq)
         raw = [
-            ('markov',   cls._sig_markov(seq)),
-            ('streak',   cls._sig_streak(seq, regime)),
-            ('pattern',  cls._sig_pattern(seq)),
-            ('trend',    cls._sig_trend(seq)),
-            ('cycle',    cls._sig_cycle(seq)),
-            ('entropy',  cls._sig_entropy(seq)),
-            ('table13',  cls._sig_table13(seq)),
+            ('markov',  cls._sig_markov(seq)),
+            ('streak',  cls._sig_streak(seq, regime)),
+            ('pattern', cls._sig_pattern(seq)),
+            ('trend',   cls._sig_trend(seq)),
+            ('cycle',   cls._sig_cycle(seq)),
+            ('entropy', cls._sig_entropy(seq)),
+            ('table13', cls._sig_table13(seq)),
         ]
 
         signals = []
@@ -496,7 +528,6 @@ class MultiStrategyPredictor:
             if regime == 'alternation' and name == 'streak': weight *= 1.15
             if regime == 'short_run' and name == 'cycle': weight *= 1.15
             if cls._RECOVERY['active'] and name in ('trend', 'pattern'): weight *= 1.5
-            if name == 'table13': weight *= 1.0  # giữ nguyên weight gốc cao
 
             p_norm = max(0.51, min(conf / 100.0, 0.90))
             lr = p_norm / (1 - p_norm)
@@ -575,33 +606,43 @@ class MultiStrategyPredictor:
         }
 
 
-# ========== FETCH + SYNC ==========
+# ========== FETCH với cache + rate-limit ==========
 def fetch_sessions():
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json',
-    }
-    for attempt in range(3):
-        try:
-            r = requests.get(API_URL_MD5, timeout=8, headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                if 'list' in data and data['list']:
-                    rows = []
-                    for item in data['list']:
-                        res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
-                        dices = item.get('dices', [0, 0, 0])
-                        rows.append({
-                            'phien': int(item['id']),
-                            'result': res,
-                            'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
-                            'total': item.get('point', sum(dices)),
-                        })
-                    return rows, True
-        except Exception as e:
-            print(f"[API ERROR] attempt {attempt + 1}: {e}")
-            time.sleep(1)
-    return [], False
+    global _LAST_FETCH_TIME, _LAST_FETCH_RESULT
+    with _FETCH_LOCK:
+        now = time.time()
+        if now - _LAST_FETCH_TIME < _FETCH_CACHE_TTL and _LAST_FETCH_RESULT[0]:
+            return _LAST_FETCH_RESULT
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json',
+        }
+        for attempt in range(3):
+            try:
+                r = requests.get(API_URL_MD5, timeout=6, headers=headers)
+                if r.status_code == 200:
+                    data = r.json()
+                    if 'list' in data and data['list']:
+                        rows = []
+                        for item in data['list']:
+                            res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                            dices = item.get('dices', [0, 0, 0])
+                            rows.append({
+                                'phien': int(item['id']),
+                                'result': res,
+                                'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
+                                'total': item.get('point', sum(dices)),
+                            })
+                        _LAST_FETCH_TIME = now
+                        _LAST_FETCH_RESULT = (rows, True)
+                        return rows, True
+            except Exception as e:
+                print(f"[API ERROR] attempt {attempt + 1}: {e}")
+                time.sleep(1 + attempt)
+
+        # Fail → trả cache cũ nếu có
+        return _LAST_FETCH_RESULT
 
 
 def _load_log():
@@ -700,15 +741,15 @@ def _log_stats(log=None):
 _load_log()
 
 
-# ========== HTML + ROUTES (giữ nguyên bản trước) ==========
+# ========== HTML ==========
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>LE MINH MD5 V2</title>
+<title>LE MINH MD5 V3</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
-:root{--bg-1:#eff6ff;--bg-2:#f0f9ff;--bg-3:#e0f2fe;--card:#ffffff;--text:#0f172a;--text-soft:#475569;--muted:#94a3b8;--border:#dbeafe;--border-blue:#93c5fd;--border-strong:#60a5fa;--primary:#0ea5e9;--primary-dark:#0284c7;--tai:#0284c7;--tai-bg:#e0f2fe;--xiu:#0891b2;--xiu-bg:#cffafe;--ok:#059669;--ok-bg:#d1fae5;--fail:#dc2626;--fail-bg:#fee2e2;--warn:#d97706;--warn-bg:#fef3c7;--shadow:0 4px 12px rgba(14,165,233,.10);--shadow-lg:0 12px 32px rgba(2,132,199,.15)}
+:root{--bg-1:#eff6ff;--card:#fff;--text:#0f172a;--text-soft:#475569;--muted:#94a3b8;--border:#dbeafe;--border-blue:#93c5fd;--border-strong:#60a5fa;--primary:#0ea5e9;--primary-dark:#0284c7;--tai:#0284c7;--tai-bg:#e0f2fe;--xiu:#0891b2;--xiu-bg:#cffafe;--ok:#059669;--ok-bg:#d1fae5;--fail:#dc2626;--fail-bg:#fee2e2;--warn:#d97706;--warn-bg:#fef3c7;--shadow:0 4px 12px rgba(14,165,233,.10);--shadow-lg:0 12px 32px rgba(2,132,199,.15)}
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans',sans-serif}
 body{background:linear-gradient(135deg,#eff6ff,#f0f9ff 35%,#e0f2fe 70%,#dbeafe);background-attachment:fixed;color:var(--text);min-height:100vh;padding-bottom:30px;font-size:13px}
 .header{background:rgba(255,255,255,.9);backdrop-filter:blur(20px);border-bottom:1px solid var(--border-blue);padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(14,165,233,.08)}
@@ -717,9 +758,9 @@ body{background:linear-gradient(135deg,#eff6ff,#f0f9ff 35%,#e0f2fe 70%,#dbeafe);
 @keyframes shine{to{background-position:200% center}}
 .logo span.ver{font-size:9px;background:linear-gradient(135deg,#0284c7,#0ea5e9);color:#fff;padding:3px 8px;border-radius:20px;font-weight:800}
 .actions{display:flex;gap:8px;align-items:center}
-.clock{font-size:11px;color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
+.clock{font-size:11px;color:var(--muted);font-weight:600}
 .btn{background:#fff;color:var(--text-soft);border:1px solid var(--border);padding:7px 12px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;transition:.2s}
-.btn:hover{background:var(--bg-1);transform:translateY(-1px);border-color:var(--border-strong);color:var(--primary-dark)}
+.btn:hover{background:var(--bg-1);border-color:var(--border-strong);color:var(--primary-dark)}
 .btn-reset{background:linear-gradient(135deg,#fee2e2,#fecaca);color:var(--fail);border-color:#fca5a5}
 .spin{animation:spin .5s}@keyframes spin{to{transform:rotate(360deg)}}
 .wrap{max-width:780px;margin:0 auto;padding:12px}
@@ -756,7 +797,7 @@ tr:hover td{background:#eff6ff}
 .loading{text-align:center;padding:30px;color:var(--primary);font-weight:600}
 @media(max-width:520px){th,td{padding:8px 4px;font-size:11px}.clock{display:none}.badge{min-width:44px;font-size:9px}.sc-v{font-size:17px}.pred-value{font-size:26px}}
 </style></head><body>
-<div class="header"><div class="logo"><span class="logo-text">LE MINH</span><span class="ver">V12</span></div>
+<div class="header"><div class="logo"><span class="logo-text">LE MINH</span><span class="ver">V3</span></div>
 <div class="actions"><div class="clock" id="clock">--:--:--</div>
 <button class="btn" onclick="manualRefresh(this)">↻</button>
 <button class="btn btn-reset" onclick="confirmReset()">Reset</button></div></div>
@@ -785,11 +826,7 @@ async function fetchData(){
   try{
     const r=await fetch('/api/history',{cache:'no-store'});
     const d=await r.json();
-    if(!d.ready){
-      document.getElementById('loading-screen').style.display='block';
-      document.getElementById('main-content').style.display='none';
-      return;
-    }
+    if(!d.ready){document.getElementById('loading-screen').style.display='block';document.getElementById('main-content').style.display='none';return;}
     document.getElementById('loading-screen').style.display='none';
     document.getElementById('main-content').style.display='block';
     const ai=d.ai_stats||{};
@@ -896,6 +933,7 @@ def history():
         return jsonify({'error': str(e)}), 500
 
 
+# ========== /lc79md5 - GỌN ĐÚNG FORMAT YÊU CẦU ==========
 @app.route('/lc79md5')
 def lc79md5():
     try:
@@ -903,39 +941,43 @@ def lc79md5():
         if not success:
             return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
         if not valid:
-            return jsonify({'Id': 'LE MINH V12 MD5', 'Phien': None,
-                            'Du_doan': None, 'message': 'Đang tải dữ liệu...'})
+            return jsonify({
+                'Id': '@cskhleminh',
+                'Phien': None,
+                'Du_doan': None,
+                'Xuc_xac': None,
+                'Do_tin_cay': None,
+                'Ket_qua_du_doan': None,
+                'message': 'Đang tải dữ liệu...'
+            })
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
-        ai_stats = _log_stats(PREDICTION_LOG)
+
+        # Sinh xúc xắc gợi ý - seed theo phiên → ổn định
+        dice = _generate_dice(
+            pred['prediction'],
+            pred['confidence'],
+            seed_str=f"phien_{next_phien}_{last['phien']}"
+        )
+        dice_str = f"{dice[0]}-{dice[1]}-{dice[2]}"
+        ket_qua = f"{pred['prediction']} {dice_str}"
+
         return jsonify({
-            'Id': 'LE MINH V12 MD5',
+            'Id': '@cskhleminh',
             'Phien': str(next_phien),
-            'Ket_qua_truoc': last['result'].lower(),
-            'Xuc_xac_truoc': last['dice'],
-            'Diem_truoc': last['total'],
             'Du_doan': pred['prediction'],
+            'Xuc_xac': dice_str,
             'Do_tin_cay': f"{pred['confidence']}%",
-            'Phuong_phap': pred['method'],
-            'Loai_cau': pred.get('cau_label', ''),
-            'Tin_hieu_chinh': pred.get('top_signals', []),
-            'Ly_do': pred['reason'],
-            'Da_dao': pred.get('flipped', False),
-            'Recovery': pred.get('recovery_active', False),
-            'So_tin_hieu': len(pred['signals']),
-            'Top_manh': pred.get('signals_strength', [])[:5],
-            'AI_dung': ai_stats['correct'],
-            'AI_sai': ai_stats['wrong'],
-            'AI_cho': ai_stats['pending'],
-            'Ti_le_AI': round(ai_stats['correct'] / max(ai_stats['evaluated'], 1) * 100, 1),
+            'Ket_qua_du_doan': ket_qua,
         })
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 
+# ========== /lc79 - giữ nguyên format cũ ==========
 @app.route('/lc79')
 def lc79():
     try:
@@ -994,7 +1036,7 @@ def predict():
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V12',
+            'version': 'V13',
             'last_phien': last['phien'],
             'next_phien': next_phien,
             'last_result': last['result'],
@@ -1056,7 +1098,7 @@ def algo_info():
         seq = [v['result'] for v in valid]
         regime, strength = _detect_regime(seq)
         return jsonify({
-            'version': 'V12',
+            'version': 'V13',
             'ready': True,
             'prediction': pred['prediction'],
             'confidence': pred['confidence'],
