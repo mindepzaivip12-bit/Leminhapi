@@ -4,6 +4,7 @@ import time
 import json
 import hashlib
 import math
+import random
 from datetime import datetime
 from collections import Counter, defaultdict, deque
 import requests
@@ -24,7 +25,9 @@ PREDICTION_LOG = {}
 MAX_LOG_SIZE = 3000
 LOG_FILE = "prediction_log.json"
 
-# Tên hiển thị nội bộ (chỉ dùng trong API, không hiện ra web)
+# Trạng thái Làm Nét
+SHARP_FOCUS_MODE = False
+
 SIGNAL_NAMES = {
     'markov': 'Markov', 'streak': 'Bẻ chuỗi', 'pattern': 'Khớp mẫu',
     'trend': 'Xu hướng', 'cycle': 'Chu kỳ', 'entropy': 'Entropy',
@@ -78,59 +81,41 @@ def _detect_regime(seq):
     if tr >= 0.68 or tr <= 0.32: return 'trend_strong', abs(tr - 0.5) * 2
     return 'short_run', max(ones, twos, threes)
 
-# ========== PREDICTOR V13 (THUẬT TOÁN ĐẢO & BẺ CẦU NÂNG CAO) ==========
+# ========== PREDICTOR V1 (TÍCH HỢP LÀM NÉT) ==========
 class MultiStrategyPredictor:
     _TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0})
     _RECENT = deque(maxlen=15)
     _RECOVERY = {'active': False, 'fail': 0, 'mode': None}
 
-    # Thuật toán đảo cầu (Contrarian) - Cực kỳ hiệu quả khi cầu bị "bệt" hoặc "1-1"
     @staticmethod
     def _sig_dao_cau(seq):
         if len(seq) < 10: return (None, 0, 0)
         runs = _runs(seq[-15:])
         if not runs: return (None, 0, 0)
-        
         cur_val, cur_len = runs[-1]
-        
-        # 1. Đảo khi cầu 1-1 quá dài (5 nhịp đảo liên tiếp)
         if len(runs) >= 6:
             last_6 = [l for _, l in runs[-6:]]
-            if all(l == 1 for l in last_6):
-                return (_opp(cur_val), 75, 1.5) # Xác suất đảo rất cao
-
-        # 2. Đảo khi cầu bệt quá dài (>= 5 tay)
-        if cur_len >= 5:
-            return (_opp(cur_val), min(58 + cur_len * 4, 85), 1.45)
-
-        # 3. Đảo khi cầu 2-2 hoặc 3-3 đã đủ chu kỳ
+            if all(l == 1 for l in last_6): return (_opp(cur_val), 75, 1.5)
+        if cur_len >= 5: return (_opp(cur_val), min(58 + cur_len * 4, 85), 1.45)
         if len(runs) >= 4:
             lens = [l for _, l in runs[-4:]]
-            if lens == [2, 2, 2, 2]:
-                return (_opp(cur_val), 72, 1.4)
-            if lens == [3, 3, 3, 3]:
-                return (_opp(cur_val), 72, 1.4)
-                
+            if lens == [2, 2, 2, 2]: return (_opp(cur_val), 72, 1.4)
+            if lens == [3, 3, 3, 3]: return (_opp(cur_val), 72, 1.4)
         return (None, 0, 0)
 
-    # Bẻ cầu thông minh (Smart Break)
     @staticmethod
     def _sig_streak(seq, regime):
         runs = _runs(seq)
         if not runs: return (None, 0, 0)
         cur_val, cur_len = runs[-1]
         opp = _opp(cur_val)
-
         if regime == 'streak':
             if cur_len <= 4: return (cur_val, min(58 + cur_len * 3, 75), 1.2)
             if cur_len >= 6: return (opp, min(60 + (cur_len - 5) * 4, 84), 1.35)
-        
         if regime == 'alternation': return (opp, 66, 1.4)
-        
         if cur_len >= 5: return (opp, min(58 + (cur_len - 4) * 3, 78), 1.15)
         return (None, 0, 0)
 
-    # Markov
     @staticmethod
     def _sig_markov(seq):
         best = (None, 0, 0)
@@ -148,11 +133,9 @@ class MultiStrategyPredictor:
                 base = max(p, 1 - p)
                 conf = min(int(base * 100) + order * 2, 86)
                 w = 1.30 + order * 0.12
-                if conf * w > best[1] * best[2]:
-                    best = (pred, conf, w)
+                if conf * w > best[1] * best[2]: best = (pred, conf, w)
         return best
 
-    # Pattern
     @staticmethod
     def _sig_pattern(seq):
         if len(seq) < 10: return (None, 0, 0)
@@ -168,11 +151,9 @@ class MultiStrategyPredictor:
             if ratio >= 0.68:
                 conf = min(54 + int(ratio * 28) + plen * 2, 88)
                 w = 1.20 + plen * 0.10
-                if conf * w > best[1] * best[2]:
-                    best = (top, conf, w)
+                if conf * w > best[1] * best[2]: best = (top, conf, w)
         return best
 
-    # Trend
     @staticmethod
     def _sig_trend(seq):
         if len(seq) < 15: return (None, 0, 0)
@@ -190,7 +171,6 @@ class MultiStrategyPredictor:
             return (top, min(int(avg * 100) + cnt * 2, 84), 1.30)
         return (None, 0, 0)
 
-    # Cycle
     @staticmethod
     def _sig_cycle(seq):
         if len(seq) < 14: return (None, 0, 0)
@@ -210,7 +190,6 @@ class MultiStrategyPredictor:
         nxt = pat[len(seq) % period]
         return (nxt, min(58 + int(best[0] * 26), 84), 1.35)
 
-    # Entropy
     @staticmethod
     def _sig_entropy(seq):
         if len(seq) < 12: return (None, 0, 0)
@@ -223,7 +202,6 @@ class MultiStrategyPredictor:
         if h > 0.97: return (_opp(seq[-1]), 60, 1.05)
         return (None, 0, 0)
 
-    # Calibration
     @classmethod
     def _calibrate(cls, conf, log):
         evaluated = [(p, e) for p, e in log.items() if e.get('actual') is not None]
@@ -231,12 +209,11 @@ class MultiStrategyPredictor:
         evaluated.sort(reverse=True)
         recent = evaluated[:50]
         acc = sum(1 for _, e in recent if e.get('correct')) / len(recent)
-
         if acc < 0.40: return max(50, conf - 14)
         if acc < 0.46: return max(50, conf - 8)
         if acc < 0.52: return max(50, conf - 3)
-        if acc > 0.70: return min(86, conf + 6)
-        if acc > 0.62: return min(86, conf + 3)
+        if acc > 0.70: return min(90, conf + 6) # Nâng trần lên 90%
+        if acc > 0.62: return min(88, conf + 3)
         return conf
 
     @classmethod
@@ -265,12 +242,10 @@ class MultiStrategyPredictor:
     }
 
     @classmethod
-    def predict(cls, valid, log=None):
+    def predict(cls, valid, log=None, is_sharp=False):
         if log is None: log = PREDICTION_LOG
         if not valid:
-            seed = str(int(time.time()) // 60)
-            h = int(hashlib.md5(seed.encode()).hexdigest(), 16)
-            return cls._empty_result(['Tài', 'Xỉu'][h % 2], 50, 'Chưa có DL', 'Không có dữ liệu')
+            return cls._empty_result('Tài', 50, 'Chưa có DL', 'Không có dữ liệu')
 
         cls._update_recovery(log)
         seq = [v['result'] for v in valid]
@@ -288,7 +263,7 @@ class MultiStrategyPredictor:
             ('trend', cls._sig_trend(seq)),
             ('cycle', cls._sig_cycle(seq)),
             ('entropy', cls._sig_entropy(seq)),
-            ('dao_cau', cls._sig_dao_cau(seq)), # Thuật toán đảo cầu V13
+            ('dao_cau', cls._sig_dao_cau(seq)),
         ]
 
         signals = []
@@ -298,17 +273,30 @@ class MultiStrategyPredictor:
 
         for name, (pred, conf, weight) in raw:
             if not pred or weight <= 0: continue
-
+            
+            # --- XỬ LÝ LÀM NÉT ---
+            # 1. Lọc nhiễu: Nếu đang Làm Nét mà tín hiệu này winrate < 45%, bỏ qua
             tr = cls._TRACK.get(name)
+            if is_sharp and tr and (tr['hit'] + tr['miss']) >= 5:
+                acc = tr['hit'] / (tr['hit'] + tr['miss'])
+                if acc < 0.45:
+                    continue # Bỏ qua tín hiệu rác
+                if acc > 0.60:
+                    weight *= 1.5 # Boost mạnh tín hiệu tốt
+                    
+            # 2. Điều chỉnh trọng số cơ bản
             if tr and (tr['hit'] + tr['miss']) >= 6:
                 acc = tr['hit'] / (tr['hit'] + tr['miss'])
                 weight *= max(0.45, min(0.60 + (acc - 0.5) * 3.0, 1.70))
-
+                
             if name in regime_boost:
                 weight *= regime_boost[name]
-
-            if cls._RECOVERY['active'] and name in ('trend', 'pattern', 'cycle'):
-                weight *= 1.35
+                
+            if is_sharp:
+                # Nếu Làm Nét, ưu tiên tuyệt đối các tín hiệu đoán ngược (Bẻ cầu/Đảo cầu)
+                if name in ('dao_cau', 'streak', 'breakpoint'):
+                    weight *= 1.4
+                conf = min(conf + 3, 92) # Cộng thêm 3% tự tin
 
             weighted_votes[pred] += weight * (conf / 100.0)
             total_w += weight
@@ -337,7 +325,11 @@ class MultiStrategyPredictor:
         elif agreement >= 0.88: bonus += 5
         if regime_strength > 0.6: bonus += 3
 
-        final_conf = max(50, min(raw_conf - penalty + bonus, 86))
+        # --- LÀM NÉT: Ép xung Confidence ---
+        if is_sharp and agreement >= 0.75:
+            bonus += 5  # Thưởng thêm nếu các tín hiệu đồng thuận cao
+
+        final_conf = max(50, min(raw_conf - penalty + bonus, 92 if is_sharp else 86))
 
         flipped = False
         mode = cls._RECOVERY.get('mode')
@@ -357,13 +349,14 @@ class MultiStrategyPredictor:
             'signals': signals,
             'top_signals': top,
             'signals_strength': [{'name': s['name'], 'display': SIGNAL_NAMES.get(s['name'], s['name']), 'prediction': s['prediction'], 'confidence': s['confidence'], 'weight': s['weight'], 'strength': round(s['weight'] * (s['confidence'] - 50), 1)} for s in signals[:8]],
-            'reason': f'Regime={regime} · Agreement={agreement:.0%} · H={recent_h:.2f}',
+            'reason': f'Regime={regime} · Agreement={agreement:.0%} · Focus={is_sharp}',
             'flipped': flipped,
             'cau': regime,
             'cau_label': cls._cau_label(regime),
             'recovery_active': cls._RECOVERY['active'],
             'fail_streak': cls._RECOVERY['fail'],
             'regime_strength': round(regime_strength, 3),
+            'sharp_focus': is_sharp
         }
 
     @staticmethod
@@ -373,8 +366,52 @@ class MultiStrategyPredictor:
 
     @staticmethod
     def _empty_result(pred, conf, method, reason, regime='unknown'):
-        return {'prediction': pred, 'confidence': conf, 'method': method, 'signals': [], 'top_signals': [], 'signals_strength': [], 'reason': reason, 'flipped': False, 'cau': regime, 'cau_label': '', 'recovery_active': False, 'fail_streak': 0, 'regime_strength': 0.0}
+        return {'prediction': pred, 'confidence': conf, 'method': method, 'signals': [], 'top_signals': [], 'signals_strength': [], 'reason': reason, 'flipped': False, 'cau': regime, 'cau_label': '', 'recovery_active': False, 'fail_streak': 0, 'regime_strength': 0.0, 'sharp_focus': False}
 
+# ========== THUẬT TOÁN DỰ ĐOÁN 3 CON XÚC XẮC ==========
+def _predict_dice(valid, pred_result):
+    if not valid or len(valid) < 5:
+        if pred_result == 'Tài': return sorted([random.randint(2, 6), random.randint(2, 6), random.randint(3, 6)], reverse=True)
+        else: return sorted([random.randint(1, 4), random.randint(1, 4), random.randint(1, 4)], reverse=True)
+
+    recent = valid[-30:]
+    dices_history = []
+    for v in recent:
+        try:
+            parts = v['dice'].split(' + ')
+            if len(parts) == 3: dices_history.append([int(p) for p in parts])
+        except: continue
+
+    if not dices_history: return sorted([random.randint(1, 6) for _ in range(3)], reverse=True)
+
+    freq = [Counter(), Counter(), Counter()]
+    for d in dices_history:
+        for i in range(3): freq[i][d[i]] += 1
+
+    predicted = []
+    for i in range(3):
+        if not freq[i]: 
+            predicted.append(random.randint(1, 6))
+            continue
+        top_2 = freq[i].most_common(2)
+        if len(top_2) == 2 and random.random() < 0.7: predicted.append(top_2[0][0])
+        elif len(top_2) == 2: predicted.append(top_2[1][0])
+        else: predicted.append(top_2[0][0])
+
+    current_sum = sum(predicted)
+    if pred_result == 'Tài' and current_sum <= 10:
+        diff = 11 - current_sum
+        while diff > 0:
+            idx = random.randint(0, 2)
+            if predicted[idx] < 6: predicted[idx] += 1; diff -= 1
+    elif pred_result == 'Xỉu' and current_sum >= 11:
+        diff = current_sum - 10
+        while diff > 0:
+            idx = random.randint(0, 2)
+            if predicted[idx] > 1: predicted[idx] -= 1; diff -= 1
+
+    predicted.sort(reverse=True)
+    return predicted
 
 # ========== FETCH + SYNC ==========
 def fetch_sessions():
@@ -391,24 +428,24 @@ def fetch_sessions():
                         dices = item.get('dices', [0, 0, 0])
                         rows.append({'phien': int(item['id']), 'result': res, 'dice': f"{dices[0]} + {dices[1]} + {dices[2]}", 'total': item.get('point', sum(dices))})
                     return rows, True
-        except Exception as e:
-            time.sleep(1)
+        except Exception: time.sleep(1)
     return [], False
 
 def _load_log():
-    global PREDICTION_LOG, RESET_ID
+    global PREDICTION_LOG, RESET_ID, SHARP_FOCUS_MODE
     if not os.path.exists(LOG_FILE): return
     try:
         with open(LOG_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
         PREDICTION_LOG = {int(k): v for k, v in data.get('log', {}).items()}
         RESET_ID = int(data.get('reset_id', 0))
+        SHARP_FOCUS_MODE = data.get('sharp_focus', False)
     except Exception: pass
 
 def _save_log():
     try:
         with open(LOG_FILE, 'w', encoding='utf-8') as f:
-            json.dump({'log': PREDICTION_LOG, 'reset_id': RESET_ID}, f)
+            json.dump({'log': PREDICTION_LOG, 'reset_id': RESET_ID, 'sharp_focus': SHARP_FOCUS_MODE}, f)
     except Exception: pass
 
 def _sync_history():
@@ -436,7 +473,7 @@ def _update_prediction_log(valid):
         if phien in PREDICTION_LOG or phien <= RESET_ID: continue
         history_before = [by_phien[p] for p in phien_list[:i]]
         if len(history_before) < 3: continue
-        pred = MultiStrategyPredictor.predict(history_before, log=PREDICTION_LOG)
+        pred = MultiStrategyPredictor.predict(history_before, log=PREDICTION_LOG, is_sharp=SHARP_FOCUS_MODE)
         actual = by_phien[phien]['result']
         PREDICTION_LOG[phien] = {'prediction': pred['prediction'], 'confidence': pred['confidence'], 'method': pred['method'], 'actual': actual, 'correct': (pred['prediction'] == actual), 'logged_at': datetime.now().isoformat(), 'retroactive': True, 'flipped': pred.get('flipped', False)}
         changed = True
@@ -461,12 +498,11 @@ def _log_stats(log=None):
 
 _load_log()
 
-# ========== WEB + API ROUTES ==========
-# ĐÃ ẨN PHẦN METHOD (BẺ NHỊP) TRÊN GIAO DIỆN
+# ========== GIAO DIỆN LEMINH V1 (CÓ NÚT LÀM NÉT) ==========
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>LE MINH MD5 V13</title>
+<title>LEMINH V1</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -478,10 +514,11 @@ body{background:linear-gradient(135deg,#eff6ff,#f0f9ff 35%,#e0f2fe 70%,#dbeafe);
 .logo-text{background:linear-gradient(90deg,#0284c7,#0ea5e9,#38bdf8,#0284c7);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:shine 4s linear infinite}
 @keyframes shine{to{background-position:200% center}}
 .logo span.ver{font-size:9px;background:linear-gradient(135deg,#0284c7,#0ea5e9);color:#fff;padding:3px 8px;border-radius:20px;font-weight:800}
-.actions{display:flex;gap:8px;align-items:center}
-.clock{font-size:11px;color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
-.btn{background:#fff;color:var(--text-soft);border:1px solid var(--border);padding:7px 12px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;transition:.2s}
+.actions{display:flex;gap:6px;align-items:center}
+.clock{font-size:11px;color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums;margin-right:4px}
+.btn{background:#fff;color:var(--text-soft);border:1px solid var(--border);padding:7px 10px;border-radius:9px;font-weight:700;font-size:11px;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:4px}
 .btn:hover{background:var(--bg-1);transform:translateY(-1px);border-color:var(--border-strong);color:var(--primary-dark)}
+.btn-active{background:linear-gradient(135deg,#e0f2fe,#bae6fd);border-color:var(--primary);color:var(--primary-dark);box-shadow:0 0 10px rgba(14,165,233,0.3)}
 .btn-reset{background:linear-gradient(135deg,#fee2e2,#fecaca);color:var(--fail);border-color:#fca5a5}
 .spin{animation:spin .5s}@keyframes spin{to{transform:rotate(360deg)}}
 .wrap{max-width:780px;margin:0 auto;padding:12px}
@@ -516,12 +553,15 @@ tr:hover td{background:#eff6ff}
 .pred-mini{font-size:11px;font-weight:800}
 .pred-mini.tai{color:var(--tai)}.pred-mini.xiu{color:var(--xiu)}
 .loading{text-align:center;padding:30px;color:var(--primary);font-weight:600}
-@media(max-width:520px){th,td{padding:8px 4px;font-size:11px}.clock{display:none}.badge{min-width:44px;font-size:9px}.sc-v{font-size:16px}.pred-value{font-size:26px}}
+@media(max-width:520px){th,td{padding:8px 4px;font-size:11px}.clock{display:none}.badge{min-width:44px;font-size:9px}.sc-v{font-size:16px}.pred-value{font-size:26px}.btn span{display:none}}
 </style></head><body>
-<div class="header"><div class="logo"><span class="logo-text">LE MINH</span><span class="ver">V13</span></div>
-<div class="actions"><div class="clock" id="clock">--:--:--</div>
-<button class="btn" onclick="manualRefresh(this)">↻</button>
-<button class="btn btn-reset" onclick="confirmReset()">Reset</button></div></div>
+<div class="header"><div class="logo"><span class="logo-text">LEMINH</span><span class="ver">V1</span></div>
+<div class="actions">
+  <div class="clock" id="clock">--:--:--</div>
+  <button class="btn" id="btn-sharp" onclick="toggleSharp()" title="Làm nét dự đoán"> <span>Làm Nét</span></button>
+  <button class="btn" onclick="manualRefresh(this)" title="Tải lại">↻</button>
+  <button class="btn btn-reset" onclick="confirmReset()" title="Reset">Reset</button>
+</div></div>
 <div class="wrap">
 <div id="loading-screen" class="loading" style="display:none;">🌊 Đang tải dữ liệu...</div>
 <div id="main-content">
@@ -541,6 +581,32 @@ tr:hover td{background:#eff6ff}
 </div></div>
 <script>
 let isResetting=false;
+let sharpMode=false;
+
+async function fetchSharpState() {
+    try {
+        const r = await fetch('/api/sharp_state');
+        const d = await r.json();
+        sharpMode = d.sharp;
+        updateSharpBtn();
+    } catch(e) {}
+}
+function updateSharpBtn() {
+    const btn = document.getElementById('btn-sharp');
+    if(sharpMode) btn.classList.add('btn-active');
+    else btn.classList.remove('btn-active');
+}
+async function toggleSharp() {
+    try {
+        const r = await fetch('/api/sharp', {method: 'POST'});
+        const d = await r.json();
+        sharpMode = d.sharp;
+        updateSharpBtn();
+        fetchData();
+        Swal.fire({title: sharpMode ? 'Bật Làm Nét' : 'Tắt Làm Nét', text: sharpMode ? 'Đang dùng thuật toán quét sâu!' : 'Đã trở về chế độ thường.', icon: 'success', timer: 1500, showConfirmButton: false});
+    } catch(e) {}
+}
+
 function manualRefresh(btn){btn.classList.add('spin');setTimeout(()=>btn.classList.remove('spin'),500);fetchData();}
 async function fetchData(){
   if(isResetting)return;
@@ -560,12 +626,12 @@ async function fetchData(){
     document.getElementById('sc-wrong').innerText=ai.wrong||0;
     document.getElementById('sc-pending').innerText=ai.pending||0;
     document.getElementById('sc-acc').innerText=(ai.accuracy||0)+'%';
+    
     const pred=d.prediction, rows=d.rows||[];
     const pv=document.getElementById('pred-value');
     const cb=document.getElementById('conf-badge');
     const bar=document.getElementById('conf-bar');
     
-    // Chỉ hiển thị Tài/Xỉu và %, ẩn hoàn toàn thuật toán
     if(!pred){pv.innerText='—';cb.innerText='--%';bar.style.width='0%';}
     else{
       pv.innerText=pred.prediction;
@@ -611,6 +677,8 @@ async function confirmReset(){
     }catch(e){isResetting=false;Swal.fire({title:'Lỗi!',text:e.message,icon:'error'});}
   });
 }
+// Khởi chạy
+fetchSharpState();
 fetchData();
 setInterval(fetchData,5000);
 </script></body></html>"""
@@ -619,6 +687,19 @@ setInterval(fetchData,5000);
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+# API điều khiển Làm Nét
+@app.route('/api/sharp_state')
+def sharp_state():
+    global SHARP_FOCUS_MODE
+    return jsonify({'sharp': SHARP_FOCUS_MODE})
+
+@app.route('/api/sharp', methods=['POST'])
+def toggle_sharp():
+    global SHARP_FOCUS_MODE
+    SHARP_FOCUS_MODE = not SHARP_FOCUS_MODE
+    _save_log() # Lưu trạng thái
+    return jsonify({'sharp': SHARP_FOCUS_MODE})
+
 @app.route('/api/history')
 def history():
     try:
@@ -626,7 +707,7 @@ def history():
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid: return jsonify({'ready': False, 'message': 'Đang tải dữ liệu...', 'ai_stats': _log_stats()})
         next_phien = valid[-1]['phien'] + 1
-        pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
+        pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG, is_sharp=SHARP_FOCUS_MODE)
         _log_prediction(next_phien, pred)
         ai_stats = _log_stats()
         out = [{'phien': next_phien, 'is_next': True, 'result': 'Chờ...', 'dice': '? + ? + ?', 'total': None, 'ai_prediction': pred['prediction'], 'ai_confidence': pred['confidence'], 'ai_correct': None}]
@@ -634,9 +715,10 @@ def history():
             if v['phien'] <= RESET_ID: continue
             log = PREDICTION_LOG.get(v['phien'])
             out.append({'phien': v['phien'], 'is_next': False, 'result': v['result'], 'dice': v['dice'], 'total': v['total'], 'ai_prediction': log['prediction'] if log else None, 'ai_confidence': log['confidence'] if log else None, 'ai_correct': log['correct'] if log else None})
-        
-        # Gửi kèm thông tin dự đoán (nhưng web đã ẩn)
-        return jsonify({'ready': True, 'rows': out, 'ai_stats': ai_stats, 'prediction': {'prediction': pred['prediction'], 'confidence': pred['confidence']}})
+        return jsonify({
+            'ready': True, 'rows': out, 'ai_stats': ai_stats, 
+            'prediction': {'prediction': pred['prediction'], 'confidence': pred['confidence'], 'sharp': SHARP_FOCUS_MODE}
+        })
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -646,43 +728,40 @@ def lc79md5():
     try:
         valid, success = _sync_history()
         if not success: return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
-        if not valid: return jsonify({'Id': 'LE MINH V13 MD5', 'Phien': None, 'Du_doan': None, 'message': 'Đang tải dữ liệu...'})
+        if not valid: return jsonify({'Id': 'LEMINH V1', 'Phien': None, 'Du_doan': None, 'message': 'Đang tải dữ liệu...'})
         last = valid[-1]
         next_phien = last['phien'] + 1
-        pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
+        pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG, is_sharp=SHARP_FOCUS_MODE)
         _log_prediction(next_phien, pred)
         ai_stats = _log_stats(PREDICTION_LOG)
-        return jsonify({
-            'Id': 'LE MINH V13 MD5', 'Phien': str(next_phien), 'Ket_qua_truoc': last['result'].lower(),
-            'Xuc_xac_truoc': last['dice'], 'Diem_truoc': last['total'], 'Du_doan': pred['prediction'],
-            'Do_tin_cay': f"{pred['confidence']}%", 'Phuong_phap': pred['method'], 'Loai_cau': pred.get('cau_label', ''),
-            'Tin_hieu_chinh': pred.get('top_signals', []), 'Ly_do': pred['reason'], 'Da_dao': pred.get('flipped', False),
-            'Recovery': pred.get('recovery_active', False), 'So_tin_hieu': len(pred['signals']), 'Top_manh': pred.get('signals_strength', [])[:5],
-            'AI_dung': ai_stats['correct'], 'AI_sai': ai_stats['wrong'], 'AI_cho': ai_stats['pending'], 'Ti_le_AI': ai_stats['accuracy'],
-        })
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        
+        predicted_dice = _predict_dice(valid, pred['prediction'])
+        dice_str = "-".join(map(str, predicted_dice))
+        du_doan_format = f"{pred['prediction']} {dice_str}"
 
-@app.route('/lc79')
-def lc79():
-    try:
-        valid, success = _sync_history()
-        if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
-        if not valid: return jsonify({'Id': '@cskhleminh', 'Phien': None, 'Du_doan': None, 'Ket_qua': None, 'message': 'Đang tải dữ liệu...'})
-        last = valid[-1]
-        next_phien = last['phien'] + 1
-        pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
-        _log_prediction(next_phien, pred)
-        dice_str = last['dice'].replace(' + ', '-')
-        ai_stats = _log_stats(PREDICTION_LOG)
         return jsonify({
-            'Id': '@cskhleminh', 'Phien': str(next_phien), 'Du_doan': pred['prediction'], 'Do_tin_cay': f"{pred['confidence']}%",
-            'Phuong_phap': pred['method'], 'Loai_cau': pred.get('cau_label', ''), 'Ket_qua': f"{last['result']} {dice_str}",
-            'Xuc_xac_truoc': last['dice'], 'Diem_truoc': last['total'], 'Ket_qua_truoc': last['result'],
-            'Tin_hieu_chinh': pred.get('top_signals', []), 'Ly_do': pred['reason'], 'Da_dao': pred.get('flipped', False),
-            'Recovery': pred.get('recovery_active', False), 'So_tin_hieu': len(pred['signals']), 'Top_manh': pred.get('signals_strength', [])[:5],
-            'AI_dung': ai_stats['correct'], 'AI_sai': ai_stats['wrong'], 'AI_cho': ai_stats['pending'], 'Ti_le_AI': ai_stats['accuracy'],
+            'Id': 'LEMINH V1',
+            'Phien': str(next_phien),
+            'Ket_qua_truoc': last['result'].lower(),
+            'Xuc_xac_truoc': last['dice'],
+            'Diem_truoc': last['total'],
+            'Du_doan': du_doan_format,
+            'Tai_Xiu': pred['prediction'],
+            'Xuc_Xac_Du_Kien': predicted_dice,
+            'Do_tin_cay': f"{pred['confidence']}%",
+            'Sharp_Focus': SHARP_FOCUS_MODE,
+            'Phuong_phap': pred['method'],
+            'Loai_cau': pred.get('cau_label', ''),
+            'Tin_hieu_chinh': pred.get('top_signals', []),
+            'Ly_do': pred['reason'],
+            'Da_dao': pred.get('flipped', False),
+            'Recovery': pred.get('recovery_active', False),
+            'So_tin_hieu': len(pred['signals']),
+            'Top_manh': pred.get('signals_strength', [])[:5],
+            'AI_dung': ai_stats['correct'],
+            'AI_sai': ai_stats['wrong'],
+            'AI_cho': ai_stats['pending'],
+            'Ti_le_AI': ai_stats['accuracy'],
         })
     except Exception as e:
         traceback.print_exc()
@@ -696,16 +775,16 @@ def predict():
         if not valid: return jsonify({'ready': False, 'message': 'Đang tải dữ liệu...', 'prediction': None})
         last = valid[-1]
         next_phien = last['phien'] + 1
-        pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
+        pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG, is_sharp=SHARP_FOCUS_MODE)
         _log_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V13', 'last_phien': last['phien'], 'next_phien': next_phien, 'last_result': last['result'],
+            'version': 'LEMINH V1', 'last_phien': last['phien'], 'next_phien': next_phien, 'last_result': last['result'],
             'last_dice': last['dice'], 'last_total': last['total'], 'prediction': pred['prediction'], 'confidence': pred['confidence'],
             'method': pred['method'], 'cau': pred.get('cau', 'unknown'), 'cau_label': pred.get('cau_label', ''),
             'regime_strength': pred.get('regime_strength', 0.0), 'top_signals': pred.get('top_signals', []),
             'signals_strength': pred.get('signals_strength', []), 'reason': pred['reason'], 'signals': pred['signals'],
             'signals_count': len(pred['signals']), 'flipped': pred.get('flipped', False), 'recovery_active': pred.get('recovery_active', False),
-            'fail_streak': pred.get('fail_streak', 0), 'ai_stats': _log_stats(), 'timestamp': datetime.now().isoformat(),
+            'fail_streak': pred.get('fail_streak', 0), 'sharp_focus': SHARP_FOCUS_MODE, 'ai_stats': _log_stats(), 'timestamp': datetime.now().isoformat(),
         })
     except Exception as e:
         traceback.print_exc()
@@ -720,30 +799,9 @@ def stats_only():
         last = valid[-1] if valid else None
         return jsonify({
             'ready': True, 'ai_stats': _log_stats(), 'recovery': MultiStrategyPredictor._RECOVERY,
+            'sharp_focus': SHARP_FOCUS_MODE,
             'last_result': last['result'] if last else None, 'last_phien': last['phien'] if last else None,
             'last_dice': last['dice'] if last else None, 'timestamp': datetime.now().isoformat(),
-        })
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/algo_info')
-def algo_info():
-    try:
-        valid, success = _sync_history()
-        if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
-        if not valid: return jsonify({'ready': False, 'message': 'Đang tải dữ liệu...'})
-        pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
-        seq = [v['result'] for v in valid]
-        regime, strength = _detect_regime(seq)
-        return jsonify({
-            'version': 'V13', 'ready': True, 'prediction': pred['prediction'], 'confidence': pred['confidence'],
-            'method': pred['method'], 'regime': regime, 'regime_label': pred.get('cau_label', ''), 'regime_strength': round(strength, 3),
-            'top_signals': pred.get('top_signals', []), 'signals_strength': pred.get('signals_strength', []),
-            'all_signals': pred['signals'], 'signals_count': len(pred['signals']), 'flipped': pred.get('flipped', False),
-            'recovery_active': pred.get('recovery_active', False), 'fail_streak': pred.get('fail_streak', 0),
-            'recovery_state': MultiStrategyPredictor._RECOVERY, 'reason': pred['reason'],
-            'recent_runs': [{'value': v, 'len': l} for v, l in _runs(seq[-40:])],
         })
     except Exception as e:
         traceback.print_exc()
