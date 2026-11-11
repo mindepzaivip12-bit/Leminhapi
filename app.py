@@ -34,7 +34,8 @@ _FETCH_CACHE_TTL = 15.0
 SIGNAL_NAMES = {
     'markov': 'Markov', 'streak': 'Bẻ chuỗi', 'pattern': 'Khớp mẫu',
     'trend': 'Xu hướng', 'cycle': 'Chu kỳ', 'entropy': 'Entropy',
-    'table13': 'Bảng 13 ký tự',
+    'table13': 'Bảng 13 ký tự', 'cau': 'Bắt cầu',
+    'dice_bias': 'Lệch xúc xắc', 'parity': 'Chẵn lẻ',
 }
 
 
@@ -234,7 +235,7 @@ TABLE_13_RAW = {
     "TTTXTXXXXXXTT": "Tài", "TTTXTXXXXXXTX": "Tài", "TTTXTXXXXXXXT": "Xỉu", "TTTXTXXXXXXXX": "Xỉu",
 }
 
-# Sinh đầy đủ 8192 pattern bằng đối xứng T↔X
+# Sinh đầy đủ 8192 pattern bằng đối xứng
 TABLE_13 = dict(TABLE_13_RAW)
 for pat, res in list(TABLE_13_RAW.items()):
     if pat.startswith('X'):
@@ -291,32 +292,109 @@ def _to_seq_str(seq):
     return ''.join('T' if x == 'Tài' else 'X' for x in seq)
 
 
+# ========== PHÂN TÍCH CẦU CHUYÊN SÂU V14 ==========
+def analyze_cau(valid):
+    """
+    Phân tích cầu chuyên sâu:
+    - Loại cầu: Bệt Tài/Bệt Xỉu, Cầu 1-1, Cầu 2-2, Cầu 3-3, Cầu nghiêng, Hỗn hợp
+    - Xu hướng: Tài mạnh/Tài vừa/Xỉu mạnh/Xỉu vừa/Trung tính
+    - Trạng thái: đang bệt N phiên, đang đảo, đang chuyển cầu
+    """
+    result = {
+        'loai_cau': 'Hỗn hợp',
+        'xu_huong': 'Trung tính',
+        'trang_thai': '',
+        'do_manh': 'Yếu',
+        'canh_bao': None,
+    }
+    if not valid or len(valid) < 8:
+        return result
+
+    seq = [v['result'] for v in valid]
+    runs = _runs(seq[-30:])
+    if not runs:
+        return result
+
+    cur_val, cur_len = runs[-1]
+    recent = seq[-20:]
+    n = len(recent)
+    p_tai = sum(1 for x in recent if x == 'Tài') / n
+
+    # === LOẠI CẦU ===
+    if cur_len >= 3:
+        result['loai_cau'] = f'Bệt {cur_val}'
+        result['trang_thai'] = f'Đang bệt {cur_val} {cur_len} phiên'
+    else:
+        # Check cầu 2-2, 3-3, 1-1
+        last6 = [l for _, l in runs[-6:]]
+        if len(last6) >= 4:
+            if all(l == 1 for l in last6[-4:]):
+                result['loai_cau'] = 'Cầu 1-1'
+                result['trang_thai'] = 'Đảo liên tục'
+            elif all(l == 2 for l in last6[-3:]) and len(last6) >= 3:
+                result['loai_cau'] = 'Cầu 2-2'
+                result['trang_thai'] = f'Cầu 2-2 (đang {cur_len}/2)'
+            elif all(l == 3 for l in last6[-2:]) and len(last6) >= 2:
+                result['loai_cau'] = 'Cầu 3-3'
+                result['trang_thai'] = f'Cầu 3-3 (đang {cur_len}/3)'
+            else:
+                result['loai_cau'] = 'Hỗn hợp'
+                result['trang_thai'] = f'{cur_val} {cur_len} phiên'
+        else:
+            result['loai_cau'] = 'Hỗn hợp'
+            result['trang_thai'] = f'{cur_val} {cur_len} phiên'
+
+    # === XU HƯỚNG ===
+    if p_tai >= 0.70:
+        result['xu_huong'] = 'Tài mạnh'
+    elif p_tai >= 0.60:
+        result['xu_huong'] = 'Tài vừa'
+    elif p_tai <= 0.30:
+        result['xu_huong'] = 'Xỉu mạnh'
+    elif p_tai <= 0.40:
+        result['xu_huong'] = 'Xỉu vừa'
+    else:
+        result['xu_huong'] = 'Trung tính'
+
+    # === ĐỘ MẠNH ===
+    regime, strength = _detect_regime(seq)
+    if regime == 'streak' and strength >= 0.5:
+        result['do_manh'] = 'Rất mạnh'
+    elif regime in ('streak', 'alternation') and strength >= 0.4:
+        result['do_manh'] = 'Mạnh'
+    elif regime == 'short_run':
+        result['do_manh'] = 'Trung bình'
+    else:
+        result['do_manh'] = 'Yếu'
+
+    # === CẢNH BÁO ===
+    if cur_len >= 7:
+        result['canh_bao'] = f'Bệt {cur_val} đã {cur_len} phiên - nguy cơ bẻ cao'
+    elif cur_len >= 5 and regime == 'streak':
+        result['canh_bao'] = f'Bệt dài {cur_len} phiên - chú ý đảo'
+    elif regime == 'alternation' and cur_len <= 1:
+        result['canh_bao'] = 'Cầu đảo liên tục - bám nhịp'
+    elif regime == 'random':
+        result['canh_bao'] = 'Cầu nhiễu - nên giảm vốn'
+
+    return result
+
+
 def _generate_dice(prediction, confidence, seed_str=None):
-    """
-    Sinh 3 con xúc xắc (1-6) khớp dự đoán:
-    - Tài: tổng >= 11 (confidence cao → tổng càng cao)
-    - Xỉu: tổng <= 10 (confidence cao → tổng càng thấp)
-    Seed từ phiên → kết quả ổn định (cùng phiên luôn ra cùng bộ xúc xắc).
-    """
+    """Sinh 3 xúc xắc khớp dự đoán, seed theo phiên → ổn định."""
     if seed_str is None:
         seed_str = str(time.time())
     h = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
     rng = random.Random(h)
 
     if prediction == 'Tài':
-        if confidence >= 75:
-            target = rng.randint(13, 17)
-        elif confidence >= 65:
-            target = rng.randint(12, 15)
-        else:
-            target = rng.randint(11, 13)
+        if confidence >= 75: target = rng.randint(13, 17)
+        elif confidence >= 65: target = rng.randint(12, 15)
+        else: target = rng.randint(11, 13)
     else:
-        if confidence >= 75:
-            target = rng.randint(4, 8)
-        elif confidence >= 65:
-            target = rng.randint(6, 9)
-        else:
-            target = rng.randint(7, 10)
+        if confidence >= 75: target = rng.randint(4, 8)
+        elif confidence >= 65: target = rng.randint(6, 9)
+        else: target = rng.randint(7, 10)
 
     for _ in range(60):
         d1 = rng.randint(1, 6)
@@ -327,7 +405,7 @@ def _generate_dice(prediction, confidence, seed_str=None):
     return [5, 6, 4] if prediction == 'Tài' else [2, 3, 4]
 
 
-# ========== PREDICTOR ==========
+# ========== PREDICTOR V14 ==========
 class MultiStrategyPredictor:
     _TRACK = defaultdict(lambda: {'hit': 0, 'miss': 0})
     _RECENT = deque(maxlen=12)
@@ -445,6 +523,72 @@ class MultiStrategyPredictor:
     def _sig_table13(seq):
         return _lookup_table13(_to_seq_str(seq))
 
+    # === SIGNALS MỚI V14 ===
+    @staticmethod
+    def _sig_cau(valid):
+        """Bắt cầu theo phân tích cầu chuyên sâu"""
+        if not valid or len(valid) < 10:
+            return (None, 0, 0)
+        seq = [v['result'] for v in valid]
+        runs = _runs(seq)
+        if not runs: return (None, 0, 0)
+        cur_val, cur_len = runs[-1]
+        regime, strength = _detect_regime(seq)
+        opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
+
+        # Bệt dài → bẻ
+        if cur_len >= 6:
+            return (opp, min(62 + (cur_len - 6) * 3, 82), 1.45)
+        # Bệt trung bình trong streak regime → theo
+        if regime == 'streak' and 3 <= cur_len <= 4:
+            return (cur_val, min(60 + cur_len * 2, 72), 1.30)
+        # Đảo liên tục → theo nhịp đảo
+        if regime == 'alternation':
+            return (opp, 66, 1.40)
+        # Cầu 2-2: cur_len=1 → follow, cur_len=2 → break
+        recent_runs = [l for _, l in runs[-4:]]
+        if len(recent_runs) >= 3 and all(l == 2 for l in recent_runs[-3:]):
+            if cur_len == 1:
+                return (cur_val, 62, 1.25)
+            if cur_len == 2:
+                return (opp, 64, 1.30)
+        return (None, 0, 0)
+
+    @staticmethod
+    def _sig_dice_bias(valid):
+        """Lệch xúc xắc - dùng total của API gốc"""
+        if not valid or len(valid) < 15:
+            return (None, 0, 0)
+        recent = [v for v in valid[-30:] if v.get('total')]
+        if len(recent) < 15:
+            return (None, 0, 0)
+        tais = sum(1 for v in recent if v['result'] == 'Tài')
+        ratio = tais / len(recent)
+        # Lệch cực đoan → đảo
+        if ratio >= 0.70:
+            return ('Xỉu', min(55 + int((ratio - 0.6) * 100), 72), 0.85)
+        if ratio <= 0.30:
+            return ('Tài', min(55 + int((0.4 - ratio) * 100), 72), 0.85)
+        return (None, 0, 0)
+
+    @staticmethod
+    def _sig_parity(valid):
+        """Phân tích chẵn lẻ tổng xúc xắc"""
+        if not valid or len(valid) < 15:
+            return (None, 0, 0)
+        recent = [v for v in valid[-20:] if v.get('total')]
+        if len(recent) < 10:
+            return (None, 0, 0)
+        evens = sum(1 for v in recent if v['total'] % 2 == 0)
+        ratio_even = evens / len(recent)
+        # Chẵn lẻ lệch → có thể dự báo nhẹ
+        # Chỉ dùng khi rất lệch
+        if ratio_even >= 0.75:
+            return ('Xỉu', 55, 0.65)
+        if ratio_even <= 0.25:
+            return ('Tài', 55, 0.65)
+        return (None, 0, 0)
+
     @classmethod
     def _calibrate(cls, conf, log):
         evaluated = [(p, e) for p, e in log.items() if e.get('actual') is not None]
@@ -505,13 +649,16 @@ class MultiStrategyPredictor:
 
         regime, _ = _detect_regime(seq)
         raw = [
-            ('markov',  cls._sig_markov(seq)),
-            ('streak',  cls._sig_streak(seq, regime)),
-            ('pattern', cls._sig_pattern(seq)),
-            ('trend',   cls._sig_trend(seq)),
-            ('cycle',   cls._sig_cycle(seq)),
-            ('entropy', cls._sig_entropy(seq)),
-            ('table13', cls._sig_table13(seq)),
+            ('markov',    cls._sig_markov(seq)),
+            ('streak',    cls._sig_streak(seq, regime)),
+            ('pattern',   cls._sig_pattern(seq)),
+            ('trend',     cls._sig_trend(seq)),
+            ('cycle',     cls._sig_cycle(seq)),
+            ('entropy',   cls._sig_entropy(seq)),
+            ('table13',   cls._sig_table13(seq)),
+            ('cau',       cls._sig_cau(valid)),
+            ('dice_bias', cls._sig_dice_bias(valid)),
+            ('parity',    cls._sig_parity(valid)),
         ]
 
         signals = []
@@ -524,9 +671,9 @@ class MultiStrategyPredictor:
                 acc = tr['hit'] / (tr['hit'] + tr['miss'])
                 factor = max(0.4, min(0.55 + (acc - 0.5) * 2.8, 1.65))
                 weight *= factor
-            if regime == 'streak' and name in ('streak', 'markov'): weight *= 1.2
-            if regime == 'alternation' and name == 'streak': weight *= 1.15
-            if regime == 'short_run' and name == 'cycle': weight *= 1.15
+            if regime == 'streak' and name in ('streak', 'markov', 'cau'): weight *= 1.2
+            if regime == 'alternation' and name in ('streak', 'cau'): weight *= 1.15
+            if regime == 'short_run' and name in ('cycle', 'cau'): weight *= 1.15
             if cls._RECOVERY['active'] and name in ('trend', 'pattern'): weight *= 1.5
 
             p_norm = max(0.51, min(conf / 100.0, 0.90))
@@ -606,7 +753,7 @@ class MultiStrategyPredictor:
         }
 
 
-# ========== FETCH với cache + rate-limit ==========
+# ========== FETCH với cache + fallback ==========
 def fetch_sessions():
     global _LAST_FETCH_TIME, _LAST_FETCH_RESULT
     with _FETCH_LOCK:
@@ -628,11 +775,14 @@ def fetch_sessions():
                         for item in data['list']:
                             res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
                             dices = item.get('dices', [0, 0, 0])
+                            total = item.get('point', sum(dices))
                             rows.append({
                                 'phien': int(item['id']),
                                 'result': res,
                                 'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
-                                'total': item.get('point', sum(dices)),
+                                'total': total,
+                                'dices': dices,          # giữ raw
+                                'raw': item,             # giữ toàn bộ
                             })
                         _LAST_FETCH_TIME = now
                         _LAST_FETCH_RESULT = (rows, True)
@@ -640,8 +790,6 @@ def fetch_sessions():
             except Exception as e:
                 print(f"[API ERROR] attempt {attempt + 1}: {e}")
                 time.sleep(1 + attempt)
-
-        # Fail → trả cache cũ nếu có
         return _LAST_FETCH_RESULT
 
 
@@ -745,11 +893,11 @@ _load_log()
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>LE MINH MD5 V3</title>
+<title>LE MINH MD5 V2</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
-:root{--bg-1:#eff6ff;--card:#fff;--text:#0f172a;--text-soft:#475569;--muted:#94a3b8;--border:#dbeafe;--border-blue:#93c5fd;--border-strong:#60a5fa;--primary:#0ea5e9;--primary-dark:#0284c7;--tai:#0284c7;--tai-bg:#e0f2fe;--xiu:#0891b2;--xiu-bg:#cffafe;--ok:#059669;--ok-bg:#d1fae5;--fail:#dc2626;--fail-bg:#fee2e2;--warn:#d97706;--warn-bg:#fef3c7;--shadow:0 4px 12px rgba(14,165,233,.10);--shadow-lg:0 12px 32px rgba(2,132,199,.15)}
+:root{--bg-1:#eff6ff;--text:#0f172a;--text-soft:#475569;--muted:#94a3b8;--border:#dbeafe;--border-blue:#93c5fd;--border-strong:#60a5fa;--primary:#0ea5e9;--primary-dark:#0284c7;--tai:#0284c7;--tai-bg:#e0f2fe;--xiu:#0891b2;--xiu-bg:#cffafe;--ok:#059669;--ok-bg:#d1fae5;--fail:#dc2626;--fail-bg:#fee2e2;--warn:#d97706;--warn-bg:#fef3c7;--shadow:0 4px 12px rgba(14,165,233,.10);--shadow-lg:0 12px 32px rgba(2,132,199,.15)}
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans',sans-serif}
 body{background:linear-gradient(135deg,#eff6ff,#f0f9ff 35%,#e0f2fe 70%,#dbeafe);background-attachment:fixed;color:var(--text);min-height:100vh;padding-bottom:30px;font-size:13px}
 .header{background:rgba(255,255,255,.9);backdrop-filter:blur(20px);border-bottom:1px solid var(--border-blue);padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(14,165,233,.08)}
@@ -773,6 +921,10 @@ body{background:linear-gradient(135deg,#eff6ff,#f0f9ff 35%,#e0f2fe 70%,#dbeafe);
 .pred-conf-badge{background:linear-gradient(135deg,#dbeafe,#bfdbfe);border:1px solid var(--border-strong);color:var(--primary-dark);padding:7px 16px;border-radius:20px;font-weight:800;font-size:15px}
 .conf-bar{height:5px;background:var(--bg-1);border-radius:3px;overflow:hidden;margin-top:14px}
 .conf-bar-fill{height:100%;background:linear-gradient(90deg,#0284c7,#0ea5e9,#38bdf8);transition:width 1s ease}
+.info-row{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:12px}
+.info-item{background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px 12px;text-align:left}
+.info-label{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:.4px}
+.info-value{font-size:13px;font-weight:800;color:var(--primary-dark);margin-top:2px}
 .scorebar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
 .sc{background:#fff;border:1px solid var(--border);border-radius:11px;padding:12px 8px;text-align:center}
 .sc-l{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:4px}
@@ -795,9 +947,10 @@ tr:hover td{background:#eff6ff}
 .pred-mini{font-size:11px;font-weight:800}
 .pred-mini.tai{color:var(--tai)}.pred-mini.xiu{color:var(--xiu)}
 .loading{text-align:center;padding:30px;color:var(--primary);font-weight:600}
+.canh-bao{background:linear-gradient(135deg,#fef3c7,#fde68a);border:1px solid #fcd34d;color:#92400e;padding:8px 12px;border-radius:10px;font-size:11px;font-weight:700;margin-top:8px;text-align:center}
 @media(max-width:520px){th,td{padding:8px 4px;font-size:11px}.clock{display:none}.badge{min-width:44px;font-size:9px}.sc-v{font-size:17px}.pred-value{font-size:26px}}
 </style></head><body>
-<div class="header"><div class="logo"><span class="logo-text">LE MINH</span><span class="ver">V3</span></div>
+<div class="header"><div class="logo"><span class="logo-text">LE MINH</span><span class="ver">V2</span></div>
 <div class="actions"><div class="clock" id="clock">--:--:--</div>
 <button class="btn" onclick="manualRefresh(this)">↻</button>
 <button class="btn btn-reset" onclick="confirmReset()">Reset</button></div></div>
@@ -808,7 +961,13 @@ tr:hover td{background:#eff6ff}
 <div><div class="pred-label">Dự đoán phiên tiếp theo</div>
 <div class="pred-value" id="pred-value">—</div></div>
 <div class="pred-conf-badge" id="conf-badge">--%</div></div>
-<div class="conf-bar"><div class="conf-bar-fill" id="conf-bar" style="width:0%"></div></div></div>
+<div class="conf-bar"><div class="conf-bar-fill" id="conf-bar" style="width:0%"></div></div>
+<div class="info-row">
+<div class="info-item"><div class="info-label">Loại cầu</div><div class="info-value" id="cau-type">—</div></div>
+<div class="info-item"><div class="info-label">Xu hướng</div><div class="info-value" id="xu-huong">—</div></div>
+</div>
+<div id="canh-bao-box"></div>
+</div>
 <div class="scorebar">
 <div class="sc"><div class="sc-l">✓ Đúng</div><div class="sc-v ok" id="sc-correct">0</div></div>
 <div class="sc"><div class="sc-l">✗ Sai</div><div class="sc-v fail" id="sc-wrong">0</div></div>
@@ -843,6 +1002,11 @@ async function fetchData(){
       pv.className='pred-value '+(pred.prediction==='Tài'?'tai':'xiu');
       cb.innerText=pred.confidence+'%';
       bar.style.width=pred.confidence+'%';
+      document.getElementById('cau-type').innerText=pred.loai_cau||'—';
+      document.getElementById('xu-huong').innerText=pred.xu_huong||'—';
+      const cbBox=document.getElementById('canh-bao-box');
+      if(pred.canh_bao){cbBox.innerHTML=`<div class="canh-bao">⚠ ${pred.canh_bao}</div>`;}
+      else{cbBox.innerHTML='';}
     }
     const tb=document.getElementById('tbody');
     if(!rows.length){tb.innerHTML='<tr><td colspan="4" class="loading">Chưa có dữ liệu</td></tr>';return;}
@@ -862,7 +1026,7 @@ async function fetchData(){
       let evalCell='<span class="badge b-none">—</span>';
       if(row.ai_correct===true)evalCell='<span class="badge b-ok">✓ ĐÚNG</span>';
       else if(row.ai_correct===false)evalCell='<span class="badge b-fail">✗ SAI</span>';
-      else if(row.ai_prediction&&row.ai_correct===null)evalCell='<span class="badge b-pending">⏳ CHỜ</span>';
+      else if(row.ai_prediction&&row.ai_correct===null)evalCell='<span class="badge b-pending">CHỜ</span>';
       html+=`<tr ${trCls}><td>#${row.phien}${row.is_next?'<br><span style="font-size:9px;color:var(--primary)">NEXT</span>':''}</td><td>${predCell}</td><td>${resBadge}${dice}</td><td>${evalCell}</td></tr>`;
     });
     tb.innerHTML=html;
@@ -902,6 +1066,7 @@ def history():
                             'ai_stats': _log_stats()})
         next_phien = valid[-1]['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
+        cau_info = analyze_cau(valid)
         _log_prediction(next_phien, pred)
         ai_stats = _log_stats()
         out = [{
@@ -926,6 +1091,11 @@ def history():
             'prediction': {
                 'prediction': pred['prediction'],
                 'confidence': pred['confidence'],
+                'loai_cau': cau_info['loai_cau'],
+                'xu_huong': cau_info['xu_huong'],
+                'trang_thai': cau_info['trang_thai'],
+                'do_manh': cau_info['do_manh'],
+                'canh_bao': cau_info['canh_bao'],
             }
         })
     except Exception as e:
@@ -933,7 +1103,7 @@ def history():
         return jsonify({'error': str(e)}), 500
 
 
-# ========== /lc79md5 - GỌN ĐÚNG FORMAT YÊU CẦU ==========
+# ========== /lc79md5 - FORMAT MỚI V14 ==========
 @app.route('/lc79md5')
 def lc79md5():
     try:
@@ -942,27 +1112,24 @@ def lc79md5():
             return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
         if not valid:
             return jsonify({
-                'Id': '@cskhleminh',
-                'Phien': None,
-                'Du_doan': None,
-                'Xuc_xac': None,
-                'Do_tin_cay': None,
-                'Ket_qua_du_doan': None,
-                'message': 'Đang tải dữ liệu...'
+                'Id': '@cskhleminh', 'Phien': None,
+                'Du_doan': None, 'Xuc_xac': None,
+                'Do_tin_cay': None, 'Ket_qua_du_doan': None,
+                'Loai_cau': None, 'Xu_huong': None,
+                'Trang_thai_cau': None, 'Do_manh': None,
+                'Canh_bao': None, 'message': 'Đang tải dữ liệu...'
             })
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
+        cau_info = analyze_cau(valid)
         _log_prediction(next_phien, pred)
 
-        # Sinh xúc xắc gợi ý - seed theo phiên → ổn định
         dice = _generate_dice(
-            pred['prediction'],
-            pred['confidence'],
+            pred['prediction'], pred['confidence'],
             seed_str=f"phien_{next_phien}_{last['phien']}"
         )
         dice_str = f"{dice[0]}-{dice[1]}-{dice[2]}"
-        ket_qua = f"{pred['prediction']} {dice_str}"
 
         return jsonify({
             'Id': '@cskhleminh',
@@ -970,14 +1137,18 @@ def lc79md5():
             'Du_doan': pred['prediction'],
             'Xuc_xac': dice_str,
             'Do_tin_cay': f"{pred['confidence']}%",
-            'Ket_qua_du_doan': ket_qua,
+            'Ket_qua_du_doan': pred['prediction'],
+            'Loai_cau': cau_info['loai_cau'],
+            'Xu_huong': cau_info['xu_huong'],
+            'Trang_thai_cau': cau_info['trang_thai'],
+            'Do_manh': cau_info['do_manh'],
+            'Canh_bao': cau_info['canh_bao'],
         })
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 
-# ========== /lc79 - giữ nguyên format cũ ==========
 @app.route('/lc79')
 def lc79():
     try:
@@ -991,6 +1162,7 @@ def lc79():
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
+        cau_info = analyze_cau(valid)
         _log_prediction(next_phien, pred)
         dice_str = last['dice'].replace(' + ', '-')
         ket_qua = f"{last['result']} {dice_str}"
@@ -1001,7 +1173,11 @@ def lc79():
             'Du_doan': pred['prediction'],
             'Do_tin_cay': f"{pred['confidence']}%",
             'Phuong_phap': pred['method'],
-            'Loai_cau': pred.get('cau_label', ''),
+            'Loai_cau': cau_info['loai_cau'],
+            'Xu_huong': cau_info['xu_huong'],
+            'Trang_thai_cau': cau_info['trang_thai'],
+            'Do_manh': cau_info['do_manh'],
+            'Canh_bao': cau_info['canh_bao'],
             'Ket_qua': ket_qua,
             'Xuc_xac_truoc': last['dice'],
             'Diem_truoc': last['total'],
@@ -1034,9 +1210,10 @@ def predict():
         last = valid[-1]
         next_phien = last['phien'] + 1
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
+        cau_info = analyze_cau(valid)
         _log_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V13',
+            'version': 'V14',
             'last_phien': last['phien'],
             'next_phien': next_phien,
             'last_result': last['result'],
@@ -1045,8 +1222,11 @@ def predict():
             'prediction': pred['prediction'],
             'confidence': pred['confidence'],
             'method': pred['method'],
-            'cau': pred.get('cau', 'unknown'),
-            'cau_label': pred.get('cau_label', ''),
+            'cau': cau_info['loai_cau'],
+            'xu_huong': cau_info['xu_huong'],
+            'trang_thai': cau_info['trang_thai'],
+            'do_manh': cau_info['do_manh'],
+            'canh_bao': cau_info['canh_bao'],
             'top_signals': pred.get('top_signals', []),
             'signals_strength': pred.get('signals_strength', []),
             'reason': pred['reason'],
@@ -1095,16 +1275,18 @@ def algo_info():
         if not valid:
             return jsonify({'ready': False, 'message': 'Đang tải dữ liệu...'})
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
+        cau_info = analyze_cau(valid)
         seq = [v['result'] for v in valid]
         regime, strength = _detect_regime(seq)
         return jsonify({
-            'version': 'V13',
+            'version': 'V14',
             'ready': True,
             'prediction': pred['prediction'],
             'confidence': pred['confidence'],
             'method': pred['method'],
             'regime': regime,
             'regime_strength': round(strength, 3),
+            'cau_info': cau_info,
             'top_signals': pred.get('top_signals', []),
             'signals_strength': pred.get('signals_strength', []),
             'all_signals': pred['signals'],
