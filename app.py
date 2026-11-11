@@ -32,13 +32,13 @@ _LAST_FETCH_RESULT = ([], False)
 _FETCH_CACHE_TTL = 10.0
 
 SIGNAL_NAMES = {
-    'api_dice': 'API Xúc xắc',
-    'math_markov': 'Toán học Markov',
-    'math_streak': 'Toán học Bẻ chuỗi',
-    'pattern_tx': 'Mẫu TXXXTT',
+    'api_main': 'API Chính',
+    'api_invert': 'API Đảo',
+    'math_cau': 'Toán Cầu/Xu Hướng',
+    'math_pattern': 'Mẫu 13 Ký Tự',
 }
 
-# ========== BẢNG TRA CỨU 13 KÝ TỰ (TXXXTTXTT) ==========
+# ========== BẢNG TRA CỨU 13 KÝ TỰ ==========
 TABLE_13_RAW = {
     "TTTTTTTTTTTTT": "Tài", "TTTTTTTTTTTTX": "Tài", "TTTTTTTTTTTXT": "Xỉu", "TTTTTTTTTTTXX": "Xỉu",
     "TTTTTTTTTTXTT": "Tài", "TTTTTTTTTTXTX": "Tài", "TTTTTTTTTTXXT": "Tài", "TTTTTTTTTTXXX": "Tài",
@@ -286,71 +286,82 @@ def _generate_dice(prediction, confidence, seed_str=None):
     return [5, 6, 4] if prediction == 'Tài' else [2, 3, 4]
 
 
-# ========== PREDICTOR V16 (CHỈ 3 THUẬT TOÁN) ==========
+# ========== PREDICTOR V17 (4 THUẬT TOÁN) ==========
 class MultiStrategyPredictor:
     
     @staticmethod
-    def _algo_api_dice(valid):
-        """1. Thuật toán API: Lấy xúc xắc, tổng điểm để phát hiện bệt, chẵn lẻ"""
+    def _algo_api_main(valid):
+        """1. API Chính: Đọc độ lệch xúc xắc và tổng điểm"""
         if len(valid) < 15: return (None, 0, 0)
         recent = valid[-20:]
         
-        # Lệch Tài/Xỉu cực đoan
+        # Độ lệch Tài/Xỉu
         tais = sum(1 for v in recent if v['result'] == 'Tài')
         ratio = tais / len(recent)
-        if ratio >= 0.75: return ('Xỉu', 65, 1.2)
-        if ratio <= 0.25: return ('Tài', 65, 1.2)
+        if ratio >= 0.75: return ('Xỉu', 65, 1.2) # Lệch Tài quá -> bẻ
+        if ratio <= 0.25: return ('Tài', 65, 1.2) # Lệch Xỉu quá -> bẻ
         
-        # Chẵn lẻ tổng xúc xắc bất thường (dùng API gốc)
+        # Chẵn lẻ tổng điểm (dùng API gốc)
         totals = [v['total'] for v in recent if v.get('total')]
         if len(totals) >= 10:
             evens = sum(1 for t in totals if t % 2 == 0)
             r_even = evens / len(totals)
-            if r_even >= 0.80: return ('Xỉu', 60, 1.0) # Chẵn nhiều dễ ra Xỉu
-            if r_even <= 0.20: return ('Tài', 60, 1.0) # Lẻ nhiều dễ ra Tài
+            if r_even >= 0.80: return ('Xỉu', 62, 1.1)
+            if r_even <= 0.20: return ('Tài', 62, 1.1)
             
         return (None, 0, 0)
 
     @staticmethod
-    def _algo_math(seq):
-        """2. Thuật toán Toán học: Markov + Bẻ chuỗi (Bệt)"""
-        best = (None, 0, 0)
+    def _algo_api_invert(log):
+        """2. API Đảo: Nếu 2-3 phiên gần nhất AI đoán sai -> Đảo kết quả"""
+        if not log: return (None, 0, 0)
+        evaluated = [e for p, e in sorted(log.items(), reverse=True) if e.get('actual') is not None][:3]
+        if len(evaluated) < 2: return (None, 0, 0)
         
-        # --- Markov bậc 2, 3 ---
-        for order in (3, 2):
-            if len(seq) < order + 5: continue
-            trans = defaultdict(lambda: {'Tài': 0, 'Xỉu': 0})
-            for i in range(len(seq) - order):
-                trans[tuple(seq[i:i + order])][seq[i + order]] += 1
-            c = trans[tuple(seq[-order:])]
-            t = c['Tài'] + c['Xỉu']
-            if t < 3: continue
-            p = (c['Tài'] + 1) / (t + 2)
-            if p >= 0.70 or p <= 0.30:
-                pred = 'Tài' if p >= 0.5 else 'Xỉu'
-                conf = min(int(max(p, 1 - p) * 100) + order * 2, 82)
-                if conf > best[1]:
-                    best = (pred, conf, 1.4)
-                    
-        # --- Bẻ chuỗi (Bệt) ---
-        runs = _runs(seq)
-        if runs:
-            cur_val, cur_len = runs[-1]
-            opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
-            # Bệt dài thì bẻ
-            if cur_len >= 6:
-                conf = min(62 + (cur_len - 6) * 3, 82)
-                if conf > best[1]: best = (opp, conf, 1.5)
-            # Bệt vừa thì theo
-            elif 3 <= cur_len <= 4:
-                conf = min(58 + cur_len * 2, 70)
-                if conf > best[1]: best = (cur_val, conf, 1.2)
-                
-        return best
+        wrong_count = sum(1 for e in evaluated if not e.get('correct'))
+        
+        if wrong_count >= 2:
+            # Đoán sai 2-3 lần liên tiếp, đưa ra tín hiệu đảo so với dự đoán gần nhất
+            last_pred = evaluated[0]['prediction']
+            inverted_pred = 'Xỉu' if last_pred == 'Tài' else 'Tài'
+            conf = 68 if wrong_count == 3 else 62
+            return (inverted_pred, conf, 1.5)
+            
+        return (None, 0, 0)
 
     @staticmethod
-    def _algo_pattern13(seq):
-        """3. Thuật toán Mẫu 13 ký tự (TXXXTTXTT)"""
+    def _algo_math_cau(seq):
+        """3. Toán Cầu/Xu Hướng: Phân tích cầu bệt, 1-1, 2-2, 3-3"""
+        if len(seq) < 10: return (None, 0, 0)
+        runs = _runs(seq)
+        if not runs: return (None, 0, 0)
+        
+        cur_val, cur_len = runs[-1]
+        opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
+        
+        last5 = [l for _, l in runs[-5:]]
+        
+        # Bắt cầu 1-1 (Đảo liên tục)
+        if len(last5) >= 4 and all(l == 1 for l in last5[-4:]):
+            return (opp, 66, 1.4)
+            
+        # Bắt cầu 2-2
+        if len(last5) >= 3 and all(l == 2 for l in last5[-3:]):
+            return (cur_val if cur_len == 1 else opp, 64, 1.3)
+            
+        # Bắt bệt dài (Bẻ)
+        if cur_len >= 6:
+            return (opp, min(62 + (cur_len - 6) * 3, 82), 1.45)
+            
+        # Theo bệt vừa (3-4 phiên)
+        if 3 <= cur_len <= 4:
+            return (cur_val, min(58 + cur_len * 2, 70), 1.2)
+            
+        return (None, 0, 0)
+
+    @staticmethod
+    def _algo_math_pattern13(seq):
+        """4. Mẫu 13 Ký Tự (TXXXTTXTT)"""
         return _lookup_table13(_to_seq_str(seq))
 
     @classmethod
@@ -372,16 +383,18 @@ class MultiStrategyPredictor:
                     'reason': 'Khởi động', 'flipped': False, 'cau': 'unknown', 'cau_label': '',
                     'recovery_active': False, 'fail_streak': 0}
 
-        # Gọi 3 thuật toán lõi
-        s_api = cls._algo_api_dice(valid)
-        s_math = cls._algo_math(seq)
-        s_pat13 = cls._algo_pattern13(seq)
+        # Gọi 4 thuật toán lõi
+        s_api = cls._algo_api_main(valid)
+        s_invert = cls._algo_api_invert(log)
+        s_cau = cls._algo_math_cau(seq)
+        s_pat13 = cls._algo_math_pattern13(seq)
 
-        # Tổng hợp (Weighted Log-Odds)
+        # Tổng hợp
         raw_signals = [
-            ('api_dice', s_api, 1.2),
-            ('math_markov', s_math, 1.4),
-            ('pattern_tx', s_pat13, 1.6),
+            ('api_main', s_api, 1.2),
+            ('api_invert', s_invert, 1.5),  # Ưu tiên đảo nếu sai nhiều
+            ('math_cau', s_cau, 1.4),
+            ('math_pattern', s_pat13, 1.6), # Ưu tiên mẫu 13 cao nhất
         ]
 
         signals = []
@@ -406,23 +419,26 @@ class MultiStrategyPredictor:
                     'reason': '', 'flipped': False, 'cau': 'unknown', 'cau_label': '',
                     'recovery_active': False, 'fail_streak': 0}
 
-        # Tính xác suất cuối
-        scaled = log_odds / max(total_w, 1.0) * 2.2  # Tăng độ nhạy
+        # Tính xác suất
+        scaled = log_odds / max(total_w, 1.0) * 2.2
         p_tai = 1.0 / (1.0 + math.exp(-scaled))
         pred = 'Tài' if p_tai >= 0.5 else 'Xỉu'
         raw_conf = int((p_tai if pred == 'Tài' else 1 - p_tai) * 100)
 
-        # Đồng thuận (Agreement) - Nếu cả 3 thống nhất thì cực mạnh
+        # Đồng thuận (Agreement)
         votes_tai = sum(1 for s in signals if s['prediction'] == 'Tài')
         votes_xiu = len(signals) - votes_tai
         agreement = max(votes_tai, votes_xiu) / len(signals)
         
         bonus = 0
-        if agreement == 1.0: bonus += 8  # Cả 3 cùng chí hướng
-        elif agreement >= 0.66: bonus += 4
+        if agreement == 1.0: bonus += 10  # Cả 4 cùng chí hướng
+        elif agreement >= 0.75: bonus += 5
 
         final_conf = max(50, min(raw_conf + bonus, 88))
         
+        # Nếu API Đảo can thiệp và thắng vote
+        flipped = any(s['name'] == 'api_invert' for s in signals) and votes_tai != votes_xiu
+
         signals.sort(key=lambda s: s['weight'] * s['confidence'], reverse=True)
         top = [SIGNAL_NAMES.get(s['name'], s['name']) for s in signals[:3]]
 
@@ -434,8 +450,8 @@ class MultiStrategyPredictor:
                                   'prediction': s['prediction'], 'confidence': s['confidence'],
                                   'weight': s['weight'], 'strength': round(s['weight'] * s['confidence'], 1)}
                                  for s in signals],
-            'reason': 'API + Toán + Mẫu', 'flipped': False, 'cau': 'math', 'cau_label': '',
-            'recovery_active': False, 'fail_streak': 0,
+            'reason': 'API Chính + API Đảo + Cầu + Mẫu', 'flipped': flipped, 'cau': 'math', 'cau_label': '',
+            'recovery_active': flipped, 'fail_streak': 0,
         }
 
 
@@ -511,7 +527,7 @@ def _update_prediction_log(valid):
         PREDICTION_LOG[phien] = {
             'prediction': pred['prediction'], 'confidence': pred['confidence'],
             'method': pred['method'], 'actual': actual, 'correct': (pred['prediction'] == actual),
-            'logged_at': datetime.now().isoformat(), 'retroactive': True, 'flipped': False}
+            'logged_at': datetime.now().isoformat(), 'retroactive': True, 'flipped': pred.get('flipped', False)}
         changed = True
     if len(PREDICTION_LOG) > MAX_LOG_SIZE:
         for k in sorted(PREDICTION_LOG.keys())[:len(PREDICTION_LOG) - MAX_LOG_SIZE]: del PREDICTION_LOG[k]
@@ -523,7 +539,7 @@ def _log_prediction(phien, pred_result):
     PREDICTION_LOG[phien] = {
         'prediction': pred_result['prediction'], 'confidence': pred_result['confidence'],
         'method': pred_result['method'], 'actual': None, 'correct': None,
-        'logged_at': datetime.now().isoformat(), 'retroactive': False, 'flipped': False}
+        'logged_at': datetime.now().isoformat(), 'retroactive': False, 'flipped': pred_result.get('flipped', False)}
     _save_log()
 
 def _log_stats(log=None):
@@ -536,11 +552,11 @@ def _log_stats(log=None):
 
 _load_log()
 
-# ========== HTML GIAO DIỆN (ĐÃ TINH GỌN) ==========
+# ========== HTML GIAO DIỆN ==========
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>LE MINH MD5 V3</title>
+<title>LE MINH MD5 V17</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -592,7 +608,7 @@ tr:hover td{background:#eff6ff}
 .loading{text-align:center;padding:30px;color:var(--primary);font-weight:600}
 @media(max-width:520px){th,td{padding:8px 4px;font-size:11px}.clock{display:none}.badge{min-width:44px;font-size:9px}.sc-v{font-size:17px}.pred-value{font-size:26px}}
 </style></head><body>
-<div class="header"><div class="logo"><span class="logo-text">LE MINH</span><span class="ver">V3</span></div>
+<div class="header"><div class="logo"><span class="logo-text">LE MINH</span><span class="ver">V1</span></div>
 <div class="actions"><div class="clock" id="clock">--:--:--</div>
 <button class="btn" onclick="manualRefresh(this)">↻</button>
 <button class="btn btn-reset" onclick="confirmReset()">Reset</button></div></div>
@@ -804,7 +820,7 @@ def predict():
         pred = MultiStrategyPredictor.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V16', 'next_phien': next_phien, 'last_result': last['result'],
+            'version': 'V17', 'next_phien': next_phien, 'last_result': last['result'],
             'prediction': pred['prediction'], 'confidence': pred['confidence'],
             'method': pred['method'], 'top_signals': pred.get('top_signals', []),
             'reason': pred['reason'], 'flipped': pred.get('flipped', False),
