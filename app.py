@@ -89,101 +89,71 @@ def _to_seq_str(seq):
     return ''.join('T' if x == 'Tài' else 'X' for x in seq)
 
 # ============================================================
-# 🎯 MATH PREDICTOR V21 — NÂNG CAO + DATA LỊCH SỬ
+# 🎯 MATH PREDICTOR V22 — FIX LỖI 2-3 TAY MẠNH MẼ
 # ============================================================
-class MathPredictorV21:
+class MathPredictorV22:
     """
-    V21: Adaptive Weighting + Data History + Advanced Markov
+    V22: Tự động Fix Lỗi (Recovery) khi thua 2-3 tay.
     """
 
-    # ---------- 1) MARKOV (NÂNG CAO) ----------
     @staticmethod
     def _markov(seq):
         if len(seq) < 12:
             return (None, 0)
         n = len(seq)
         scores = []
-        
-        # Bậc 1 & 2 & 3
         for order, min_cnt, w_mult in [(1, 6, 1.0), (2, 5, 1.2), (3, 4, 1.4), (4, 3, 1.6)]:
-            if n < order + 4:
-                continue
+            if n < order + 4: continue
             trans = defaultdict(lambda: [0, 0])
             for i in range(n - order):
                 key = tuple(seq[i:i+order])
                 nxt = 0 if seq[i+order] == 'Tài' else 1
                 trans[key][nxt] += 1
-            
             cur_key = tuple(seq[-order:])
             cnt = trans.get(cur_key)
             if cnt and sum(cnt) >= min_cnt:
                 t = sum(cnt)
                 p_tai = cnt[0] / t
-                if p_tai >= 0.68:
-                    scores.append(('Tài', p_tai * 70, w_mult))
-                elif p_tai <= 0.32:
-                    scores.append(('Xỉu', (1-p_tai) * 70, w_mult))
+                if p_tai >= 0.68: scores.append(('Tài', p_tai * 70, w_mult))
+                elif p_tai <= 0.32: scores.append(('Xỉu', (1-p_tai) * 70, w_mult))
 
         if not scores: return (None, 0)
         w_tai = sum(s[1] * s[2] for s in scores if s[0] == 'Tài')
         w_xiu = sum(s[1] * s[2] for s in scores if s[0] == 'Xỉu')
         if w_tai + w_xiu == 0: return (None, 0)
-        if w_tai >= w_xiu:
-            return ('Tài', min(int(w_tai / (w_tai + w_xiu) * 88), 85))
+        if w_tai >= w_xiu: return ('Tài', min(int(w_tai / (w_tai + w_xiu) * 88), 85))
         return ('Xỉu', min(int(w_xiu / (w_tai + w_xiu) * 88), 85))
 
-    # ---------- 2) PATTERN 13 ----------
     @staticmethod
     def _pattern(seq):
         return _lookup_pattern(_to_seq_str(seq))
 
-    # ---------- 3) CẦU HỌC + CHỐNG BÁM BỆT ẢO ----------
     @staticmethod
     def _cau(seq):
-        if len(seq) < 6:
-            return (None, 0)
+        if len(seq) < 6: return (None, 0)
         runs = _runs(seq)
         cur_val, cur_len = runs[-1]
         opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
         lens = [l for _, l in runs]
 
-        # Nếu bệt đạt 6-8 tay (vùng nguy hiểm) -> Bẻ
-        if 6 <= cur_len <= 8:
-            return (opp, 78)
-        # Bệt >= 9 -> Bẻ mạnh
-        if cur_len >= 9:
-            return (opp, 86)
-        # Bệt 3-5 -> Theo
-        if 3 <= cur_len <= 5:
-            return (cur_val, min(62 + (cur_len - 3) * 3, 75))
+        if 6 <= cur_len <= 8: return (opp, 78)
+        if cur_len >= 9: return (opp, 86)
+        if 3 <= cur_len <= 5: return (cur_val, min(62 + (cur_len - 3) * 3, 75))
         
-        # Cầu 1-1
-        if len(lens) >= 4 and all(l == 1 for l in lens[-4:]):
-            return (opp, 74)
-        if len(lens) >= 3 and all(l == 1 for l in lens[-3:]):
-            return (opp, 68)
-        # Cầu 2-2
-        if len(lens) >= 3 and lens[-3:] == [2, 2, 2]:
-            return (opp if cur_len == 2 else cur_val, 70)
-        # Cầu 3-3
-        if len(lens) >= 2 and lens[-2:] == [3, 3]:
-            return (cur_val if cur_len < 3 else opp, 68)
-        # Zigzag
-        if len(lens) >= 3 and lens[-3] == 1 and lens[-2] == 1 and lens[-1] >= 2:
-            return (opp, 64)
+        if len(lens) >= 4 and all(l == 1 for l in lens[-4:]): return (opp, 74)
+        if len(lens) >= 3 and all(l == 1 for l in lens[-3:]): return (opp, 68)
+        if len(lens) >= 3 and lens[-3:] == [2, 2, 2]: return (opp if cur_len == 2 else cur_val, 70)
+        if len(lens) >= 2 and lens[-2:] == [3, 3]: return (cur_val if cur_len < 3 else opp, 68)
+        if len(lens) >= 3 and lens[-3] == 1 and lens[-2] == 1 and lens[-1] >= 2: return (opp, 64)
         return (None, 0)
 
-    # ---------- 4) XU HƯỚNG + ENTROPY ----------
     @staticmethod
     def _trend(seq):
-        if len(seq) < 14:
-            return (None, 0)
+        if len(seq) < 14: return (None, 0)
         recent = seq[-24:]
         ratio = recent.count('Tài') / len(recent)
-        
         if ratio >= 0.82: return ('Xỉu', min(72 + int((ratio - 0.8) * 80), 88))
         if ratio <= 0.18: return ('Tài', min(72 + int((0.2 - ratio) * 80), 88))
-        
         if 0 < ratio < 1:
             entropy = -(ratio * math.log2(ratio) + (1 - ratio) * math.log2(1 - ratio))
             if entropy < 0.85:
@@ -191,45 +161,53 @@ class MathPredictorV21:
                 if ratio <= 0.36: return ('Xỉu', 66)
         return (None, 0)
 
-    # ---------- 5) DATA LỊCH SỬ (MỚI) ----------
     @staticmethod
     def _data_history(seq, valid_full):
-        """Tìm kiếm các đoạn quá khứ giống hiện tại để xem kết quả sau đó."""
-        if len(seq) < 15:
-            return (None, 0)
-        
-        current_pat = seq[-6:]  # Xét 6 tay gần nhất
-        tai_next = 0
-        xiu_next = 0
-        
-        # Quét toàn bộ lịch sử (tối đa 500 phiên gần nhất để nhẹ máy)
+        if len(seq) < 15: return (None, 0)
+        current_pat = seq[-6:]
+        tai_next = 0; xiu_next = 0
         hist_seq = [v['result'] for v in valid_full[-500:]]
         for i in range(len(hist_seq) - 7):
             if hist_seq[i:i+6] == current_pat:
                 if hist_seq[i+6] == 'Tài': tai_next += 1
                 else: xiu_next += 1
-                
         total = tai_next + xiu_next
-        if total >= 3:  # Cần ít nhất 3 lần khớp trong quá khứ
-            if tai_next / total >= 0.65:
-                return ('Tài', min(int(tai_next / total * 80), 85))
-            elif xiu_next / total >= 0.65:
-                return ('Xỉu', min(int(xiu_next / total * 80), 85))
+        if total >= 3:
+            if tai_next / total >= 0.65: return ('Tài', min(int(tai_next / total * 80), 85))
+            elif xiu_next / total >= 0.65: return ('Xỉu', min(int(xiu_next / total * 80), 85))
         return (None, 0)
 
-    # ---------- 6) RECOVERY ----------
+    # ---------- RECOVERY SIÊU CẤP (FIX LỖI) ----------
     @staticmethod
     def _recovery(log):
+        """Thua 2-3 tay tự động đảo chiều bằng mọi giá."""
         if not log: return (None, 0)
+        # Lấy 5 phiên đã có kết quả gần nhất
         evaluated = [e for _, e in sorted(log.items(), reverse=True) if e.get('actual') is not None][:5]
-        if len(evaluated) < 2: return (None, 0)
-        wrong = sum(1 for e in evaluated if not e.get('correct'))
+        if not evaluated: return (None, 0)
         
-        if wrong >= 3: return ('Xỉu', 82)
-        if wrong >= 2: return ('Xỉu', 75)
+        wrong_streak = 0
+        for e in evaluated:
+            if not e.get('correct'):
+                wrong_streak += 1
+            else:
+                break
+                
+        # THUA 3 TAY LIÊN TIẾP -> FIX LỖI MẠNH (Ép đảo)
+        if wrong_streak >= 3:
+            # Lấy dự đoán của tay vừa thua để đảo ngược lại
+            last_pred = evaluated[0]['prediction']
+            fix_pred = 'Xỉu' if last_pred == 'Tài' else 'Tài'
+            return (fix_pred, 85)
+            
+        # THUA 2 TAY LIÊN TIẾP -> BÁO ĐỘNG ĐỎ
+        if wrong_streak == 2:
+            last_pred = evaluated[0]['prediction']
+            fix_pred = 'Xỉu' if last_pred == 'Tài' else 'Tài'
+            return (fix_pred, 78)
+            
         return (None, 0)
 
-    # ---------- MAIN ----------
     @classmethod
     def predict(cls, valid, log=None):
         if log is None: log = PREDICTION_LOG
@@ -240,22 +218,24 @@ class MathPredictorV21:
             opp = 'Xỉu' if seq[-1] == 'Tài' else 'Tài'
             return cls._fallback(opp, 55, 'Khởi động')
 
-        # Lấy tín hiệu
         raw = [
             ('markov',   cls._markov(seq),                1.8),
             ('pattern',  cls._pattern(seq),               1.6),
             ('cau',      cls._cau(seq),                   1.7),
             ('trend',    cls._trend(seq),                 1.4),
-            ('data',     cls._data_history(seq, valid),   1.9), # Trọng số cao cho Data
-            ('recovery', cls._recovery(log),              2.2),
+            ('data',     cls._data_history(seq, valid),   1.9),
+            ('recovery', cls._recovery(log),              3.0), # Trọng số áp đảo
         ]
 
         signals = []
         log_odds = 0.0
         total_w = 0.0
         recovery_active = False
+        
+        # Lấy thông tin recovery để ép kết quả
+        rec_pred, rec_conf = cls._recovery(log)
+        if rec_pred: recovery_active = True
 
-        # ADAPTIVE WEIGHTING (Dựa trên log đúng/sai gần đây)
         recent_log = [e for _, e in sorted(log.items(), reverse=True) if e.get('actual') is not None][:10]
         algo_perf = defaultdict(lambda: {'ok': 1, 'fail': 1})
         for e in recent_log:
@@ -267,12 +247,11 @@ class MathPredictorV21:
         for name, (pred, conf), base_w in raw:
             if not pred or conf <= 0: continue
             
-            # Điều chỉnh trọng số theo phong độ
             dynamic_w = base_w
-            if name in algo_perf:
+            if name in algo_perf and not recovery_active: # Nếu đang fix lỗi thì ko giảm trọng số rec
                 perf = algo_perf[name]
                 win_rate = perf['ok'] / (perf['ok'] + perf['fail'])
-                dynamic_w *= (0.5 + win_rate)  # Nếu win rate thấp -> giảm mạnh trọng số
+                dynamic_w *= (0.5 + win_rate)
 
             p_norm = max(0.51, min(conf / 100.0, 0.94))
             lr = p_norm / (1 - p_norm)
@@ -281,7 +260,6 @@ class MathPredictorV21:
             log_odds += dynamic_w * (1.0 if pred == 'Tài' else -1.0) * (lr - 1.0)
             total_w += dynamic_w
             signals.append({'name': name, 'prediction': pred, 'confidence': conf, 'weight': round(dynamic_w, 2)})
-            if name == 'recovery': recovery_active = True
 
         if len(signals) < 2 or total_w == 0:
             return cls._fallback_final(seq, signals)
@@ -297,27 +275,19 @@ class MathPredictorV21:
         bonus = 12 if agreement == 1.0 else (6 if agreement >= 0.75 else 0)
         final_conf = max(50, min(raw_conf + bonus, 92))
 
-        if recovery_active and pred != 'Xỉu':
-            pred = 'Xỉu'
-            final_conf = max(final_conf, 72)
+        # ÉP BUỘC FIX LỖI NẾU THUA 2-3 TAY
+        if recovery_active and rec_pred:
+            pred = rec_pred
+            final_conf = max(final_conf, rec_conf)
 
-        # Sắp xếp tín hiệu mạnh nhất lên đầu
         signals.sort(key=lambda s: s['weight'] * s['confidence'], reverse=True)
-        
-        # Chỉ hiển thị 2 tín hiệu chính để giao diện gọn
         top = [s['name'].upper() for s in signals[:2]]
 
         return {
             'prediction': pred, 'confidence': final_conf,
             'method': ' • '.join(top) if top else 'Tổng hợp',
             'signals': signals, 'top_signals': top,
-            'signals_strength': [{'name': s['name'],
-                                  'display': s['name'].capitalize(),
-                                  'prediction': s['prediction'],
-                                  'confidence': s['confidence'],
-                                  'weight': s['weight'],
-                                  'strength': round(s['weight'] * s['confidence'], 1)}
-                                 for s in signals],
+            'signals_strength': [],
             'flipped': recovery_active, 'recovery_active': recovery_active, 'skip': False,
         }
 
@@ -340,9 +310,8 @@ class MathPredictorV21:
                 'signals': signals, 'top_signals': ['Bẻ nhịp'], 'signals_strength': [],
                 'flipped': False, 'recovery_active': False, 'skip': False}
 
-
-MathPredictor = MathPredictorV21
-MultiStrategyPredictor = MathPredictorV21
+MathPredictor = MathPredictorV22
+MultiStrategyPredictor = MathPredictorV22
 
 # ============================================================
 # FETCH & SYSTEM
@@ -414,7 +383,7 @@ def _update_prediction_log(valid):
         if phien in PREDICTION_LOG or phien <= RESET_ID: continue
         history_before = [by_phien[p] for p in phien_list[:i]]
         if len(history_before) < 5: continue
-        pred = MathPredictorV21.predict(history_before, log=PREDICTION_LOG)
+        pred = MathPredictorV22.predict(history_before, log=PREDICTION_LOG)
         actual = by_phien[phien]['result']
         PREDICTION_LOG[phien] = {
             'prediction': pred['prediction'], 'confidence': pred['confidence'],
@@ -448,12 +417,12 @@ def _log_stats(log=None):
 _load_log()
 
 # ============================================================
-# GIAO DIỆN LE MINH BON — V21 (Ẩn bớt tag, gọn gàng)
+# GIAO DIỆN LE MINH BON — V22 (Xoá Panel Tín Hiệu)
 # ============================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>LE MINH BON SECH</title>
+<title>LE MINH BON </title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -482,7 +451,7 @@ body{background:radial-gradient(ellipse 80% 60% at 50% 0%,#dbeafe 0%,transparent
 .brand-title{font-size:15px;font-weight:800;letter-spacing:.3px;background:linear-gradient(90deg,#0284c7,#0ea5e9,#38bdf8,#0284c7);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:shine 4s linear infinite}
 @keyframes shine{to{background-position:200% center}}
 .brand-sub{font-size:9px;color:var(--muted);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-top:2px}
-.brand-ver{font-size:9px;background:linear-gradient(135deg,#7c3aed,#0ea5e9);color:#fff;padding:3px 8px;border-radius:20px;font-weight:800;margin-left:6px;letter-spacing:.3px}
+.brand-ver{font-size:9px;background:linear-gradient(135deg,#dc2626,#f59e0b);color:#fff;padding:3px 8px;border-radius:20px;font-weight:800;margin-left:6px;letter-spacing:.3px}
 .header-right{display:flex;gap:8px;align-items:center}
 .clock{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--primary-dark);font-weight:700;background:#fff;padding:7px 12px;border-radius:9px;border:1px solid var(--border)}
 .btn{background:#fff;color:var(--text-soft);border:1px solid var(--border);padding:8px 14px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:5px}
@@ -507,21 +476,9 @@ body{background:radial-gradient(ellipse 80% 60% at 50% 0%,#dbeafe 0%,transparent
 .conf-bar{height:6px;background:#e0f2fe;border-radius:3px;overflow:hidden;margin-top:4px}
 .conf-bar-fill{height:100%;background:linear-gradient(90deg,#0284c7,#0ea5e9,#38bdf8);transition:width 1.2s cubic-bezier(.4,0,.2,1);border-radius:3px;box-shadow:0 0 8px rgba(14,165,233,.5)}
 
-/* ẨN BỚT TAG: Chỉ hiển thị gọn gàng */
 .method-row{margin-top:12px;display:flex;flex-wrap:wrap;gap:6px; min-height: 24px;}
 .method-tag{font-size:10px;background:linear-gradient(135deg,#ede9fe,#ddd6fe);color:#6d28d9;border:1px solid #c4b5fd;padding:4px 10px;border-radius:12px;font-weight:700}
-
-/* Bảng tín hiệu */
-.signals-card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
-.signals-title{font-size:11px;font-weight:800;color:var(--text-soft);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;display:flex;align-items:center;gap:6px}
-.signals-title::before{content:'⚡';font-size:14px}
-.signal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
-.signal{background:linear-gradient(135deg,#f0f9ff,#fff);border:1px solid var(--border);border-radius:10px;padding:9px 11px;transition:all .2s}
-.signal-name{font-size:10px;color:var(--muted);font-weight:700;margin-bottom:3px;text-transform:capitalize}
-.signal-val{font-size:14px;font-weight:800;display:flex;justify-content:space-between;align-items:center}
-.signal-val.tai{color:var(--tai)}
-.signal-val.xiu{color:var(--xiu)}
-.signal-conf{font-size:10px;color:var(--muted);font-weight:700;font-family:'JetBrains Mono',monospace}
+.method-tag.fixing{background:linear-gradient(135deg,#fee2e2,#fecaca);color:#b91c1c;border-color:#fca5a5; animation:pulse 1.5s infinite}
 
 .scorebar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
 .sc{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 6px;text-align:center;box-shadow:var(--shadow-sm);transition:all .2s;position:relative;overflow:hidden}
@@ -559,7 +516,7 @@ tr:hover td{background:#f0f9ff}
   .wrap{padding:12px}.pred-value{font-size:36px}.conf-badge{font-size:14px;padding:7px 14px}.clock{display:none}
   .scorebar{grid-template-columns:repeat(2,1fr)}th,td{padding:8px 4px;font-size:11px}
   .badge{min-width:44px;font-size:9px;padding:3px 8px}.brand-sub{display:none}
-  .signal-grid{grid-template-columns:repeat(2,1fr)}.btn{padding:7px 10px;font-size:11px}
+  .btn{padding:7px 10px;font-size:11px}
 }
 </style></head><body>
 
@@ -567,8 +524,8 @@ tr:hover td{background:#f0f9ff}
   <div class="brand">
     <div class="brand-icon">🎲</div>
     <div class="brand-text">
-      <div class="brand-title">LE MINH BON<span class="brand-ver">DZ</span></div>
-      <div class="brand-sub">Pro Prediction Tool</div>
+      <div class="brand-title">LE MINH BON<span class="brand-ver">V3</span></div>
+      <div class="brand-sub">Auto Fix Tool</div>
     </div>
   </div>
   <div class="header-right">
@@ -586,17 +543,11 @@ tr:hover td{background:#f0f9ff}
         <div>
           <div class="pred-label">Dự đoán phiên tiếp theo</div>
           <div class="pred-value" id="pred-value">—</div>
-          <!-- Ẩn bớt tag chỉ hiển thị 2 tag chính -->
           <div class="method-row" id="method-row"></div>
         </div>
         <div class="conf-badge" id="conf-badge">--%</div>
       </div>
       <div class="conf-bar"><div class="conf-bar-fill" id="conf-bar" style="width:0%"></div></div>
-    </div>
-
-    <div class="signals-card">
-      <div class="signals-title">Tín hiệu đang hoạt động</div>
-      <div class="signal-grid" id="signal-grid"></div>
     </div>
 
     <div class="scorebar">
@@ -619,11 +570,21 @@ tr:hover td{background:#f0f9ff}
 <script>
 let isResetting=false;
 let lastPred=null;
+let lastRecovery=false;
 
-function showToast(msg){
+function showToast(msg, isDanger=false){
   const t=document.getElementById('toast');
-  t.innerText=msg;t.classList.add('show');
-  clearTimeout(t._tm);t._tm=setTimeout(()=>t.classList.remove('show'),3000);
+  if(isDanger){
+    t.style.background = 'linear-gradient(135deg,#dc2626,#ef4444)';
+    t.style.boxShadow = '0 12px 32px rgba(220,38,38,.4)';
+  } else {
+    t.style.background = 'linear-gradient(135deg,#0284c7,#0ea5e9)';
+    t.style.boxShadow = '0 12px 32px rgba(2,132,199,.4)';
+  }
+  t.innerText=msg;
+  t.classList.add('show');
+  clearTimeout(t._tm);
+  t._tm=setTimeout(()=>t.classList.remove('show'),4000);
 }
 
 function manualRefresh(btn){
@@ -664,35 +625,32 @@ async function fetchData(){
       cb.innerText=pred.confidence+'%';
       bar.style.width=pred.confidence+'%';
 
-      // Chỉ hiển thị 2 tag chính
       mr.innerHTML='';
-      (pred.top_signals||[]).slice(0, 2).forEach(s=>{
+      
+      // Hiển thị cảnh báo nếu đang bật chế độ Recovery (Fix Lỗi)
+      if(pred.flipped){
         const tag=document.createElement('span');
-        tag.className='method-tag';tag.innerText=s;
+        tag.className='method-tag fixing';
+        tag.innerText='⚠️ ĐANG FIX LỖI (THUA 2-3 TAY)';
         mr.appendChild(tag);
-      });
+        
+        if(!lastRecovery){
+           showToast('⚠️ Kích hoạt Fix Lỗi: Tự động đảo chiều!', true);
+        }
+      } else {
+        // Hiển thị tags bình thường
+        (pred.top_signals||[]).slice(0, 2).forEach(s=>{
+          const tag=document.createElement('span');
+          tag.className='method-tag';tag.innerText=s;
+          mr.appendChild(tag);
+        });
+      }
+      lastRecovery = pred.flipped;
 
-      if(lastPred && lastPred!==pred.prediction){
+      if(lastPred && lastPred!==pred.prediction && !pred.flipped){
         showToast('🎯 Dự đoán đổi → '+pred.prediction+' ('+pred.confidence+'%)');
       }
       lastPred=pred.prediction;
-    }
-
-    // Render bảng tín hiệu (chỉ hiển thị 3-4 cái chính)
-    const sg=document.getElementById('signal-grid');
-    if(pred && pred.signals_strength && pred.signals_strength.length){
-      sg.innerHTML=pred.signals_strength.slice(0, 4).map(s=>{
-        const cls=s.prediction==='Tài'?'tai':'xiu';
-        return `<div class="signal">
-          <div class="signal-name">${s.display}</div>
-          <div class="signal-val ${cls}">
-            <span>${s.prediction}</span>
-            <span class="signal-conf">${s.confidence}%</span>
-          </div>
-        </div>`;
-      }).join('');
-    } else {
-      sg.innerHTML='<div class="signal"><div class="signal-name">Chưa có tín hiệu</div></div>';
     }
 
     const tb=document.getElementById('tbody');
@@ -736,7 +694,7 @@ async function confirmReset(){
       const d=await res.json();
       isResetting=false;
       if(d.status==='success'){
-        lastPred=null;fetchData();showToast('✅ Đã reset thành công');
+        lastPred=null;lastRecovery=false;fetchData();showToast('✅ Đã reset thành công');
       } else throw new Error(d.message||'Lỗi');
     }catch(e){isResetting=false;Swal.fire({title:'Lỗi!',text:e.message,icon:'error'});}
   });
@@ -761,7 +719,7 @@ def history():
         if not valid: return jsonify({'ready': False, 'message': 'Đang tải dữ liệu...', 'ai_stats': _log_stats()})
         
         next_phien = valid[-1]['phien'] + 1
-        pred = MathPredictorV21.predict(valid, log=PREDICTION_LOG)
+        pred = MathPredictorV22.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
 
         out = [{'phien': next_phien, 'is_next': True, 'result': 'Chờ...', 'dice': '? + ? + ?', 'total': None, 'ai_prediction': pred['prediction'], 'ai_confidence': pred['confidence'], 'ai_correct': None}]
@@ -775,7 +733,6 @@ def history():
             'prediction': {
                 'prediction': pred['prediction'], 'confidence': pred['confidence'],
                 'method': pred['method'], 'top_signals': pred.get('top_signals', []),
-                'signals_strength': pred.get('signals_strength', []),
                 'flipped': pred.get('flipped', False)
             }
         })
@@ -789,10 +746,10 @@ def lc79md5():
         if not success: return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
         if not valid: return jsonify({'Id': '@cskhleminh', 'Phien': None, 'Du_doan': None, 'Xuc_xac': None, 'Do_tin_cay': None, 'Ket_qua_du_doan': None, 'message': 'Đang tải dữ liệu...'})
         last = valid[-1]; next_phien = last['phien'] + 1
-        pred = MathPredictorV21.predict(valid, log=PREDICTION_LOG)
+        pred = MathPredictorV22.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
         
-        h = int(hashlib.md5(f"v21_{next_phien}_{last['phien']}".encode()).hexdigest(), 16)
+        h = int(hashlib.md5(f"v22_{next_phien}_{last['phien']}".encode()).hexdigest(), 16)
         rng = random.Random(h)
         target = rng.randint(12, 17) if pred['prediction'] == 'Tài' else rng.randint(4, 9)
         dice = [1,1,1]
@@ -816,7 +773,7 @@ def lc79():
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid: return jsonify({'Id': '@cskhleminh', 'Phien': None, 'Du_doan': None, 'Ket_qua': None, 'message': 'Đang tải dữ liệu...'})
         last = valid[-1]; next_phien = last['phien'] + 1
-        pred = MathPredictorV21.predict(valid, log=PREDICTION_LOG)
+        pred = MathPredictorV22.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
         ai_stats = _log_stats(PREDICTION_LOG)
         return jsonify({
@@ -836,13 +793,13 @@ def predict():
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid: return jsonify({'ready': False, 'prediction': None})
         last = valid[-1]; next_phien = last['phien'] + 1
-        pred = MathPredictorV21.predict(valid, log=PREDICTION_LOG)
+        pred = MathPredictorV22.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V21-Pro', 'next_phien': next_phien, 'last_result': last['result'],
+            'version': 'V22-Fixer', 'next_phien': next_phien, 'last_result': last['result'],
             'prediction': pred['prediction'], 'confidence': pred['confidence'],
             'method': pred['method'], 'top_signals': pred.get('top_signals', []),
-            'signals_strength': pred.get('signals_strength', []), 'ai_stats': _log_stats(),
+            'flipped': pred.get('flipped', False), 'ai_stats': _log_stats(),
         })
     except Exception as e:
         traceback.print_exc(); return jsonify({'error': str(e)}), 500
