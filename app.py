@@ -62,12 +62,12 @@ TABLE_13 = _build_pattern_table()
 
 def _lookup_pattern(seq_str):
     if len(seq_str) < 13:
-        return None, 0
+        return None, 0.0
     pat = seq_str[-13:]
     res = TABLE_13.get(pat)
     if res:
-        return res, 76
-    return None, 0
+        return res, 76.5  # Trả về số thực %
+    return None, 0.0
 
 # ============================================================
 # HELPERS
@@ -89,17 +89,12 @@ def _to_seq_str(seq):
     return ''.join('T' if x == 'Tài' else 'X' for x in seq)
 
 # ============================================================
-# 🎯 MATH PREDICTOR V22 — FIX LỖI 2-3 TAY MẠNH MẼ
+# 🎯 MATH PREDICTOR V23 — NÂNG CẤP % THỰC TẾ
 # ============================================================
-class MathPredictorV22:
-    """
-    V22: Tự động Fix Lỗi (Recovery) khi thua 2-3 tay.
-    """
-
+class MathPredictorV23:
     @staticmethod
     def _markov(seq):
-        if len(seq) < 12:
-            return (None, 0)
+        if len(seq) < 12: return (None, 0.0)
         n = len(seq)
         scores = []
         for order, min_cnt, w_mult in [(1, 6, 1.0), (2, 5, 1.2), (3, 4, 1.4), (4, 3, 1.6)]:
@@ -114,15 +109,15 @@ class MathPredictorV22:
             if cnt and sum(cnt) >= min_cnt:
                 t = sum(cnt)
                 p_tai = cnt[0] / t
-                if p_tai >= 0.68: scores.append(('Tài', p_tai * 70, w_mult))
-                elif p_tai <= 0.32: scores.append(('Xỉu', (1-p_tai) * 70, w_mult))
+                if p_tai >= 0.68: scores.append(('Tài', p_tai * 80, w_mult))
+                elif p_tai <= 0.32: scores.append(('Xỉu', (1-p_tai) * 80, w_mult))
 
-        if not scores: return (None, 0)
+        if not scores: return (None, 0.0)
         w_tai = sum(s[1] * s[2] for s in scores if s[0] == 'Tài')
         w_xiu = sum(s[1] * s[2] for s in scores if s[0] == 'Xỉu')
-        if w_tai + w_xiu == 0: return (None, 0)
-        if w_tai >= w_xiu: return ('Tài', min(int(w_tai / (w_tai + w_xiu) * 88), 85))
-        return ('Xỉu', min(int(w_xiu / (w_tai + w_xiu) * 88), 85))
+        if w_tai + w_xiu == 0: return (None, 0.0)
+        if w_tai >= w_xiu: return ('Tài', min(round(w_tai / (w_tai + w_xiu) * 95, 1), 88.5))
+        return ('Xỉu', min(round(w_xiu / (w_tai + w_xiu) * 95, 1), 88.5))
 
     @staticmethod
     def _pattern(seq):
@@ -130,101 +125,94 @@ class MathPredictorV22:
 
     @staticmethod
     def _cau(seq):
-        if len(seq) < 6: return (None, 0)
+        if len(seq) < 6: return (None, 0.0)
         runs = _runs(seq)
         cur_val, cur_len = runs[-1]
         opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
         lens = [l for _, l in runs]
 
-        if 6 <= cur_len <= 8: return (opp, 78)
-        if cur_len >= 9: return (opp, 86)
-        if 3 <= cur_len <= 5: return (cur_val, min(62 + (cur_len - 3) * 3, 75))
+        if 6 <= cur_len <= 8: return (opp, 78.5)
+        if cur_len >= 9: return (opp, 86.2)
+        if 3 <= cur_len <= 5: return (cur_val, min(round(62.0 + (cur_len - 3) * 3.5, 1), 75.0))
         
-        if len(lens) >= 4 and all(l == 1 for l in lens[-4:]): return (opp, 74)
-        if len(lens) >= 3 and all(l == 1 for l in lens[-3:]): return (opp, 68)
-        if len(lens) >= 3 and lens[-3:] == [2, 2, 2]: return (opp if cur_len == 2 else cur_val, 70)
-        if len(lens) >= 2 and lens[-2:] == [3, 3]: return (cur_val if cur_len < 3 else opp, 68)
-        if len(lens) >= 3 and lens[-3] == 1 and lens[-2] == 1 and lens[-1] >= 2: return (opp, 64)
-        return (None, 0)
+        if len(lens) >= 4 and all(l == 1 for l in lens[-4:]): return (opp, 74.8)
+        if len(lens) >= 3 and all(l == 1 for l in lens[-3:]): return (opp, 68.3)
+        if len(lens) >= 3 and lens[-3:] == [2, 2, 2]: return (opp if cur_len == 2 else cur_val, 70.1)
+        if len(lens) >= 2 and lens[-2:] == [3, 3]: return (cur_val if cur_len < 3 else opp, 68.7)
+        if len(lens) >= 3 and lens[-3] == 1 and lens[-2] == 1 and lens[-1] >= 2: return (opp, 64.9)
+        return (None, 0.0)
 
     @staticmethod
     def _trend(seq):
-        if len(seq) < 14: return (None, 0)
+        if len(seq) < 14: return (None, 0.0)
         recent = seq[-24:]
         ratio = recent.count('Tài') / len(recent)
-        if ratio >= 0.82: return ('Xỉu', min(72 + int((ratio - 0.8) * 80), 88))
-        if ratio <= 0.18: return ('Tài', min(72 + int((0.2 - ratio) * 80), 88))
+        if ratio >= 0.82: return ('Xỉu', min(round(72.0 + (ratio - 0.8) * 100, 1), 88.0))
+        if ratio <= 0.18: return ('Tài', min(round(72.0 + (0.2 - ratio) * 100, 1), 88.0))
         if 0 < ratio < 1:
             entropy = -(ratio * math.log2(ratio) + (1 - ratio) * math.log2(1 - ratio))
             if entropy < 0.85:
-                if ratio >= 0.64: return ('Tài', 66)
-                if ratio <= 0.36: return ('Xỉu', 66)
-        return (None, 0)
+                if ratio >= 0.64: return ('Tài', 66.4)
+                if ratio <= 0.36: return ('Xỉu', 66.4)
+        return (None, 0.0)
 
     @staticmethod
     def _data_history(seq, valid_full):
-        if len(seq) < 15: return (None, 0)
+        """Quét 1000 phiên để tìm Pattern khớp"""
+        if len(seq) < 15: return (None, 0.0)
         current_pat = seq[-6:]
         tai_next = 0; xiu_next = 0
-        hist_seq = [v['result'] for v in valid_full[-500:]]
+        hist_seq = [v['result'] for v in valid_full[-1000:]]
         for i in range(len(hist_seq) - 7):
             if hist_seq[i:i+6] == current_pat:
                 if hist_seq[i+6] == 'Tài': tai_next += 1
                 else: xiu_next += 1
         total = tai_next + xiu_next
         if total >= 3:
-            if tai_next / total >= 0.65: return ('Tài', min(int(tai_next / total * 80), 85))
-            elif xiu_next / total >= 0.65: return ('Xỉu', min(int(xiu_next / total * 80), 85))
-        return (None, 0)
+            if tai_next / total >= 0.65: return ('Tài', min(round(tai_next / total * 90, 1), 85.5))
+            elif xiu_next / total >= 0.65: return ('Xỉu', min(round(xiu_next / total * 90, 1), 85.5))
+        return (None, 0.0)
 
-    # ---------- RECOVERY SIÊU CẤP (FIX LỖI) ----------
     @staticmethod
     def _recovery(log):
-        """Thua 2-3 tay tự động đảo chiều bằng mọi giá."""
-        if not log: return (None, 0)
-        # Lấy 5 phiên đã có kết quả gần nhất
+        if not log: return (None, 0.0)
         evaluated = [e for _, e in sorted(log.items(), reverse=True) if e.get('actual') is not None][:5]
-        if not evaluated: return (None, 0)
+        if not evaluated: return (None, 0.0)
         
         wrong_streak = 0
         for e in evaluated:
-            if not e.get('correct'):
-                wrong_streak += 1
-            else:
-                break
+            if not e.get('correct'): wrong_streak += 1
+            else: break
                 
-        # THUA 3 TAY LIÊN TIẾP -> FIX LỖI MẠNH (Ép đảo)
         if wrong_streak >= 3:
-            # Lấy dự đoán của tay vừa thua để đảo ngược lại
             last_pred = evaluated[0]['prediction']
             fix_pred = 'Xỉu' if last_pred == 'Tài' else 'Tài'
-            return (fix_pred, 85)
+            return (fix_pred, 90.5)  # Độ tự tin cực cao
             
-        # THUA 2 TAY LIÊN TIẾP -> BÁO ĐỘNG ĐỎ
         if wrong_streak == 2:
             last_pred = evaluated[0]['prediction']
             fix_pred = 'Xỉu' if last_pred == 'Tài' else 'Tài'
-            return (fix_pred, 78)
+            return (fix_pred, 82.3)
             
-        return (None, 0)
+        return (None, 0.0)
 
     @classmethod
     def predict(cls, valid, log=None):
         if log is None: log = PREDICTION_LOG
-        if not valid: return cls._fallback('Tài', 50, 'Random')
+        if not valid: return cls._fallback('Tài', 50.0, 'Random')
 
         seq = [v['result'] for v in valid]
         if len(seq) < 5:
             opp = 'Xỉu' if seq[-1] == 'Tài' else 'Tài'
-            return cls._fallback(opp, 55, 'Khởi động')
+            return cls._fallback(opp, 55.0, 'Khởi động')
 
         raw = [
             ('markov',   cls._markov(seq),                1.8),
             ('pattern',  cls._pattern(seq),               1.6),
             ('cau',      cls._cau(seq),                   1.7),
             ('trend',    cls._trend(seq),                 1.4),
-            ('data',     cls._data_history(seq, valid),   1.9),
-            ('recovery', cls._recovery(log),              3.0), # Trọng số áp đảo
+            ('data',     cls._data_history(seq, valid),   2.0), # Tăng trọng số data
+            ('recovery', cls._recovery(log),              3.0), 
         ]
 
         signals = []
@@ -232,7 +220,6 @@ class MathPredictorV22:
         total_w = 0.0
         recovery_active = False
         
-        # Lấy thông tin recovery để ép kết quả
         rec_pred, rec_conf = cls._recovery(log)
         if rec_pred: recovery_active = True
 
@@ -248,12 +235,12 @@ class MathPredictorV22:
             if not pred or conf <= 0: continue
             
             dynamic_w = base_w
-            if name in algo_perf and not recovery_active: # Nếu đang fix lỗi thì ko giảm trọng số rec
+            if name in algo_perf and not recovery_active:
                 perf = algo_perf[name]
                 win_rate = perf['ok'] / (perf['ok'] + perf['fail'])
                 dynamic_w *= (0.5 + win_rate)
 
-            p_norm = max(0.51, min(conf / 100.0, 0.94))
+            p_norm = max(0.51, min(conf / 100.0, 0.96)) # Nới rộng trần lên 96%
             lr = p_norm / (1 - p_norm)
             if pred == 'Xỉu': lr = 1.0 / lr
             
@@ -264,18 +251,17 @@ class MathPredictorV22:
         if len(signals) < 2 or total_w == 0:
             return cls._fallback_final(seq, signals)
 
-        scaled = log_odds / total_w * 2.5
+        scaled = log_odds / total_w * 3.2 # Hệ số khuếch đại tăng để ra số lẻ rõ hơn
         p_tai = 1.0 / (1.0 + math.exp(-scaled))
         pred = 'Tài' if p_tai >= 0.5 else 'Xỉu'
-        raw_conf = int((p_tai if pred == 'Tài' else 1 - p_tai) * 100)
+        raw_conf = (p_tai if pred == 'Tài' else 1 - p_tai) * 100.0
 
         votes_tai = sum(1 for s in signals if s['prediction'] == 'Tài')
         votes_xiu = len(signals) - votes_tai
         agreement = max(votes_tai, votes_xiu) / len(signals)
-        bonus = 12 if agreement == 1.0 else (6 if agreement >= 0.75 else 0)
-        final_conf = max(50, min(raw_conf + bonus, 92))
+        bonus = 15.5 if agreement == 1.0 else (8.2 if agreement >= 0.75 else 0.0)
+        final_conf = max(50.0, min(round(raw_conf + bonus, 1), 98.0))
 
-        # ÉP BUỘC FIX LỖI NẾU THUA 2-3 TAY
         if recovery_active and rec_pred:
             pred = rec_pred
             final_conf = max(final_conf, rec_conf)
@@ -284,34 +270,30 @@ class MathPredictorV22:
         top = [s['name'].upper() for s in signals[:2]]
 
         return {
-            'prediction': pred, 'confidence': final_conf,
+            'prediction': pred, 'confidence': round(final_conf, 1),
             'method': ' • '.join(top) if top else 'Tổng hợp',
             'signals': signals, 'top_signals': top,
-            'signals_strength': [],
-            'flipped': recovery_active, 'recovery_active': recovery_active, 'skip': False,
+            'flipped': recovery_active, 'recovery_active': recovery_active,
         }
 
     @staticmethod
     def _fallback(pred, conf, method):
         return {'prediction': pred, 'confidence': conf, 'method': method,
-                'signals': [], 'top_signals': [], 'signals_strength': [],
-                'flipped': False, 'recovery_active': False, 'skip': False}
+                'signals': [], 'top_signals': [], 'flipped': False, 'recovery_active': False}
 
     @classmethod
     def _fallback_final(cls, seq, signals):
         runs = _runs(seq)
         cur_val, cur_len = runs[-1]
         if cur_len >= 3:
-            return {'prediction': cur_val, 'confidence': 58, 'method': 'Bệt cơ bản',
-                    'signals': signals, 'top_signals': ['Bệt'], 'signals_strength': [],
-                    'flipped': False, 'recovery_active': False, 'skip': False}
+            return {'prediction': cur_val, 'confidence': 58.5, 'method': 'Bệt cơ bản',
+                    'signals': signals, 'top_signals': ['Bệt'], 'flipped': False, 'recovery_active': False}
         opp = 'Xỉu' if cur_val == 'Tài' else 'Tài'
-        return {'prediction': opp, 'confidence': 54, 'method': 'Bẻ nhịp',
-                'signals': signals, 'top_signals': ['Bẻ nhịp'], 'signals_strength': [],
-                'flipped': False, 'recovery_active': False, 'skip': False}
+        return {'prediction': opp, 'confidence': 54.3, 'method': 'Bẻ nhịp',
+                'signals': signals, 'top_signals': ['Bẻ nhịp'], 'flipped': False, 'recovery_active': False}
 
-MathPredictor = MathPredictorV22
-MultiStrategyPredictor = MathPredictorV22
+MathPredictor = MathPredictorV23
+MultiStrategyPredictor = MathPredictorV23
 
 # ============================================================
 # FETCH & SYSTEM
@@ -383,7 +365,7 @@ def _update_prediction_log(valid):
         if phien in PREDICTION_LOG or phien <= RESET_ID: continue
         history_before = [by_phien[p] for p in phien_list[:i]]
         if len(history_before) < 5: continue
-        pred = MathPredictorV22.predict(history_before, log=PREDICTION_LOG)
+        pred = MathPredictorV23.predict(history_before, log=PREDICTION_LOG)
         actual = by_phien[phien]['result']
         PREDICTION_LOG[phien] = {
             'prediction': pred['prediction'], 'confidence': pred['confidence'],
@@ -417,7 +399,7 @@ def _log_stats(log=None):
 _load_log()
 
 # ============================================================
-# GIAO DIỆN LE MINH BON — V22 (Xoá Panel Tín Hiệu)
+# GIAO DIỆN LE MINH BON — V23 (Nâng cấp hiển thị %)
 # ============================================================
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi"><head><meta charset="UTF-8">
@@ -451,7 +433,7 @@ body{background:radial-gradient(ellipse 80% 60% at 50% 0%,#dbeafe 0%,transparent
 .brand-title{font-size:15px;font-weight:800;letter-spacing:.3px;background:linear-gradient(90deg,#0284c7,#0ea5e9,#38bdf8,#0284c7);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:shine 4s linear infinite}
 @keyframes shine{to{background-position:200% center}}
 .brand-sub{font-size:9px;color:var(--muted);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-top:2px}
-.brand-ver{font-size:9px;background:linear-gradient(135deg,#dc2626,#f59e0b);color:#fff;padding:3px 8px;border-radius:20px;font-weight:800;margin-left:6px;letter-spacing:.3px}
+.brand-ver{font-size:9px;background:linear-gradient(135deg,#059669,#10b981);color:#fff;padding:3px 8px;border-radius:20px;font-weight:800;margin-left:6px;letter-spacing:.3px}
 .header-right{display:flex;gap:8px;align-items:center}
 .clock{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--primary-dark);font-weight:700;background:#fff;padding:7px 12px;border-radius:9px;border:1px solid var(--border)}
 .btn{background:#fff;color:var(--text-soft);border:1px solid var(--border);padding:8px 14px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:5px}
@@ -524,8 +506,8 @@ tr:hover td{background:#f0f9ff}
   <div class="brand">
     <div class="brand-icon">🎲</div>
     <div class="brand-text">
-      <div class="brand-title">LE MINH BON<span class="brand-ver">V3</span></div>
-      <div class="brand-sub">Auto Fix Tool</div>
+      <div class="brand-title">LE MINH BON<span class="brand-ver">Bon</span></div>
+      <div class="brand-sub">LE MINH SI CO LA</div>
     </div>
   </div>
   <div class="header-right">
@@ -609,7 +591,8 @@ async function fetchData(){
     document.getElementById('sc-correct').innerText=ai.correct||0;
     document.getElementById('sc-wrong').innerText=ai.wrong||0;
     document.getElementById('sc-pending').innerText=ai.pending||0;
-    document.getElementById('sc-rate').innerText=(ai.rate||0)+'%';
+    // Hiển thị tỷ lệ chuẩn 1 số lẻ
+    document.getElementById('sc-rate').innerText=(ai.rate||0).toFixed(1)+'%';
 
     const pred=d.prediction, rows=d.rows||[];
     const pv=document.getElementById('pred-value');
@@ -622,12 +605,14 @@ async function fetchData(){
     } else {
       pv.innerText=pred.prediction;
       pv.className='pred-value '+(pred.prediction==='Tài'?'tai':'xiu');
-      cb.innerText=pred.confidence+'%';
-      bar.style.width=pred.confidence+'%';
+      
+      // HIỂN THỊ % CHUẨN SỐ LẺ
+      const confStr = parseFloat(pred.confidence).toFixed(1) + '%';
+      cb.innerText = confStr;
+      bar.style.width = pred.confidence + '%';
 
       mr.innerHTML='';
       
-      // Hiển thị cảnh báo nếu đang bật chế độ Recovery (Fix Lỗi)
       if(pred.flipped){
         const tag=document.createElement('span');
         tag.className='method-tag fixing';
@@ -638,7 +623,6 @@ async function fetchData(){
            showToast('⚠️ Kích hoạt Fix Lỗi: Tự động đảo chiều!', true);
         }
       } else {
-        // Hiển thị tags bình thường
         (pred.top_signals||[]).slice(0, 2).forEach(s=>{
           const tag=document.createElement('span');
           tag.className='method-tag';tag.innerText=s;
@@ -648,7 +632,7 @@ async function fetchData(){
       lastRecovery = pred.flipped;
 
       if(lastPred && lastPred!==pred.prediction && !pred.flipped){
-        showToast('🎯 Dự đoán đổi → '+pred.prediction+' ('+pred.confidence+'%)');
+        showToast('🎯 Dự đoán đổi → '+pred.prediction+' ('+confStr+')');
       }
       lastPred=pred.prediction;
     }
@@ -663,7 +647,8 @@ async function fetchData(){
       let predCell='<span class="badge b-none">—</span>';
       if(row.ai_prediction){
         const cls=row.ai_prediction==='Tài'?'tai':'xiu';
-        predCell=`<span class="pred-mini ${cls}">${row.ai_prediction}</span><br><span class="pred-conf-mini">${row.ai_confidence||0}%</span>`;
+        const miniConf = parseFloat(row.ai_confidence||0).toFixed(1);
+        predCell=`<span class="pred-mini ${cls}">${row.ai_prediction}</span><br><span class="pred-conf-mini">${miniConf}%</span>`;
       }
       let resBadge='<span class="badge b-none">—</span>';
       if(row.result==='Tài')resBadge='<span class="badge b-tai">TÀI</span>';
@@ -719,7 +704,7 @@ def history():
         if not valid: return jsonify({'ready': False, 'message': 'Đang tải dữ liệu...', 'ai_stats': _log_stats()})
         
         next_phien = valid[-1]['phien'] + 1
-        pred = MathPredictorV22.predict(valid, log=PREDICTION_LOG)
+        pred = MathPredictorV23.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
 
         out = [{'phien': next_phien, 'is_next': True, 'result': 'Chờ...', 'dice': '? + ? + ?', 'total': None, 'ai_prediction': pred['prediction'], 'ai_confidence': pred['confidence'], 'ai_correct': None}]
@@ -746,10 +731,10 @@ def lc79md5():
         if not success: return jsonify({'error': 'Không thể kết nối MD5 API'}), 500
         if not valid: return jsonify({'Id': '@cskhleminh', 'Phien': None, 'Du_doan': None, 'Xuc_xac': None, 'Do_tin_cay': None, 'Ket_qua_du_doan': None, 'message': 'Đang tải dữ liệu...'})
         last = valid[-1]; next_phien = last['phien'] + 1
-        pred = MathPredictorV22.predict(valid, log=PREDICTION_LOG)
+        pred = MathPredictorV23.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
         
-        h = int(hashlib.md5(f"v22_{next_phien}_{last['phien']}".encode()).hexdigest(), 16)
+        h = int(hashlib.md5(f"v23_{next_phien}_{last['phien']}".encode()).hexdigest(), 16)
         rng = random.Random(h)
         target = rng.randint(12, 17) if pred['prediction'] == 'Tài' else rng.randint(4, 9)
         dice = [1,1,1]
@@ -773,7 +758,7 @@ def lc79():
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid: return jsonify({'Id': '@cskhleminh', 'Phien': None, 'Du_doan': None, 'Ket_qua': None, 'message': 'Đang tải dữ liệu...'})
         last = valid[-1]; next_phien = last['phien'] + 1
-        pred = MathPredictorV22.predict(valid, log=PREDICTION_LOG)
+        pred = MathPredictorV23.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
         ai_stats = _log_stats(PREDICTION_LOG)
         return jsonify({
@@ -793,10 +778,10 @@ def predict():
         if not success: return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid: return jsonify({'ready': False, 'prediction': None})
         last = valid[-1]; next_phien = last['phien'] + 1
-        pred = MathPredictorV22.predict(valid, log=PREDICTION_LOG)
+        pred = MathPredictorV23.predict(valid, log=PREDICTION_LOG)
         _log_prediction(next_phien, pred)
         return jsonify({
-            'version': 'V22-Fixer', 'next_phien': next_phien, 'last_result': last['result'],
+            'version': 'V23-Pro', 'next_phien': next_phien, 'last_result': last['result'],
             'prediction': pred['prediction'], 'confidence': pred['confidence'],
             'method': pred['method'], 'top_signals': pred.get('top_signals', []),
             'flipped': pred.get('flipped', False), 'ai_stats': _log_stats(),
