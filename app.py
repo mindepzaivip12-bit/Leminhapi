@@ -301,37 +301,62 @@ def _count_alternations(results, max_len=15):
     return count
 
 
+def _count_streak(results):
+    if not results: return 0
+    r0 = results[0]; c = 1
+    for r in results[1:]:
+        if r == r0: c += 1
+        else: break
+    return c
+
+
+def _regime(results):
+    if len(results) < 5: return "balanced"
+    alt = _count_alternations(results, 12)
+    streak = _count_streak(results)
+    if alt >= 4 and alt > streak: return "alternation"
+    if streak >= 3: return "streak"
+    return "balanced"
+
+
+def _entropy_bits(arr):
+    if not arr: return 0.0
+    p = arr.count("Tài") / len(arr)
+    if p in (0, 1): return 0.0
+    return -(p * math.log2(p) + (1-p) * math.log2(1-p))
+
+
 # =====================================================================
-# CORE STATISTICAL ALGORITHMS (no patterns, no samples, no randomness)
+# CORE STATISTICAL ALGORITHMS
 # =====================================================================
 def algo_bet_break(results, groups):
     if not groups or len(results) < 3: return []
     sigs = []
-    r0 = results[0]; g0 = groups[0]; n = len(results)
-    if   g0 >= 12: sigs.append((_opp(r0), 42, "bet_12plus"))
-    elif g0 >= 10: sigs.append((_opp(r0), 38, "bet_10plus"))
-    elif g0 >= 8:  sigs.append((_opp(r0), 32, "bet_8_9"))
-    elif g0 >= 6:  sigs.append((_opp(r0), 25, "bet_6_7"))
-    elif g0 == 5:  sigs.append((_opp(r0), 18, "bet_5"))
-    elif g0 == 4:  sigs.append((_opp(r0), 12, "bet_4"))
+    r0 = results[0]; g0 = groups[0]
+    if   g0 >= 12: sigs.append((_opp(r0), 44, "bet_12plus"))
+    elif g0 >= 10: sigs.append((_opp(r0), 40, "bet_10plus"))
+    elif g0 >= 8:  sigs.append((_opp(r0), 34, "bet_8_9"))
+    elif g0 >= 6:  sigs.append((_opp(r0), 26, "bet_6_7"))
+    elif g0 == 5:  sigs.append((_opp(r0), 19, "bet_5"))
+    elif g0 == 4:  sigs.append((_opp(r0), 13, "bet_4"))
     elif g0 == 3:
         if len(groups) >= 5:
             past = groups[1:min(12, len(groups))]
             avg_g = sum(past) / len(past)
-            if   avg_g < 2.3: sigs.append((_opp(r0), 13, "bet_3_break"))
-            elif avg_g >= 3.5: sigs.append((r0, 11, "bet_3_cont"))
-            else:              sigs.append((_opp(r0), 9, "bet_3_def"))
-        else: sigs.append((_opp(r0), 9, "bet_3_def"))
+            if   avg_g < 2.3: sigs.append((_opp(r0), 14, "bet_3_break"))
+            elif avg_g >= 3.5: sigs.append((r0, 12, "bet_3_cont"))
+            else:              sigs.append((_opp(r0), 10, "bet_3_def"))
+        else: sigs.append((_opp(r0), 10, "bet_3_def"))
     return sigs
 
 
 def algo_alternation(results):
     if len(results) < 4: return None
     alt = _count_alternations(results)
-    if   alt >= 8: return (_opp(results[0]), 26, "alt_8plus")
-    elif alt >= 6: return (_opp(results[0]), 22, "alt_6_7")
-    elif alt >= 4: return (_opp(results[0]), 16, "alt_4_5")
-    elif alt >= 3: return (_opp(results[0]), 10, "alt_3")
+    if   alt >= 8: return (_opp(results[0]), 28, "alt_8plus")
+    elif alt >= 6: return (_opp(results[0]), 24, "alt_6_7")
+    elif alt >= 4: return (_opp(results[0]), 17, "alt_4_5")
+    elif alt >= 3: return (_opp(results[0]), 11, "alt_3")
     return None
 
 
@@ -346,7 +371,7 @@ def algo_recency_momentum(results):
     total = st + sx
     if total == 0: return None
     if max(st, sx) / total < 0.68: return None
-    return ("Tài", 9, "recency_tai") if st > sx else ("Xỉu", 9, "recency_xiu")
+    return ("Tài", 10, "recency_tai") if st > sx else ("Xỉu", 10, "recency_xiu")
 
 
 def algo_weighted_trend(results):
@@ -360,8 +385,8 @@ def algo_weighted_trend(results):
         if r == "Tài": sw += w
     if tw == 0: return None
     ratio = sw / tw
-    if ratio >= 0.72: return ("Tài", 10, "wt_trend_tai")
-    if ratio <= 0.28: return ("Xỉu", 10, "wt_trend_xiu")
+    if ratio >= 0.72: return ("Tài", 11, "wt_trend_tai")
+    if ratio <= 0.28: return ("Xỉu", 11, "wt_trend_xiu")
     return None
 
 
@@ -373,8 +398,26 @@ def algo_markov1(results):
     last = results[0]; tot = sum(tr[last].values())
     if tot < 5: return None
     p = tr[last]["Tài"] / tot
-    if   p >= 0.65: return ("Tài", 10, "markov1")
-    elif p <= 0.35: return ("Xỉu", 10, "markov1")
+    if   p >= 0.65: return ("Tài", 11, "markov1")
+    elif p <= 0.35: return ("Xỉu", 11, "markov1")
+    return None
+
+
+def algo_markov2(results):
+    """Markov bậc 2: dùng 2 kết quả gần nhất dự đoán kế tiếp."""
+    if len(results) < 20: return None
+    key = (results[1], results[0])
+    tr = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for i in range(len(results[:60]) - 2):
+        k = (results[i+2], results[i+1])
+        tr[k][results[i]] += 1
+    d = tr.get(key)
+    if not d: return None
+    tot = d["Tài"] + d["Xỉu"]
+    if tot < 4: return None
+    p = d["Tài"] / tot
+    if   p >= 0.70: return ("Tài", 13, "markov2")
+    elif p <= 0.30: return ("Xỉu", 13, "markov2")
     return None
 
 
@@ -383,8 +426,8 @@ def algo_multi_window(results):
     if n < 15: return None
     w5 = results[:5].count("Tài"); w10 = results[:10].count("Tài"); w15 = results[:15].count("Tài")
     vt = sum([w5 >= 4, w10 >= 7, w15 >= 10]); vx = sum([w5 <= 1, w10 <= 3, w15 <= 5])
-    if   vt >= 2: return ("Tài", 11, "multi_window")
-    elif vx >= 2: return ("Xỉu", 11, "multi_window")
+    if   vt >= 2: return ("Tài", 12, "multi_window")
+    elif vx >= 2: return ("Xỉu", 12, "multi_window")
     return None
 
 
@@ -394,8 +437,8 @@ def algo_hot_tilt(results):
     for w, hi, lo in ((8, 7, 1), (12, 10, 2)):
         if n < w: continue
         tc = results[:w].count("Tài")
-        if tc >= hi: return ("Xỉu", 14 if w == 8 else 12, f"hot_tai_{w}")
-        elif tc <= lo: return ("Tài", 14 if w == 8 else 12, f"hot_xiu_{w}")
+        if tc >= hi: return ("Xỉu", 15 if w == 8 else 13, f"hot_tai_{w}")
+        elif tc <= lo: return ("Tài", 15 if w == 8 else 13, f"hot_xiu_{w}")
     return None
 
 
@@ -405,17 +448,18 @@ def algo_tilt_ratio(results):
     for window in (15, 20, 30):
         if n < window: continue
         tr = results[:window].count("Tài") / window
-        if   tr >= 0.73: return ("Xỉu", 10, f"tilt_tai_{window}")
-        elif tr <= 0.27: return ("Tài", 10, f"tilt_xiu_{window}")
+        if   tr >= 0.73: return ("Xỉu", 11, f"tilt_tai_{window}")
+        elif tr <= 0.27: return ("Tài", 11, f"tilt_xiu_{window}")
     return None
 
 
 def algo_entropy(results):
     if len(results) < 20: return None
-    p_tai = results[:20].count("Tài") / 20
+    window = results[:20]
+    p_tai = window.count("Tài") / 20
     if p_tai in (0, 1): return ("Tài" if p_tai > 0.5 else "Xỉu", 9, "entropy_zero")
-    entropy = -(p_tai * math.log2(p_tai) + (1-p_tai) * math.log2(1-p_tai))
-    if entropy < 0.6: return ("Tài" if p_tai > 0.5 else "Xỉu", 9, "entropy_low")
+    entropy = _entropy_bits(window)
+    if entropy < 0.6: return ("Tài" if p_tai > 0.5 else "Xỉu", 10, "entropy_low")
     return None
 
 
@@ -431,7 +475,7 @@ def algo_simple_enhanced(results):
         return (r0, 8, "simple_continue")
     if streak == 2: return (r0, 9, "simple_momentum")
     if streak == 3: return (_opp(r0), 10, "simple_break_3")
-    if streak >= 4: return (_opp(r0), 11, "simple_break_4")
+    if streak >= 4: return (_opp(r0), 12, "simple_break_4")
     return None
 
 
@@ -443,8 +487,88 @@ def algo_runlength_compare(results):
     cur = groups[0]; past = groups[1:min(20, len(groups))]
     if not past: return None
     avg = sum(past) / len(past)
-    if cur > avg * 1.6 and cur >= 3: return (_opp(results[0]), 11, "rl_break")
+    if cur > avg * 1.6 and cur >= 3: return (_opp(results[0]), 12, "rl_break")
     if cur < 1.5 and avg >= 2.5: return (results[0], 8, "rl_continue")
+    return None
+
+
+def algo_pressure_pullback(results):
+    """Cầu áp lực: nếu 1 bên xuất hiện quá ít trong cửa sổ ngắn, kéo về cân bằng."""
+    n = len(results)
+    if n < 18: return None
+    w = results[:18]
+    tc = w.count("Tài")
+    if tc >= 15: return ("Xỉu", 13, "pressure_tai")
+    if tc <= 3:  return ("Tài", 13, "pressure_xiu")
+    return None
+
+
+def algo_consecutive_pattern(results):
+    """So sánh pattern 3 gần nhất với lịch sử để tìm next."""
+    if len(results) < 25: return None
+    key = tuple(results[:3])
+    tai_next = xiu_next = 0
+    for i in range(len(results[:60]) - 3):
+        if tuple(results[i:i+3]) == key:
+            nxt = results[i+3]
+            if nxt == "Tài": tai_next += 1
+            else: xiu_next += 1
+    tot = tai_next + xiu_next
+    if tot < 3: return None
+    p = tai_next / tot
+    if   p >= 0.68: return ("Tài", 12, "pattern3")
+    elif p <= 0.32: return ("Xỉu", 12, "pattern3")
+    return None
+
+
+def algo_mean_reversion(results):
+    """Long-term mean reversion: nếu lệch quá xa mức 50/50 dài hạn."""
+    n = len(results)
+    if n < 30: return None
+    w = results[:30]
+    tc = w.count("Tài")
+    if tc >= 22: return ("Xỉu", 12, "reversion_tai")
+    if tc <= 8:  return ("Tài", 12, "reversion_xiu")
+    return None
+
+
+def algo_volatility_break(results):
+    """Đo độ biến động: nếu alternation rate rất cao -> bẻ cầu; rất thấp -> nối cầu."""
+    n = len(results)
+    if n < 12: return None
+    window = results[:12]
+    changes = sum(1 for i in range(len(window)-1) if window[i] != window[i+1])
+    rate = changes / (len(window) - 1)
+    if rate >= 0.85:
+        return (results[1], 10, "vol_high_break")
+    if rate <= 0.15:
+        return (results[0], 11, "vol_low_continue")
+    return None
+
+
+def algo_streak_probability(results):
+    """Xác suất break theo độ dài streak hiện tại dựa trên lịch sử."""
+    n = len(results)
+    if n < 25: return None
+    streak = _count_streak(results)
+    if streak < 3: return None
+    current = results[0]
+    breaks = totals = 0
+    i = 0
+    while i < len(results) - streak - 1:
+        j = i
+        cnt = 1
+        while j + 1 < len(results) and results[j] == results[j+1]:
+            cnt += 1; j += 1
+        if cnt >= streak and results[i] == current:
+            totals += 1
+            if j + 1 < len(results) and results[j+1] != current:
+                breaks += 1
+        i = j + 1
+    if totals < 3: return None
+    p_break = breaks / totals
+    if p_break >= 0.6: return (_opp(current), 13, "streak_break_prob")
+    if p_break <= 0.4: return (current, 10, "streak_cont_prob")
     return None
 
 
@@ -461,9 +585,11 @@ def analyze_full_bridge(results):
     alt = algo_alternation(results)
     if alt: signals.append(alt)
 
-    for fn in (algo_recency_momentum, algo_weighted_trend, algo_markov1,
+    for fn in (algo_recency_momentum, algo_weighted_trend, algo_markov1, algo_markov2,
                algo_multi_window, algo_hot_tilt, algo_tilt_ratio,
-               algo_entropy, algo_simple_enhanced, algo_runlength_compare):
+               algo_entropy, algo_simple_enhanced, algo_runlength_compare,
+               algo_pressure_pullback, algo_consecutive_pattern,
+               algo_mean_reversion, algo_volatility_break, algo_streak_probability):
         s = fn(results)
         if s: signals.append(s)
 
@@ -496,9 +622,9 @@ def full_bridge_predict(results):
 
 
 # =====================================================================
-# ADAPTIVE PREDICTOR
+# ADAPTIVE PREDICTOR (nâng cấp)
 # =====================================================================
-def full_bridge_predict_adaptive(results, replay_n=80):
+def full_bridge_predict_adaptive(results, replay_n=100):
     n = len(results)
     if n == 0: return "Tài", 50, []
     if n == 1: return _opp(results[0]), 52, []
@@ -520,6 +646,8 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     if not signals:
         return results[0], 52, []
 
+    regime = _regime(results)
+
     st = sx = 0.0; detail = []
     for pred_sig, weight, name in signals:
         s = signal_stats[name]
@@ -529,7 +657,17 @@ def full_bridge_predict_adaptive(results, replay_n=80):
             samples = int(s['total'])
         else:
             acc, samples = 0.5, int(s['total'])
-        accuracy_mult = 0.4 + max(0.0, min(1.8, (acc - 0.3) * 3.0))
+
+        accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
+
+        # Regime boost
+        if regime == "streak":
+            if "break" in name or "bet_" in name:
+                accuracy_mult *= 1.10
+        elif regime == "alternation":
+            if "alt_" in name or "pattern" in name or "vol_" in name:
+                accuracy_mult *= 1.10
+
         adjusted = weight * accuracy_mult
         if pred_sig == "Tài": st += adjusted
         else: sx += adjusted
@@ -547,10 +685,13 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     base_conf = 50 + (ratio - 0.5) * 100
     evidence = min(1.0, total / 50.0)
     conf = 50 + (base_conf - 50) * evidence
+
     if ratio >= 0.72: conf += 6
     if ratio >= 0.80 and len(signals) >= 5: conf += 6
     if len(signals) >= 8 and ratio >= 0.65: conf += 3
+    if len(signals) >= 10 and ratio >= 0.60: conf += 2
     if len(signals) < 4: conf -= 5
+
     return pred, int(max(50, min(95, conf))), detail
 
 
@@ -565,7 +706,7 @@ def get_prediction_for(valid, i):
     if len(hist) < 3:
         result = ("-", 50, None)
     else:
-        pred, conf = full_bridge_predict(hist)
+        pred, conf, _ = full_bridge_predict_adaptive(hist)
         is_correct = (pred == valid[i]['result'])
         result = (pred, conf, is_correct)
     if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE:
@@ -743,7 +884,7 @@ def lc79():
         last = valid[-1]; next_phien = last['phien'] + 1
 
         return jsonify({
-            'Id': 'le minh v25', 'Phien': str(next_phien),
+            'Id': 'le minh v26', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
             'Base_du_doan': base_pred if flipped else None,
