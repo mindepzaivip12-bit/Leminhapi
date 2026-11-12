@@ -17,6 +17,149 @@ PREDICTION_CACHE = {}
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 
+# =====================================================================
+# PATTERN DATABASE (chuỗi 13 phiên T/X -> kết quả phiên kế tiếp)
+# =====================================================================
+PATTERN_DB = {
+    "TTTTTTTTTTTTT": "Xỉu",
+    "TTTTTTTTTTTTX": "Tài",
+    "TTTTTTTTTTTXT": "Xỉu",
+    "TTTTTTTTTTTXX": "Tài",
+    "TTTTTTTTTTXTT": "Tài",
+    "TTTTTTTTTTXTX": "Tài",
+    "TTTTTTTTTTXXT": "Xỉu",
+    "TTTTTTTTTTXXX": "Tài",
+    "TTTTTTTTTXTTT": "Xỉu",
+    "TTTTTTTTTXTTX": "Xỉu",
+    "TTTTTTTTTXTXT": "Xỉu",
+    "TTTTTTTTTXTXX": "Xỉu",
+    "TTTTTTTTTXXTT": "Tài",
+    "TTTTTTTTTXXTX": "Tài",
+    "TTTTTTTTTXXXT": "Xỉu",
+    "TTTTTTTTTXXXX": "Tài",
+    "TTTTTTTTXTTTT": "Tài",
+    "TTTTTTTTXTTTX": "Tài",
+    "TTTTTTTTXTTXT": "Xỉu",
+    "TTTTTTTTXTTXX": "Xỉu",
+    "TTTTTTTTXTXTT": "Tài",
+    "TTTTTTTTXTXTX": "Tài",
+    "TTTTTTTTXTXXT": "Tài",
+    "TTTTTTTTXTXXX": "Tài",
+    "TTTTTTTTXXTTT": "Tài",
+    "TTTTTTTTXXTTX": "Tài",
+    "TTTTTTTTXXTXT": "Xỉu",
+    "TTTTTTTTXXTXX": "Xỉu",
+    "TTTTTTTTXXXTT": "Tài",
+    "TTTTTTTTXXXTX": "Tài",
+    "TTTTTTTTXXXXT": "Xỉu",
+    "TTTTTTTTXXXXX": "Xỉu",
+    "TTTTTTTXTTTTT": "Tài",
+    "TTTTTTTXTTTTX": "Tài",
+    "TTTTTTTXTTTXT": "Xỉu",
+    "TTTTTTTXTTTXX": "Xỉu",
+    "TTTTTTTXTTXTT": "Tài",
+    "TTTTTTTXTTXTX": "Tài",
+    "TTTTTTTXTTXXT": "Tài",
+    "TTTTTTTXTTXXX": "Xỉu",
+    "TTTTTTTXTXTTT": "Xỉu",
+    "TTTTTTTXTXTTX": "Xỉu",
+    "TTTTTTTXTXTXT": "Xỉu",
+    "TTTTTTTXTXTXX": "Xỉu",
+    "TTTTTTTXTXXTT": "Tài",
+    "TTTTTTTXTXXTX": "Tài",
+    "TTTTTTTXTXXXT": "Xỉu",
+    "TTTTTTTXTXXXX": "Tài",
+    "TTTTTTTXXTTTT": "Tài",
+    "TTTTTTTXXTTTX": "Tài",
+    "TTTTTTTXXTTXT": "Xỉu",
+    "TTTTTTTXXTTXX": "Xỉu",
+    "TTTTTTTXXTXTT": "Tài",
+    "TTTTTTTXXTXTX": "Tài",
+    "TTTTTTTXXTXXT": "Tài",
+    "TTTTTTTXXTXXX": "Tài",
+    "TTTTTTTXXXTTT": "Tài",
+    "TTTTTTTXXXTTX": "Tài",
+    "TTTTTTTXXXTXT": "Xỉu",
+    "TTTTTTTXXXTXX": "Xỉu",
+    "TTTTTTTXXXXTT": "Tài",
+    "TTTTTTTXXXXTX": "Tài",
+    "TTTTTTTXXXXXT": "Xỉu",
+    "TTTTTTTXXXXXX": "Xỉu",
+    "TTTTTTXTTTTTT": "Tài",
+    "TTTTTTXTTTTTX": "Tài",
+    "TTTTTTXTTTTXT": "Xỉu",
+    "TTTTTTXTTTTXX": "Xỉu",
+    "TTTTTTXTTTXTT": "Tài",
+    "TTTTTTXTTTXTX": "Tài",
+    "TTTTTTXTTTXXT": "Tài",
+    "TTTTTTXTTTXXX": "Xỉu",
+    "TTTTTTXTTXTTT": "Xỉu",
+    "TTTTTTXTTXTTX": "Xỉu",
+    "TTTTTTXTTXTXT": "Xỉu",
+    "TTTTTTXTTXTXX": "Xỉu",
+    "TTTTTTXTTXXTT": "Tài",
+    "TTTTTTXTTXXTX": "Tài",
+    "TTTTTTXTTXXXT": "Xỉu",
+    "TTTTTTXTTXXXX": "Tài",
+    "TTTTTTXTXTTTT": "Tài",
+    "TTTTTTXTXTTTX": "Tài",
+    "TTTTTTXTXTTXT": "Xỉu",
+    "TTTTTTXTXTTXX": "Xỉu",
+    "TTTTTTXTXTXTT": "Tài",
+    "TTTTTTXTXTXTX": "Tài",
+    "TTTTTTXTXTXXT": "Tài",
+    "TTTTTTXTXTXXX": "Tài",
+    "TTTTTTXTXXTTT": "Tài",
+    "TTTTTTXTXXTTX": "Tài",
+    "TTTTTTXTXXTXT": "Xỉu",
+    "TTTTTTXTXXTXX": "Xỉu",
+    "TTTTTTXTXXXTT": "Tài",
+    "TTTTTTXTXXXTX": "Tài",
+    "TTTTTTXTXXXXT": "Xỉu",
+    "TTTTTTXTXXXXX": "Xỉu",
+    "TTTTTTXXTTTTT": "Tài",
+    "TTTTTTXXTTTTX": "Tài",
+    "TTTTTTXXTTTXT": "Xỉu",
+    "TTTTTTXXTTTXX": "Xỉu",
+    "TTTTTTXXTTXTT": "Tài",
+    "TTTTTTXXTTXTX": "Tài",
+    "TTTTTTXXTTXXT": "Tài",
+    "TTTTTTXXTTXXX": "Xỉu",
+    "TTTTTTXXTXTTT": "Xỉu",
+    "TTTTTTXXTXTTX": "Xỉu",
+    "TTTTTTXXTXTXT": "Xỉu",
+    "TTTTTTXXTXTXX": "Xỉu",
+    "TTTTTTXXTXXTT": "Tài",
+    "TTTTTTXXTXXTX": "Tài",
+    "TTTTTTXXTXXXT": "Xỉu",
+    "TTTTTTXXTXXXX": "Tài",
+    "TTTTTTXXXTTTT": "Tài",
+    "TTTTTTXXXTTTX": "Tài",
+    "TTTTTTXXXTTXT": "Xỉu",
+    "TTTTTTXXXTTXX": "Xỉu",
+    "TTTTTTXXXTXTT": "Tài",
+    "TTTTTTXXXTXTX": "Tài",
+    "TTTTTTXXXTXXT": "Tài",
+    "TTTTTTXXXTXXX": "Tài",
+    "TTTTTTXXXXTTT": "Tài",
+    "TTTTTTXXXXTTX": "Tài",
+    "TTTTTTXXXXTXT": "Xỉu",
+    "TTTTTTXXXXTXX": "Xỉu",
+    "TTTTTTXXXXXTT": "Tài",
+    "TTTTTTXXXXXTX": "Tài",
+    "TTTTTTXXXXXXT": "Xỉu",
+    "TTTTTTXXXXXXX": "Xỉu",
+}
+
+def tx_encode(results, length):
+    """Chuyển results (gần nhất trước) thành chuỗi T/X độ dài `length`."""
+    if len(results) < length: return None
+    return "".join("T" if r == "Tài" else "X" for r in results[:length])
+
+
+# =====================================================================
+# HTML TEMPLATE (giữ nguyên 100%)
+# =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -327,6 +470,20 @@ def _entropy_bits(arr):
 
 
 # =====================================================================
+# PATTERN LOOKUP (signal từ DATABASE)
+# =====================================================================
+def algo_pattern_lookup(results):
+    """
+    Tra cứu bảng PATTERN_DB với chuỗi 13 phiên gần nhất.
+    Trả về signal có weight cao (đáng tin) nếu khớp.
+    """
+    key = tx_encode(results, 13)
+    if key and key in PATTERN_DB:
+        return (PATTERN_DB[key], 30, "pattern_db")
+    return None
+
+
+# =====================================================================
 # CORE STATISTICAL ALGORITHMS
 # =====================================================================
 def algo_bet_break(results, groups):
@@ -404,7 +561,6 @@ def algo_markov1(results):
 
 
 def algo_markov2(results):
-    """Markov bậc 2: dùng 2 kết quả gần nhất dự đoán kế tiếp."""
     if len(results) < 20: return None
     key = (results[1], results[0])
     tr = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
@@ -493,7 +649,6 @@ def algo_runlength_compare(results):
 
 
 def algo_pressure_pullback(results):
-    """Cầu áp lực: nếu 1 bên xuất hiện quá ít trong cửa sổ ngắn, kéo về cân bằng."""
     n = len(results)
     if n < 18: return None
     w = results[:18]
@@ -504,7 +659,6 @@ def algo_pressure_pullback(results):
 
 
 def algo_consecutive_pattern(results):
-    """So sánh pattern 3 gần nhất với lịch sử để tìm next."""
     if len(results) < 25: return None
     key = tuple(results[:3])
     tai_next = xiu_next = 0
@@ -522,7 +676,6 @@ def algo_consecutive_pattern(results):
 
 
 def algo_mean_reversion(results):
-    """Long-term mean reversion: nếu lệch quá xa mức 50/50 dài hạn."""
     n = len(results)
     if n < 30: return None
     w = results[:30]
@@ -533,7 +686,6 @@ def algo_mean_reversion(results):
 
 
 def algo_volatility_break(results):
-    """Đo độ biến động: nếu alternation rate rất cao -> bẻ cầu; rất thấp -> nối cầu."""
     n = len(results)
     if n < 12: return None
     window = results[:12]
@@ -547,7 +699,6 @@ def algo_volatility_break(results):
 
 
 def algo_streak_probability(results):
-    """Xác suất break theo độ dài streak hiện tại dựa trên lịch sử."""
     n = len(results)
     if n < 25: return None
     streak = _count_streak(results)
@@ -581,6 +732,10 @@ def analyze_full_bridge(results):
     groups = get_groups(results)
 
     signals.extend(algo_bet_break(results, groups))
+
+    # Pattern DB lookup luôn được ưu tiên nếu khớp
+    pdb = algo_pattern_lookup(results)
+    if pdb: signals.append(pdb)
 
     alt = algo_alternation(results)
     if alt: signals.append(alt)
@@ -622,7 +777,7 @@ def full_bridge_predict(results):
 
 
 # =====================================================================
-# ADAPTIVE PREDICTOR (nâng cấp)
+# ADAPTIVE PREDICTOR
 # =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=100):
     n = len(results)
@@ -649,7 +804,9 @@ def full_bridge_predict_adaptive(results, replay_n=100):
     regime = _regime(results)
 
     st = sx = 0.0; detail = []
+    has_pattern_hit = False
     for pred_sig, weight, name in signals:
+        if name == "pattern_db": has_pattern_hit = True
         s = signal_stats[name]
         if s['total'] >= 3:
             alpha = 2.0
@@ -660,7 +817,6 @@ def full_bridge_predict_adaptive(results, replay_n=100):
 
         accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
 
-        # Regime boost
         if regime == "streak":
             if "break" in name or "bet_" in name:
                 accuracy_mult *= 1.10
@@ -691,6 +847,14 @@ def full_bridge_predict_adaptive(results, replay_n=100):
     if len(signals) >= 8 and ratio >= 0.65: conf += 3
     if len(signals) >= 10 and ratio >= 0.60: conf += 2
     if len(signals) < 4: conf -= 5
+
+    # Pattern DB boost: nếu khớp pattern và trùng với kết quả tổng hợp
+    if has_pattern_hit:
+        pdb_pred = algo_pattern_lookup(results)[0]
+        if pdb_pred == pred:
+            conf += 8  # Boost mạnh vì pattern DB là tri thức chuyên gia
+        else:
+            conf -= 5  # Xung đột với pattern DB → giảm tin cậy
 
     return pred, int(max(50, min(95, conf))), detail
 
@@ -832,6 +996,9 @@ def predict():
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
 
+        pattern_hit = algo_pattern_lookup(results)
+        pattern_key = tx_encode(results, 13)
+
         return jsonify({
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
             'last_result': valid[-1]['result'], 'last_dice': valid[-1]['dice'],
@@ -840,6 +1007,8 @@ def predict():
             'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak,
             'total_sessions': len(valid),
+            'pattern_key': pattern_key,
+            'pattern_hit': pattern_hit[0] if pattern_hit else None,
             'signals': detail,
             'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
             'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
@@ -884,7 +1053,7 @@ def lc79():
         last = valid[-1]; next_phien = last['phien'] + 1
 
         return jsonify({
-            'Id': 'le minh v26', 'Phien': str(next_phien),
+            'Id': 'le minh v27', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
             'Base_du_doan': base_pred if flipped else None,
