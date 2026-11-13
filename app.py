@@ -97,7 +97,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>DATA </span></div>
+    <div class="header-title">LE MINH <span>MD5 LC </span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -319,18 +319,96 @@ def _regime(results):
 
 
 # =====================================================================
-# DATA-DRIVEN ALGORITHMS (học từ lịch sử API)
+# 🔥 5 PHÚT GẦN NHẤT — ĐẢO THUẬN NGHỊCH 1-1 + HASH-DEEP
 # =====================================================================
+def data_5p_alternation(results):
+    """
+    Phân tích 5 phiên gần nhất (≈5 phút) để phát hiện pattern đảo 1-1.
+    
+    - Đảo thuận: T-X-T-X-T hoặc X-T-X-T-X (4 lần đảo)
+      → dự đoán tiếp tục đảo
+    - Đảo nghịch: T-X-X-T-X, X-T-T-X-T, T-T-X-T-X... 
+      → dự đoán đảo lại hướng
+    - Hash-deep: băm chuỗi 5 phiên thành key, tra lịch sử data thực tế
+      để biết pattern này từng ra gì
+    """
+    n = len(results)
+    if n < 10: return None
 
+    last5 = results[:5]
+    seq = "".join("T" if r == "Tài" else "X" for r in last5)
+
+    # Đếm số lần đảo (transition) trong 5 phiên
+    alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
+
+    # ---- HASH-DEEP: băm chuỗi 5 phiên, tra lịch sử ----
+    hash_key = seq  # ví dụ "TXTXT"
+    hash_tai = hash_xiu = 0
+    for i in range(min(n - 5, 80)):
+        sub = "".join("T" if r == "Tài" else "X" for r in results[i:i+5])
+        if sub == hash_key and i + 5 < n:
+            nxt = results[i+5]
+            if nxt == "Tài": hash_tai += 1
+            else: hash_xiu += 1
+
+    hash_total = hash_tai + hash_xiu
+    hash_pred = None
+    hash_weight = 0
+    if hash_total >= 4:
+        # Laplace smoothing
+        p_tai = (hash_tai + 1) / (hash_total + 2)
+        if p_tai >= 0.62:
+            hash_pred = "Tài"
+            hash_weight = min(20, 12 + (p_tai - 0.5) * 25)
+        elif p_tai <= 0.38:
+            hash_pred = "Xỉu"
+            hash_weight = min(20, 12 + (0.5 - p_tai) * 25)
+
+    # ---- PATTERN ANALYSIS ----
+    # Đảo thuận hoàn hảo: 4 lần đảo trong 5 phiên (T-X-T-X-T hoặc X-T-X-T-X)
+    if alt_count == 4:
+        # Ưu tiên hash-deep nếu có data lịch sử
+        if hash_pred:
+            return (hash_pred, hash_weight + 5, "5p_hash_alt4")
+        # Không có data → dự đoán tiếp tục đảo
+        return (_opp(last5[0]), 22, "5p_alt4_continue")
+
+    # Đảo nghịch: 3 lần đảo trong 5 phiên (có 1 chỗ gãy nhịp)
+    # Ví dụ: T-X-X-T-X, X-T-T-X-T, T-T-X-T-X, T-X-T-T-X...
+    if alt_count == 3:
+        # Xác định vị trí gãy (cặp giống nhau)
+        break_idx = None
+        for i in range(4):
+            if last5[i] == last5[i+1]:
+                break_idx = i
+                break
+        if break_idx is not None:
+            # Ưu tiên hash-deep nếu có data
+            if hash_pred:
+                return (hash_pred, hash_weight + 3, "5p_hash_alt3")
+            # Logic đảo nghịch: sau chỗ gãy, xu hướng đảo lại
+            # Lấy hướng của 2 phiên trước chỗ gãy
+            if break_idx >= 1:
+                prev_dir = last5[break_idx - 1]
+                # Đảo lại hướng (đảo nghịch)
+                return (_opp(last5[0]), 18, "5p_alt3_reverse")
+            return (_opp(last5[0]), 15, "5p_alt3_reverse")
+
+    # Có hash-deep data mạnh → dùng luôn
+    if hash_pred:
+        return (hash_pred, hash_weight, "5p_hash")
+
+    return None
+
+
+# =====================================================================
+# DATA-DRIVEN ALGORITHMS
+# =====================================================================
 def data_markov2(results):
-    """
-    Markov bậc 2 data-driven: đếm chuyển trạng thái từ lịch sử thực.
-    P(X_{t+1} | X_t, X_{t-1})
-    """
     n = len(results)
     if n < 20: return None
     key = (results[1], results[0])
-    counts = {"Tài": 1, "Xỉu": 1}  # Laplace
+    counts = {"Tài": 1, "Xỉu": 1}
     for i in range(min(n - 2, 60)):
         if (results[i+2], results[i+1]) == key:
             counts[results[i]] += 1
@@ -344,10 +422,6 @@ def data_markov2(results):
 
 
 def data_pattern3(results):
-    """
-    Pattern 3 phiên gần nhất — đếm kết quả tiếp theo từ lịch sử.
-    Hoàn toàn data-driven, không hardcode.
-    """
     n = len(results)
     if n < 25: return None
     key = tuple(results[:3])
@@ -365,23 +439,17 @@ def data_pattern3(results):
 
 
 def data_alternation(results):
-    """
-    Cầu đảo 1-1: đếm số lần đảo liên tiếp gần đây.
-    """
     n = len(results)
     if n < 4: return None
     alt = _count_alternations(results)
-    if alt >= 8: return (_opp(results[0]), 28, "alt_8plus")
-    if alt >= 6: return (_opp(results[0]), 24, "alt_6_7")
-    if alt >= 4: return (_opp(results[0]), 17, "alt_4_5")
-    if alt >= 3: return (_opp(results[0]), 11, "alt_3")
+    if alt >= 8: return (_opp(results[0]), 26, "alt_8plus")
+    if alt >= 6: return (_opp(results[0]), 22, "alt_6_7")
+    if alt >= 4: return (_opp(results[0]), 15, "alt_4_5")
+    if alt >= 3: return (_opp(results[0]), 10, "alt_3")
     return None
 
 
 def data_streak_break(results):
-    """
-    Bẻ cầu bệt: đếm xác suất break khi chuỗi đạt độ dài hiện tại.
-    """
     n = len(results)
     if n < 25: return None
     streak = _count_streak(results)
@@ -408,9 +476,6 @@ def data_streak_break(results):
 
 
 def data_bayes_ratio(results):
-    """
-    Bayes tỷ lệ Tài/Xỉu cửa sổ 30 phiên — data-driven.
-    """
     n = len(results)
     if n < 15: return None
     window = results[:min(30, n)]
@@ -427,9 +492,6 @@ def data_bayes_ratio(results):
 
 
 def data_tilt(results):
-    """
-    Cầu nghiêng: cửa sổ 8-12 phiên lệch rõ.
-    """
     n = len(results)
     if n < 12: return None
     for w, hi, lo, wgt in ((8, 7, 1, 15), (12, 10, 2, 13)):
@@ -446,8 +508,8 @@ def data_tilt(results):
 def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
-    for fn in (data_markov2, data_pattern3, data_alternation,
-               data_streak_break, data_bayes_ratio, data_tilt):
+    for fn in (data_5p_alternation, data_markov2, data_pattern3,
+               data_alternation, data_streak_break, data_bayes_ratio, data_tilt):
         s = fn(results)
         if s: signals.append(s)
     return signals
@@ -464,7 +526,6 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         if results[0] == results[1]: return _opp(results[0]), 55, []
         return results[1], 52, []
 
-    # Adaptive replay — chấm accuracy từng thuật toán
     signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
     replay_count = min(replay_n, n - 3)
     for j in range(replay_count):
@@ -487,9 +548,12 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         else:
             acc = 0.5
         accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
+        # Boost cho 5p hash-deep nếu accuracy cao
+        if name.startswith("5p_hash") and acc > 0.55:
+            accuracy_mult *= 1.2
         if regime == "streak" and "break" in name:
             accuracy_mult *= 1.10
-        elif regime == "alternation" and "alt_" in name:
+        elif regime == "alternation" and ("alt_" in name or "5p_" in name):
             accuracy_mult *= 1.10
         adjusted = weight * accuracy_mult
         if pred_sig == "Tài": st += adjusted
@@ -551,19 +615,16 @@ def apply_recovery(base_pred, conf, loss_streak, results=None):
 
     regime = _regime(results) if results else "balanced"
 
-    # Thua 1 tay — fix mềm
     if loss_streak == 1:
         if regime == "alternation":
             return base_pred, max(50, conf - 3), False, "hold_alt"
         return base_pred, max(50, conf - 5), False, "soft_hold"
 
-    # Thua 2 tay — fix cứng
     if loss_streak == 2:
         if regime == "alternation":
             return base_pred, max(55, conf - 3), False, "hold_alt"
         return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 72)), True, "flip_2"
 
-    # Thua ≥3 — fix khẩn
     if loss_streak >= 5:
         return _opp(base_pred), min(MAX_CONFIDENCE, conf + 15), True, "flip_5plus"
     if loss_streak == 4:
@@ -659,6 +720,11 @@ def predict():
             base_pred, base_conf, loss_streak, results=results
         )
 
+        # Thêm thông tin 5p
+        alt_5p = data_5p_alternation(results)
+        last5 = results[:5]
+        seq_5p = "".join("T" if r == "Tài" else "X" for r in last5) if len(last5) >= 5 else ""
+
         return jsonify({
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
             'last_result': valid[-1]['result'], 'last_dice': valid[-1]['dice'],
@@ -667,6 +733,9 @@ def predict():
             'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak, 'total_sessions': len(valid),
             'signals': detail,
+            'pattern_5p': seq_5p,
+            'signal_5p': alt_5p[2] if alt_5p else None,
+            'signal_5p_pred': alt_5p[0] if alt_5p else None,
             'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
             'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
             'signal_count': len(detail),
@@ -711,9 +780,14 @@ def lc79():
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         last = valid[-1]; next_phien = last['phien'] + 1
 
+        # 5p info
+        last5 = results[:5]
+        seq_5p = "".join("T" if r == "Tài" else "X" for r in last5) if len(last5) >= 5 else ""
+
         return jsonify({
-            'Id': 'le minh data', 'Phien': str(next_phien),
+            'Id': 'le minh hash-deep', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
+            'Pattern_5p': seq_5p,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
             'Base_du_doan': base_pred if flipped else None,
             'Auto_flip': flipped, 'Chuoi_thua': loss_streak,
@@ -762,10 +836,14 @@ def lc79md5():
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         next_phien = last['phien'] + 1
 
+        last5 = results[:5]
+        seq_5p = "".join("T" if r == "Tài" else "X" for r in last5) if len(last5) >= 5 else ""
+
         return jsonify({
             'id': '@cskhleminh', 'phien': str(next_phien),
             'ket_qua': ket_qua_str, 'du_doan': pred,
             'do_tin_cay': conf_str, 'lich_su': lich_su,
+            'pattern_5p': seq_5p,
             'base_du_doan': base_pred if flipped else None,
             'auto_flip': flipped, 'chuoi_thua': loss_streak,
         })
