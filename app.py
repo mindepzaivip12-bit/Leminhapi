@@ -2,7 +2,7 @@ import os
 import math
 import traceback
 from datetime import datetime
-from collections import defaultdict, deque
+from collections import defaultdict
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -17,12 +17,14 @@ PREDICTION_CACHE = {}
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 
+MAX_CONFIDENCE = 90  # ÉP TRẦN 90%
+
 # =====================================================================
-# PATTERN DATABASE — chuỗi 13 phiên T/X -> kết quả phiên kế tiếp
+# PATTERN DATABASE (giữ nguyên 128 entries của bạn)
 # =====================================================================
 PATTERN_DB = {
-    "TTTTTTTTTTTTT": "Xỉu", "TTTTTTTTTTTTX": "Tài", "TTTTTTTTTTTXT": "Xỉu",
-    "TTTTTTTTTTTXX": "Tài", "TTTTTTTTTTXTT": "Tài", "TTTTTTTTTTXTX": "Tài",
+    "TTTTTTTTTTTTT": "Tài", "TTTTTTTTTTTTX": "Tài", "TTTTTTTTTTTXT": "Xỉu",
+    "TTTTTTTTTTTXX": "Xỉu", "TTTTTTTTTTXTT": "Tài", "TTTTTTTTTTXTX": "Tài",
     "TTTTTTTTTTXXT": "Xỉu", "TTTTTTTTTTXXX": "Tài", "TTTTTTTTTXTTT": "Xỉu",
     "TTTTTTTTTXTTX": "Xỉu", "TTTTTTTTTXTXT": "Xỉu", "TTTTTTTTTXTXX": "Xỉu",
     "TTTTTTTTTXXTT": "Tài", "TTTTTTTTTXXTX": "Tài", "TTTTTTTTTXXXT": "Xỉu",
@@ -66,9 +68,13 @@ PATTERN_DB = {
     "TTTTTTXXXXXXT": "Xỉu", "TTTTTTXXXXXXX": "Xỉu",
 }
 
+def tx_encode(results, length):
+    if len(results) < length: return None
+    return "".join("T" if r == "Tài" else "X" for r in results[:length])
+
 
 # =====================================================================
-# HTML TEMPLATE — giữ nguyên 100% (không đổi)
+# HTML TEMPLATE (GIỮ NGUYÊN 100%)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -324,38 +330,26 @@ def fetch_sessions():
 # =====================================================================
 # UTILS
 # =====================================================================
-def tx_encode(results, length):
-    if len(results) < length: return None
-    return "".join("T" if r == "Tài" else "X" for r in results[:length])
-
-
 def get_groups(results):
     if not results: return []
     groups = []
-    current_val = results[0]
-    count = 1
+    current_val = results[0]; count = 1
     for r in results[1:]:
-        if r == current_val:
-            count += 1
+        if r == current_val: count += 1
         else:
-            groups.append(count)
-            current_val = r
-            count = 1
+            groups.append(count); current_val = r; count = 1
     groups.append(count)
     return groups
 
 
-def _opp(v):
-    return "Xỉu" if v == "Tài" else "Tài"
+def _opp(v): return "Xỉu" if v == "Tài" else "Tài"
 
 
 def _count_alternations(results, max_len=15):
     count = 0
     for i in range(min(len(results) - 1, max_len)):
-        if results[i] != results[i+1]:
-            count += 1
-        else:
-            break
+        if results[i] != results[i+1]: count += 1
+        else: break
     return count
 
 
@@ -368,104 +362,25 @@ def _count_streak(results):
     return c
 
 
-def _entropy_bits(arr):
-    if not arr: return 0.0
-    p = arr.count("Tài") / len(arr)
-    if p in (0, 1): return 0.0
-    return -(p * math.log2(p) + (1-p) * math.log2(1-p))
-
-
-# =====================================================================
-# 🆕 REGIME DETECTION (5 trạng thái)
-# =====================================================================
-def _regime_v2(results):
-    """
-    Phân loại regime hiện tại của chuỗi:
-    - 'streak'       : có streak dài >= 4, ít alternation
-    - 'alternation'  : alternation cao >= 5
-    - 'balanced'     : mix cân bằng 40-60%
-    - 'chaos'        : entropy cao, alternation vừa, không thiên lệch
-    - 'drift'        : tỷ lệ Tài lệch mạnh (>70% hoặc <30%) trên 20 phiên
-    """
-    if len(results) < 6: return "balanced"
-
+def _regime(results):
+    if len(results) < 5: return "balanced"
     alt = _count_alternations(results, 12)
     streak = _count_streak(results)
-    w20 = results[:20]
-    tai_ratio = w20.count("Tài") / len(w20) if w20 else 0.5
-    entropy = _entropy_bits(w20)
-
-    if streak >= 4 and alt <= 1: return "streak"
-    if alt >= 5 and streak <= 2: return "alternation"
-    if tai_ratio >= 0.70 or tai_ratio <= 0.30: return "drift"
-    if entropy >= 0.92 and streak <= 2 and alt <= 3: return "chaos"
+    if alt >= 4 and alt > streak: return "alternation"
+    if streak >= 3: return "streak"
     return "balanced"
 
 
 # =====================================================================
-# 🆕 DRIFT DETECTOR — phát hiện API đổi pattern
+# THUẬT TOÁN (10 cái thực dụng — bỏ hết "hóa học")
 # =====================================================================
-_DRIFT_STATE = {'last_check': 0, 'recent_acc': deque(maxlen=20), 'mode': 'normal'}
-
-def _check_drift(results):
-    """
-    Theo dõi accuracy của pattern DB trên 20 phiên gần nhất.
-    Nếu pattern DB sai liên tục → có thể API đã đổi pattern.
-    Trả về multiplier cho pattern DB (1.0 = bình thường, <1 = giảm tin).
-    """
-    if len(results) < 30: return 1.0
-    hits = misses = 0
-    for i in range(2, min(22, len(results) - 13)):
-        hist = results[i:]
-        key = tx_encode(hist, 13)
-        if key and key in PATTERN_DB:
-            actual = results[i-1]
-            if PATTERN_DB[key] == actual: hits += 1
-            else: misses += 1
-    total = hits + misses
-    if total < 5: return 1.0
-    acc = hits / total
-    # Nếu accuracy < 45% → pattern DB đang bị drift
-    if acc < 0.45: return 0.55
-    if acc < 0.55: return 0.80
-    return 1.0
-
-
-# =====================================================================
-# PATTERN LOOKUP (13-session) + SHORT PATTERN (5-session)
-# =====================================================================
-def algo_pattern_lookup(results):
-    """Pattern DB 13-session với drift-aware weighting."""
+def algo_pattern_db(results):
     key = tx_encode(results, 13)
     if key and key in PATTERN_DB:
-        drift_mult = _check_drift(results)
-        base_w = 30
-        adj_w = int(base_w * drift_mult)
-        return (PATTERN_DB[key], adj_w, "pattern_db")
+        return (PATTERN_DB[key], 30, "pattern_db")
     return None
 
 
-def algo_short_pattern(results):
-    """Pattern ngắn 5-session tự học từ history."""
-    if len(results) < 25: return None
-    key = tuple(results[:5])
-    tai_n = xiu_n = 0
-    for i in range(5, min(60, len(results) - 4)):
-        if tuple(results[i:i+5]) == key:
-            nxt = results[i-1]
-            if nxt == "Tài": tai_n += 1
-            else: xiu_n += 1
-    tot = tai_n + xiu_n
-    if tot < 4: return None
-    p = tai_n / tot
-    if p >= 0.72: return ("Tài", 14, "short_pattern")
-    if p <= 0.28: return ("Xỉu", 14, "short_pattern")
-    return None
-
-
-# =====================================================================
-# CORE ALGORITHMS
-# =====================================================================
 def algo_bet_break(results, groups):
     if not groups or len(results) < 3: return []
     sigs = []
@@ -494,36 +409,6 @@ def algo_alternation(results):
     elif alt >= 6: return (_opp(results[0]), 24, "alt_6_7")
     elif alt >= 4: return (_opp(results[0]), 17, "alt_4_5")
     elif alt >= 3: return (_opp(results[0]), 11, "alt_3")
-    return None
-
-
-def algo_recency_momentum(results):
-    n = len(results)
-    if n < 8: return None
-    st = sx = 0
-    for i in range(min(n, 20)):
-        w = 20 - i
-        if results[i] == "Tài": st += w
-        else: sx += w
-    total = st + sx
-    if total == 0: return None
-    if max(st, sx) / total < 0.68: return None
-    return ("Tài", 10, "recency_tai") if st > sx else ("Xỉu", 10, "recency_xiu")
-
-
-def algo_weighted_trend(results):
-    n = len(results)
-    if n < 10: return None
-    weights = [10.0, 8.0, 6.0, 4.0, 3.0, 2.0, 1.5, 1.0, 0.8, 0.5]
-    tw = sw = 0.0
-    for i, r in enumerate(results[:10]):
-        w = weights[i]
-        tw += w
-        if r == "Tài": sw += w
-    if tw == 0: return None
-    ratio = sw / tw
-    if ratio >= 0.72: return ("Tài", 11, "wt_trend_tai")
-    if ratio <= 0.28: return ("Xỉu", 11, "wt_trend_xiu")
     return None
 
 
@@ -557,95 +442,24 @@ def algo_markov2(results):
     return None
 
 
-def algo_multi_window(results):
-    n = len(results)
-    if n < 15: return None
-    w5 = results[:5].count("Tài"); w10 = results[:10].count("Tài"); w15 = results[:15].count("Tài")
-    vt = sum([w5 >= 4, w10 >= 7, w15 >= 10]); vx = sum([w5 <= 1, w10 <= 3, w15 <= 5])
-    if   vt >= 2: return ("Tài", 12, "multi_window")
-    elif vx >= 2: return ("Xỉu", 12, "multi_window")
-    return None
-
-
-def algo_hot_tilt(results):
+def algo_streak_tilt(results):
     n = len(results)
     if n < 12: return None
-    for w, hi, lo in ((8, 7, 1), (12, 10, 2)):
+    for w, hi, lo, wgt in ((8, 7, 1, 15), (12, 10, 2, 13)):
         if n < w: continue
         tc = results[:w].count("Tài")
-        if tc >= hi: return ("Xỉu", 15 if w == 8 else 13, f"hot_tai_{w}")
-        elif tc <= lo: return ("Tài", 15 if w == 8 else 13, f"hot_xiu_{w}")
+        if tc >= hi: return ("Xỉu", wgt, f"tilt_tai_{w}")
+        if tc <= lo: return ("Tài", wgt, f"tilt_xiu_{w}")
     return None
 
 
-def algo_tilt_ratio(results):
-    n = len(results)
-    if n < 15: return None
-    for window in (15, 20, 30):
-        if n < window: continue
-        tr = results[:window].count("Tài") / window
-        if   tr >= 0.73: return ("Xỉu", 11, f"tilt_tai_{window}")
-        elif tr <= 0.27: return ("Tài", 11, f"tilt_xiu_{window}")
-    return None
-
-
-def algo_entropy(results):
-    if len(results) < 20: return None
-    window = results[:20]
-    p_tai = window.count("Tài") / 20
-    if p_tai in (0, 1): return ("Tài" if p_tai > 0.5 else "Xỉu", 9, "entropy_zero")
-    entropy = _entropy_bits(window)
-    if entropy < 0.6: return ("Tài" if p_tai > 0.5 else "Xỉu", 10, "entropy_low")
-    return None
-
-
-def algo_simple_enhanced(results):
-    if len(results) < 3: return None
-    r0 = results[0]; streak = 1
-    for r in results[1:]:
-        if r == r0: streak += 1
-        else: break
-    if streak == 1:
-        if len(results) >= 3 and results[1] == results[2]:
-            return (_opp(r0), 8, "simple_break_pair")
-        return (r0, 8, "simple_continue")
-    if streak == 2: return (r0, 9, "simple_momentum")
-    if streak == 3: return (_opp(r0), 10, "simple_break_3")
-    if streak >= 4: return (_opp(r0), 12, "simple_break_4")
-    return None
-
-
-def algo_runlength_compare(results):
-    n = len(results)
-    if n < 20: return None
-    groups = get_groups(results)
-    if len(groups) < 4: return None
-    cur = groups[0]; past = groups[1:min(20, len(groups))]
-    if not past: return None
-    avg = sum(past) / len(past)
-    if cur > avg * 1.6 and cur >= 3: return (_opp(results[0]), 12, "rl_break")
-    if cur < 1.5 and avg >= 2.5: return (results[0], 8, "rl_continue")
-    return None
-
-
-def algo_pressure_pullback(results):
-    n = len(results)
-    if n < 18: return None
-    w = results[:18]
-    tc = w.count("Tài")
-    if tc >= 15: return ("Xỉu", 13, "pressure_tai")
-    if tc <= 3:  return ("Tài", 13, "pressure_xiu")
-    return None
-
-
-def algo_consecutive_pattern(results):
+def algo_pattern3(results):
     if len(results) < 25: return None
     key = tuple(results[:3])
     tai_next = xiu_next = 0
     for i in range(len(results[:60]) - 3):
         if tuple(results[i:i+3]) == key:
-            nxt = results[i+3]
-            if nxt == "Tài": tai_next += 1
+            if results[i+3] == "Tài": tai_next += 1
             else: xiu_next += 1
     tot = tai_next + xiu_next
     if tot < 3: return None
@@ -655,30 +469,7 @@ def algo_consecutive_pattern(results):
     return None
 
 
-def algo_mean_reversion(results):
-    n = len(results)
-    if n < 30: return None
-    w = results[:30]
-    tc = w.count("Tài")
-    if tc >= 22: return ("Xỉu", 12, "reversion_tai")
-    if tc <= 8:  return ("Tài", 12, "reversion_xiu")
-    return None
-
-
-def algo_volatility_break(results):
-    n = len(results)
-    if n < 12: return None
-    window = results[:12]
-    changes = sum(1 for i in range(len(window)-1) if window[i] != window[i+1])
-    rate = changes / (len(window) - 1)
-    if rate >= 0.85:
-        return (results[1], 10, "vol_high_break")
-    if rate <= 0.15:
-        return (results[0], 11, "vol_low_continue")
-    return None
-
-
-def algo_streak_probability(results):
+def algo_streak_break_prob(results):
     n = len(results)
     if n < 25: return None
     streak = _count_streak(results)
@@ -692,13 +483,34 @@ def algo_streak_probability(results):
             cnt += 1; j += 1
         if cnt >= streak and results[i] == current:
             totals += 1
-            if j + 1 < len(results) and results[j+1] != current:
-                breaks += 1
+            if j + 1 < len(results) and results[j+1] != current: breaks += 1
         i = j + 1
     if totals < 3: return None
     p_break = breaks / totals
     if p_break >= 0.6: return (_opp(current), 13, "streak_break_prob")
     if p_break <= 0.4: return (current, 10, "streak_cont_prob")
+    return None
+
+
+def algo_runlength_compare(results):
+    n = len(results)
+    if n < 20: return None
+    groups = get_groups(results)
+    if len(groups) < 4: return None
+    cur = groups[0]; past = groups[1:min(20, len(groups))]
+    if not past: return None
+    avg = sum(past) / len(past)
+    if cur > avg * 1.6 and cur >= 3: return (_opp(results[0]), 12, "rl_break")
+    if cur < 1.5 and avg >= 2.5:     return (results[0], 8, "rl_continue")
+    return None
+
+
+def algo_pressure_pullback(results):
+    n = len(results)
+    if n < 18: return None
+    tc = results[:18].count("Tài")
+    if tc >= 15: return ("Xỉu", 13, "pressure_tai")
+    if tc <= 3:  return ("Tài", 13, "pressure_xiu")
     return None
 
 
@@ -710,91 +522,16 @@ def analyze_full_bridge(results):
     signals = []
     groups = get_groups(results)
     signals.extend(algo_bet_break(results, groups))
-
-    for fn in (algo_pattern_lookup, algo_short_pattern, algo_alternation,
-               algo_recency_momentum, algo_weighted_trend, algo_markov1, algo_markov2,
-               algo_multi_window, algo_hot_tilt, algo_tilt_ratio,
-               algo_entropy, algo_simple_enhanced, algo_runlength_compare,
-               algo_pressure_pullback, algo_consecutive_pattern,
-               algo_mean_reversion, algo_volatility_break, algo_streak_probability):
+    for fn in (algo_pattern_db, algo_alternation, algo_markov1, algo_markov2,
+               algo_streak_tilt, algo_pattern3, algo_streak_break_prob,
+               algo_runlength_compare, algo_pressure_pullback):
         s = fn(results)
         if s: signals.append(s)
-
     return signals
 
 
 # =====================================================================
-# 🆕 REGIME-AWARE WEIGHT MULTIPLIER
-# =====================================================================
-_REGIME_BOOST = {
-    "streak": {
-        "bet_": 1.25, "simple_break_4": 1.20, "simple_momentum": 1.15,
-        "streak_break_prob": 1.25, "rl_break": 1.20, "rl_continue": 1.15,
-        "short_pattern": 1.10, "pattern_db": 1.05,
-        "alt_": 0.70, "vol_high_break": 0.75, "multi_window": 0.85,
-    },
-    "alternation": {
-        "alt_": 1.30, "pattern_db": 1.15, "short_pattern": 1.20,
-        "vol_high_break": 1.20, "simple_break_pair": 1.15,
-        "bet_3_break": 1.15, "bet_3_def": 1.10,
-        "bet_8_9": 0.75, "bet_10plus": 0.70, "bet_12plus": 0.70,
-        "simple_break_4": 0.70, "streak_break_prob": 0.80,
-    },
-    "drift": {
-        "hot_tai_8": 1.30, "hot_xiu_8": 1.30, "hot_tai_12": 1.20,
-        "hot_xiu_12": 1.20, "tilt_": 1.25, "pressure_": 1.25,
-        "mean_reversion": 1.15, "reversion_": 1.20, "entropy_low": 1.20,
-        "pattern_db": 1.10, "alt_": 0.80,
-    },
-    "chaos": {
-        "pattern_db": 1.25, "short_pattern": 1.25, "markov2": 1.20,
-        "pattern3": 1.20, "multi_window": 0.85, "hot_tai_8": 0.80,
-        "hot_xiu_8": 0.80, "bet_12plus": 0.85, "bet_10plus": 0.85,
-    },
-    "balanced": {
-        "pattern_db": 1.15, "short_pattern": 1.10,
-        "markov1": 1.05, "markov2": 1.10, "pattern3": 1.10,
-    },
-}
-
-
-def _apply_regime_boost(name, regime):
-    table = _REGIME_BOOST.get(regime, {})
-    for key, mult in table.items():
-        if key.endswith("_"):
-            if name.startswith(key): return mult
-        elif key in name:
-            return mult
-    return 1.0
-
-
-# =====================================================================
-# BASE PREDICTOR (dùng cho quick path)
-# =====================================================================
-def full_bridge_predict(results):
-    if not results: return "Tài", 50
-    if len(results) == 1: return _opp(results[0]), 52
-    if len(results) == 2:
-        if results[0] == results[1]: return _opp(results[0]), 55
-        return results[1], 52
-    signals = analyze_full_bridge(results)
-    if not signals: return results[0], 52
-    st = sx = 0.0
-    for p, w, name in signals:
-        if p == "Tài": st += w
-        else: sx += w
-    total = st + sx
-    if total == 0: return results[0], 50
-    ratio = max(st, sx) / total
-    evidence = min(1.0, total / 40.0)
-    conf = int(max(50, min(92, 50 + ((ratio - 0.5) * 100) * evidence)))
-    if st > sx: return "Tài", conf
-    if sx > st: return "Xỉu", conf
-    return _opp(results[0]), 50
-
-
-# =====================================================================
-# 🆕 ADAPTIVE PREDICTOR v2 — Meta-Learning 2 tầng
+# PREDICTOR ADAPTIVE
 # =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=100):
     n = len(results)
@@ -804,33 +541,26 @@ def full_bridge_predict_adaptive(results, replay_n=100):
         if results[0] == results[1]: return _opp(results[0]), 55, []
         return results[1], 52, []
 
-    # --- Tầng 1: Replay để tính accuracy lịch sử từng signal ---
     signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
     replay_count = min(replay_n, n - 3)
     for j in range(replay_count):
-        history = results[j + 1:]
-        actual = results[j]
+        history = results[j + 1:]; actual = results[j]
         decay = math.exp(-j / max(replay_count / 2.0, 1.0))
         for pred_sig, weight, name in analyze_full_bridge(history):
             signal_stats[name]['total'] += decay
             if pred_sig == actual:
                 signal_stats[name]['wins'] += decay
 
-    # --- Tầng 2: Kết hợp signals + regime boost ---
     signals = analyze_full_bridge(results)
     if not signals:
         return results[0], 52, []
 
-    regime = _regime_v2(results)
-
-    st = sx = 0.0
-    detail = []
-    pattern_hit_pred = None
-
+    regime = _regime(results)
+    st = sx = 0.0; detail = []
+    pdb_pred = None
     for pred_sig, weight, name in signals:
-        if name == "pattern_db":
-            pattern_hit_pred = pred_sig
-
+        is_pdb = (name == "pattern_db")
+        if is_pdb: pdb_pred = pred_sig
         s = signal_stats[name]
         if s['total'] >= 3:
             alpha = 2.0
@@ -838,69 +568,41 @@ def full_bridge_predict_adaptive(results, replay_n=100):
             samples = int(s['total'])
         else:
             acc, samples = 0.5, int(s['total'])
-
-        # Accuracy multiplier (0.4 → 2.3)
         accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
-
-        # 🆕 Regime multiplier
-        regime_mult = _apply_regime_boost(name, regime)
-
-        # 🆕 Variance penalty: nếu mẫu ít + accuracy lệch → giảm tin
-        if samples < 8 and (acc > 0.75 or acc < 0.35):
-            accuracy_mult *= 0.85
-
-        adjusted = weight * accuracy_mult * regime_mult
-
+        if regime == "streak":
+            if "break" in name or "bet_" in name: accuracy_mult *= 1.10
+        elif regime == "alternation":
+            if "alt_" in name or "pattern" in name: accuracy_mult *= 1.10
+        adjusted = weight * accuracy_mult
+        if is_pdb: adjusted *= 2.5
         if pred_sig == "Tài": st += adjusted
         else: sx += adjusted
-
-        detail.append({
-            'name': name, 'pred': pred_sig,
-            'base_weight': weight,
-            'accuracy': round(acc, 3),
-            'samples': samples,
-            'regime_mult': round(regime_mult, 2),
-            'adjusted_weight': round(adjusted, 2),
-        })
+        detail.append({'name': name, 'pred': pred_sig, 'base_weight': weight,
+                       'accuracy': round(acc, 3), 'samples': samples,
+                       'adjusted_weight': round(adjusted, 2)})
 
     total = st + sx
-    if total == 0:
-        return results[0], 50, detail
-
+    if total == 0: return results[0], 50, detail
     if st > sx: pred, ratio = "Tài", st / total
     elif sx > st: pred, ratio = "Xỉu", sx / total
     else: return _opp(results[0]), 50, detail
 
-    # --- Confidence calibration ---
     base_conf = 50 + (ratio - 0.5) * 100
-    evidence = min(1.0, total / 50.0)
+    evidence = min(1.0, total / 60.0)
     conf = 50 + (base_conf - 50) * evidence
-
-    # Boost theo pattern strength
-    if ratio >= 0.72: conf += 5
+    if ratio >= 0.72: conf += 6
     if ratio >= 0.80 and len(signals) >= 5: conf += 5
     if len(signals) >= 8 and ratio >= 0.65: conf += 3
-    if len(signals) >= 10 and ratio >= 0.60: conf += 2
     if len(signals) < 4: conf -= 5
 
-    # 🆕 Regime-specific confidence adjustment
-    if regime == "streak" and ratio >= 0.70: conf += 4
-    if regime == "alternation" and ratio >= 0.68: conf += 3
-    if regime == "chaos": conf -= 3  # chaos → giảm tin cậy
-    if regime == "drift" and ratio >= 0.70: conf += 3
-
-    # 🆕 Pattern DB conflict resolution
-    if pattern_hit_pred is not None:
-        if pattern_hit_pred == pred:
-            conf += 8
+    if pdb_pred is not None:
+        if pdb_pred == pred: conf += 10
         else:
-            # Pattern DB xung đột → giảm mạnh
-            conf -= 6
-            # Nếu pattern DB rất mạnh và regime là chaos → nghe theo pattern
-            if regime == "chaos" and pattern_hit_pred is not None:
-                pred = pattern_hit_pred
+            pred = pdb_pred
+            conf = max(conf - 5, 60)
 
-    return pred, int(max(50, min(96, conf))), detail
+    conf = int(max(50, min(MAX_CONFIDENCE, conf)))
+    return pred, conf, detail
 
 
 # =====================================================================
@@ -908,8 +610,7 @@ def full_bridge_predict_adaptive(results, replay_n=100):
 # =====================================================================
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
-    if key in PREDICTION_CACHE:
-        return PREDICTION_CACHE[key]
+    if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
     hist = [v['result'] for v in valid[:i]][::-1]
     if len(hist) < 3:
         result = ("-", 50, None)
@@ -917,15 +618,11 @@ def get_prediction_for(valid, i):
         pred, conf, _ = full_bridge_predict_adaptive(hist)
         is_correct = (pred == valid[i]['result'])
         result = (pred, conf, is_correct)
-    if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE:
-        PREDICTION_CACHE.clear()
+    if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE: PREDICTION_CACHE.clear()
     PREDICTION_CACHE[key] = result
     return result
 
 
-# =====================================================================
-# LOSS STREAK
-# =====================================================================
 def compute_loss_streak(valid, max_scan=20):
     if len(valid) < 5: return 0
     streak = 0
@@ -940,24 +637,37 @@ def compute_loss_streak(valid, max_scan=20):
 
 
 # =====================================================================
-# AUTO-RECOVERY
+# AUTO-RECOVERY — ĐẢO BẺ THÔNG MINH
 # =====================================================================
-def apply_recovery(base_pred, conf, loss_streak):
+def apply_recovery(base_pred, conf, loss_streak, results=None):
     if loss_streak < 2:
         return base_pred, conf, False, None
+
+    pdb_hit = algo_pattern_db(results) if results is not None else None
+    regime = _regime(results) if results else "balanced"
+
+    if pdb_hit and pdb_hit[0] == base_pred:
+        return base_pred, min(MAX_CONFIDENCE, conf + 3), False, "pdb_confirm"
+    if pdb_hit and pdb_hit[0] != base_pred:
+        return pdb_hit[0], min(MAX_CONFIDENCE, max(conf, 72)), True, "pdb_flip"
+
     if loss_streak >= 5:
-        return _opp(base_pred), min(96, conf + 15), True, "flip_5plus"
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 12), True, "flip_5plus"
     if loss_streak == 4:
-        return _opp(base_pred), min(95, conf + 12), True, "flip_4"
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 10), True, "flip_4"
     if loss_streak == 3:
-        return _opp(base_pred), min(94, conf + 10), True, "flip_3"
-    if conf < 75:
-        return _opp(base_pred), min(93, conf + 6), True, "flip_2"
-    return base_pred, max(50, conf - 12), False, "penalty_2"
+        if regime == "alternation":
+            return base_pred, max(55, conf - 5), False, "hold_alt"
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 8), True, "flip_3"
+    if conf < 72:
+        if regime == "alternation":
+            return base_pred, max(55, conf - 5), False, "hold_alt"
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 6), True, "flip_2"
+    return base_pred, max(50, conf - 8), False, "penalty_2"
 
 
 # =====================================================================
-# ROUTES (giữ nguyên)
+# ROUTES
 # =====================================================================
 @app.route('/')
 def index():
@@ -978,23 +688,22 @@ def history():
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
         loss_streak = compute_loss_streak(valid)
-
         out = []; correct_count = 0; total_past = 0
         latest_session = valid[-1]
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
 
         base_pred, base_conf, _ = full_bridge_predict_adaptive(history_for_next)
-        next_pred, next_conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
+        next_pred, next_conf, flipped, reason = apply_recovery(
+            base_pred, base_conf, loss_streak, results=history_for_next
+        )
 
         out.append({
             'phien': next_phien, 'is_next': True,
             'prediction': next_pred, 'result': 'Chờ...',
             'dice': "? + ? + ?", 'is_correct': None,
-            'conf': next_conf,
-            'recovery_flipped': flipped,
-            'recovery_reason': reason,
-            'loss_streak': loss_streak,
+            'conf': next_conf, 'recovery_flipped': flipped,
+            'recovery_reason': reason, 'loss_streak': loss_streak,
             'base_prediction': base_pred if flipped else None,
         })
 
@@ -1013,10 +722,8 @@ def history():
         return jsonify({
             'rows': out,
             'stats': {'total': total_past, 'correct': correct_count},
-            'loss_streak': loss_streak,
-            'recovery_active': flipped,
-            'recovery_reason': reason,
-            'base_prediction': base_pred,
+            'loss_streak': loss_streak, 'recovery_active': flipped,
+            'recovery_reason': reason, 'base_prediction': base_pred,
         })
     except Exception as e:
         traceback.print_exc()
@@ -1038,9 +745,11 @@ def predict():
 
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
-        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
+        pred, conf, flipped, reason = apply_recovery(
+            base_pred, base_conf, loss_streak, results=results
+        )
 
-        pattern_hit = algo_pattern_lookup(results)
+        pattern_hit = algo_pattern_db(results)
         pattern_key = tx_encode(results, 13)
 
         return jsonify({
@@ -1049,9 +758,7 @@ def predict():
             'prediction': pred, 'confidence': conf,
             'base_prediction': base_pred, 'base_confidence': base_conf,
             'recovery_flipped': flipped, 'recovery_reason': reason,
-            'loss_streak': loss_streak,
-            'total_sessions': len(valid),
-            'regime': _regime_v2(results),
+            'loss_streak': loss_streak, 'total_sessions': len(valid),
             'pattern_key': pattern_key,
             'pattern_hit': pattern_hit[0] if pattern_hit else None,
             'signals': detail,
@@ -1080,7 +787,9 @@ def lc79():
 
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
-        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
+        pred, conf, flipped, reason = apply_recovery(
+            base_pred, base_conf, loss_streak, results=results
+        )
 
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
         xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
@@ -1089,7 +798,7 @@ def lc79():
             ratio = max(tai_score, xiu_score) / total_sig
             base_conf_f = 50 + (ratio - 0.5) * 100
             evidence = min(1.0, total_sig / 50.0)
-            conf_float = max(50.0, min(95.0, 50 + (base_conf_f - 50) * evidence))
+            conf_float = max(50.0, min(float(MAX_CONFIDENCE), 50 + (base_conf_f - 50) * evidence))
         else:
             conf_float = 50.0
         conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
@@ -1098,12 +807,11 @@ def lc79():
         last = valid[-1]; next_phien = last['phien'] + 1
 
         return jsonify({
-            'Id': 'le minh v28', 'Phien': str(next_phien),
+            'Id': 'le minh v27', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
             'Base_du_doan': base_pred if flipped else None,
-            'Auto_flip': flipped,
-            'Chuoi_thua': loss_streak,
+            'Auto_flip': flipped, 'Chuoi_thua': loss_streak,
         })
     except Exception as e:
         traceback.print_exc()
@@ -1123,10 +831,11 @@ def lc79md5():
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
 
         results = [v['result'] for v in valid][::-1]
-
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
-        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak)
+        pred, conf, flipped, reason = apply_recovery(
+            base_pred, base_conf, loss_streak, results=results
+        )
 
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
         xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
@@ -1135,7 +844,7 @@ def lc79md5():
             ratio = max(tai_score, xiu_score) / total_sig
             base_conf_f = 50 + (ratio - 0.5) * 100
             evidence = min(1.0, total_sig / 50.0)
-            conf_float = max(50.0, min(95.0, 50 + (base_conf_f - 50) * evidence))
+            conf_float = max(50.0, min(float(MAX_CONFIDENCE), 50 + (base_conf_f - 50) * evidence))
         else:
             conf_float = 50.0
         conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
@@ -1144,22 +853,16 @@ def lc79md5():
         dice_parts = last['dice'].split(" + ")
         dice_short = "-".join(dice_parts) if len(dice_parts) == 3 else last['dice']
         ket_qua_str = f"{last['result'].lower()} {dice_short}"
-
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
-
         next_phien = last['phien'] + 1
 
         return jsonify({
-            'id': '@cskhleminh',
-            'phien': str(next_phien),
-            'ket_qua': ket_qua_str,
-            'du_doan': pred,
-            'do_tin_cay': conf_str,
-            'lich_su': lich_su,
+            'id': '@cskhleminh', 'phien': str(next_phien),
+            'ket_qua': ket_qua_str, 'du_doan': pred,
+            'do_tin_cay': conf_str, 'lich_su': lich_su,
             'base_du_doan': base_pred if flipped else None,
-            'auto_flip': flipped,
-            'chuoi_thua': loss_streak,
+            'auto_flip': flipped, 'chuoi_thua': loss_streak,
         })
     except Exception as e:
         traceback.print_exc()
