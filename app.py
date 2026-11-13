@@ -21,9 +21,15 @@ MAX_CONFIDENCE = 90
 
 # =====================================================================
 # HASH DEEP MD5 DATABASE — học từ lịch sử API
-# { hash_key: {"Tài": count, "Xỉu": count} }
+# { hash_13: {"Tài": count, "Xỉu": count} }
+# { hash_10: {"Tài": count, "Xỉu": count} }
+# { hash_7:  {"Tài": count, "Xỉu": count} }
 # =====================================================================
-HASH_DEEP_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+HASH_DEEP_DB = {
+    13: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    10: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    7:  defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+}
 
 
 # =====================================================================
@@ -326,95 +332,108 @@ def _regime(results):
 
 
 # =====================================================================
-# 🔥 HASH DEEP MD5 — băm sâu chuỗi thành hash để tra cứu pattern
+# 🧬 HASH DEEP MD5 — BĂM SÂU ĐA TẦNG
 # =====================================================================
 def encode_tx(results, length):
-    """Chuyển results (gần nhất trước) thành chuỗi T/X."""
     if len(results) < length: return None
     return "".join("T" if r == "Tài" else "X" for r in results[:length])
 
 
-def hash_deep_md5(tx_string):
+def hash_deep_md5(tx_string, depth_level=1):
     """
-    Băm sâu chuỗi T/X thành MD5 hash — dùng để tra cứu pattern.
-    Hash = md5(tx_string + salt). Salt đảm bảo không trùng giả.
+    Băm sâu nhiều tầng MD5:
+    - depth_level=1: md5(salt|tx)
+    - depth_level=2: md5(md5(salt|tx)|salt)
+    - depth_level=3: md5(md5(md5(salt|tx)|salt)|salt)
     """
-    if not tx_string: return None
-    salted = f"leminh_md5_v3|{tx_string}"
-    return hashlib.md5(salted.encode('utf-8')).hexdigest()
+    salted = f"leminh_deep_{depth_level}|{tx_string}"
+    h = hashlib.md5(salted.encode('utf-8')).hexdigest()
+    for _ in range(depth_level - 1):
+        h = hashlib.md5(f"{h}|salt_{depth_level}".encode('utf-8')).hexdigest()
+    return h
 
 
 def learn_hash_deep_from_history(valid):
     """
-    Học HASH_DEEP_DB từ lịch sử API.
-    Với mỗi vị trí i, lấy 13 phiên trước đó làm key, kết quả i làm value.
+    Học HASH_DEEP_DB từ lịch sử API ở 3 độ sâu: 7, 10, 13 phiên.
     """
     global HASH_DEEP_DB
     n = len(valid)
     if n < 15: return
-    
-    # Duyệt từ cũ đến mới, mỗi vị trí dùng 13 phiên trước
-    for i in range(13, n):
-        history = [v['result'] for v in valid[i-13:i]][::-1]  # gần nhất trước
-        tx = encode_tx(history, 13)
-        if not tx: continue
-        h = hash_deep_md5(tx)
-        actual = valid[i]['result']
-        HASH_DEEP_DB[h][actual] += 1
+
+    for depth in (7, 10, 13):
+        if n <= depth: continue
+        db = HASH_DEEP_DB[depth]
+        for i in range(depth, n):
+            history = [v['result'] for v in valid[i-depth:i]][::-1]
+            tx = encode_tx(history, depth)
+            if not tx: continue
+            h = hash_deep_md5(tx, depth_level=2)  # deep level 2
+            actual = valid[i]['result']
+            db[h][actual] += 1
 
 
 def algo_hash_deep_lookup(results):
     """
-    Tra HASH_DEEP_DB với key 13 phiên gần nhất.
-    Trả về signal nếu pattern đã gặp đủ nhiều.
+    Tra cứu HASH_DEEP_DB ở 3 độ sâu, tổng hợp tín hiệu.
+    Ưu tiên độ sâu 13 (nhiều thông tin nhất).
     """
-    tx = encode_tx(results, 13)
-    if not tx: return None
-    h = hash_deep_md5(tx)
-    if h not in HASH_DEEP_DB: return None
-    counts = HASH_DEEP_DB[h]
-    total = counts["Tài"] + counts["Xỉu"]
-    if total < 3: return None  # cần ít nhất 3 lần gặp
-    p_tai = counts["Tài"] / total
-    # Laplace smoothing
-    p_tai_smooth = (counts["Tài"] + 1) / (total + 2)
-    z = (p_tai_smooth - 0.5) / math.sqrt(0.25 / (total + 2))
-    if abs(z) < 1.3: return None
-    weight = min(25, 10 + abs(z) * 4)
-    pred = "Tài" if p_tai_smooth > 0.5 else "Xỉu"
-    return (pred, weight, f"hash_deep_{total}")
+    combined_score = {"Tài": 0.0, "Xỉu": 0.0}
+    hits = []
+    total_samples = 0
+
+    for depth, weight_factor in ((13, 1.0), (10, 0.7), (7, 0.5)):
+        tx = encode_tx(results, depth)
+        if not tx: continue
+        h = hash_deep_md5(tx, depth_level=2)
+        db = HASH_DEEP_DB[depth]
+        if h not in db: continue
+        counts = db[h]
+        total = counts["Tài"] + counts["Xỉu"]
+        if total < 2: continue
+
+        p_tai = (counts["Tài"] + 1) / (total + 2)
+        z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+
+        pred = "Tài" if p_tai > 0.5 else "Xỉu"
+        weight = min(24, 10 + abs(z) * 4) * weight_factor
+        combined_score[pred] += weight
+        hits.append({'depth': depth, 'pred': pred, 'samples': total,
+                     'p_tai': round(p_tai, 3), 'z': round(z, 2)})
+        total_samples += total
+
+    if not hits or total_samples < 3:
+        return None
+
+    st = combined_score["Tài"]; sx = combined_score["Xỉu"]
+    if st == sx: return None
+    pred = "Tài" if st > sx else "Xỉu"
+    ratio = max(st, sx) / (st + sx)
+    z_total = (ratio - 0.5) * 4
+
+    if abs(z_total) < 1.2: return None
+
+    weight = min(25, 10 + abs(z_total) * 5)
+    return (pred, weight, f"hash_deep_multi_{total_samples}")
 
 
 # =====================================================================
-# 🔥 5P ALTERNATION — Đảo thuận nghịch 1-1 (5 phiên gần nhất)
+# 🔥 5P ALTERNATION — Đảo thuận nghịch 1-1
 # =====================================================================
 def algo_5p_alternation(results):
     """
-    Phân tích 5 phiên gần nhất (≈5 phút):
-    
-    Pattern "đảo thuận" (4 lần đảo liên tiếp):
-    - T-X-T-X-T → dự đoán X (tiếp tục đảo)
-    - X-T-X-T-X → dự đoán T (tiếp tục đảo)
-    
-    Pattern "đảo nghịch" (gãy nhịp):
-    - T-X-X-T-X → dự đoán T (đảo lại)
-    - X-T-T-X-T → dự đoán X (đảo lại)
-    
-    Pattern "hỗn hợp" → không tín hiệu.
+    Phân tích 5 phiên gần nhất:
+    - 4/4 đảo (T-X-T-X-T) → tiếp tục đảo
+    - 3/4 đảo (gãy nhịp) → đảo lại hướng
     """
     n = len(results)
     if n < 10: return None
-    
+
     last5 = results[:5]
-    
-    # Đếm số lần đảo trong 5 phiên
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
-    
-    # === ĐẢO THUẬN: 4/4 lần đảo ===
+
+    # === ĐẢO THUẬN: 4/4 ===
     if alt_count == 4:
-        # Pattern T-X-T-X-T hoặc X-T-X-T-X
-        # Học từ lịch sử: pattern 5 phiên tương tự đã xuất hiện chưa?
-        # Đếm bằng data API
         tai_next = xiu_next = 0
         key5 = tuple(last5)
         for i in range(min(n - 5, 50)):
@@ -422,54 +441,42 @@ def algo_5p_alternation(results):
                 if results[i+5] == "Tài": tai_next += 1
                 else: xiu_next += 1
         total_seen = tai_next + xiu_next
-        
+
         if total_seen >= 3:
-            # Data-driven: dùng tỷ lệ thực tế
             p_tai = (tai_next + 1) / (total_seen + 2)
             if p_tai >= 0.62:
                 return ("Tài", min(24, 13 + (p_tai - 0.5) * 25), "5p_alt_data_T")
             elif p_tai <= 0.38:
                 return ("Xỉu", min(24, 13 + (0.5 - p_tai) * 25), "5p_alt_data_X")
-        
-        # Không đủ data → dùng logic đảo thuận: tiếp tục đảo
+
         pred = _opp(last5[0])
         return (pred, 18, "5p_alt_continue")
-    
-    # === ĐẢO NGHỊCH: 3/4 lần đảo, có 1 chỗ gãy nhịp ===
+
+    # === ĐẢO NGHỊCH: 3/4 ===
     if alt_count == 3:
-        # Tìm vị trí gãy nhịp
-        break_pos = -1
-        for i in range(4):
-            if last5[i] == last5[i+1]:
-                break_pos = i
-                break
-        
-        if break_pos >= 0:
-            # Học từ lịch sử pattern 5 phiên tương tự
-            tai_next = xiu_next = 0
-            key5 = tuple(last5)
-            for i in range(min(n - 5, 50)):
-                if tuple(results[i:i+5]) == key5:
-                    if results[i+5] == "Tài": tai_next += 1
-                    else: xiu_next += 1
-            total_seen = tai_next + xiu_next
-            
-            if total_seen >= 3:
-                p_tai = (tai_next + 1) / (total_seen + 2)
-                if p_tai >= 0.62:
-                    return ("Tài", min(22, 12 + (p_tai - 0.5) * 22), "5p_alt_reverse_data_T")
-                elif p_tai <= 0.38:
-                    return ("Xỉu", min(22, 12 + (0.5 - p_tai) * 22), "5p_alt_reverse_data_X")
-            
-            # Logic đảo nghịch: đảo lại hướng (vì vừa gãy nhịp)
-            pred = _opp(last5[0])
-            return (pred, 15, "5p_alt_reverse")
-    
+        tai_next = xiu_next = 0
+        key5 = tuple(last5)
+        for i in range(min(n - 5, 50)):
+            if tuple(results[i:i+5]) == key5:
+                if results[i+5] == "Tài": tai_next += 1
+                else: xiu_next += 1
+        total_seen = tai_next + xiu_next
+
+        if total_seen >= 3:
+            p_tai = (tai_next + 1) / (total_seen + 2)
+            if p_tai >= 0.62:
+                return ("Tài", min(22, 12 + (p_tai - 0.5) * 22), "5p_alt_reverse_data_T")
+            elif p_tai <= 0.38:
+                return ("Xỉu", min(22, 12 + (0.5 - p_tai) * 22), "5p_alt_reverse_data_X")
+
+        pred = _opp(last5[0])
+        return (pred, 15, "5p_alt_reverse")
+
     return None
 
 
 # =====================================================================
-# DATA-DRIVEN ALGORITHMS (học từ lịch sử API)
+# DATA-DRIVEN ALGORITHMS
 # =====================================================================
 def data_markov2(results):
     n = len(results)
@@ -570,14 +577,14 @@ def data_tilt(results):
 
 
 # =====================================================================
-# MASTER ANALYZER — thêm 5P + Hash Deep
+# MASTER ANALYZER
 # =====================================================================
 def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
     for fn in (
-        algo_5p_alternation,      # 🔥 5 phút gần nhất đảo thuận nghịch
-        algo_hash_deep_lookup,    # 🔥 Hash deep MD5
+        algo_5p_alternation,
+        algo_hash_deep_lookup,
         data_markov2,
         data_pattern3,
         data_alternation,
@@ -585,8 +592,11 @@ def analyze_full_bridge(results):
         data_bayes_ratio,
         data_tilt,
     ):
-        s = fn(results)
-        if s: signals.append(s)
+        try:
+            s = fn(results)
+            if s: signals.append(s)
+        except Exception:
+            pass
     return signals
 
 
@@ -730,7 +740,6 @@ def history():
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
-        # 🔥 Học Hash Deep từ lịch sử
         learn_hash_deep_from_history(valid)
 
         loss_streak = compute_loss_streak(valid)
@@ -797,10 +806,11 @@ def predict():
             base_pred, base_conf, loss_streak, results=results
         )
 
-        # Thông tin 5P + Hash Deep
         p5_signal = algo_5p_alternation(results)
         hash_signal = algo_hash_deep_lookup(results)
         last5_tx = encode_tx(results, 5)
+        last13_tx = encode_tx(results, 13)
+        last13_hash = hash_deep_md5(last13_tx, depth_level=2) if last13_tx else None
 
         return jsonify({
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
@@ -810,6 +820,7 @@ def predict():
             'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak, 'total_sessions': len(valid),
             'last5_pattern': last5_tx,
+            'last13_hash': last13_hash,
             'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
             'hash_deep': {'pred': hash_signal[0], 'name': hash_signal[2]} if hash_signal else None,
             'signals': detail,
@@ -934,7 +945,11 @@ def reset_api():
                 RESET_ID = valid[-1]['phien']
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
                 PREDICTION_CACHE = {}
-                HASH_DEEP_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+                HASH_DEEP_DB = {
+                    13: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+                    10: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+                    7:  defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+                }
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
     except Exception as e:
