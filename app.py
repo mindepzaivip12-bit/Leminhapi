@@ -18,9 +18,11 @@ PREDICTION_CACHE = {}
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 MAX_CONFIDENCE = 90
+REPLAY_N = 50        # Tối ưu: 80 → 50
+SCAN_LIMIT = 150     # Tối ưu: 200 → 150
 
 # =====================================================================
-# DATABASES — khai báo 1 lần, reset bằng .clear()
+# DATABASES
 # =====================================================================
 HASH_DEEP_DB = {
     13: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
@@ -39,11 +41,31 @@ MD5_NGRAM_DB = {
 
 MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 
+# 🆕 DELTA CHAIN
+MD5_DELTA_DB = {
+    1: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    2: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    3: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+}
+
+# 🆕 HEX DIGIT
+MD5_HEX_DIGIT_DB = {
+    pos: {val: {"Tài": 0, "Xỉu": 0} for val in range(16)}
+    for pos in range(32)
+}
+
+# 🆕 SUM MOD
+MD5_SUM_MOD_DB = {
+    "mod3": {i: {"Tài": 0, "Xỉu": 0} for i in range(3)},
+    "mod5": {i: {"Tài": 0, "Xỉu": 0} for i in range(5)},
+    "mod7": {i: {"Tài": 0, "Xỉu": 0} for i in range(7)},
+}
+
 LOSS_HISTORY = deque(maxlen=20)
 
 
 # =====================================================================
-# HTML TEMPLATE (GIỮ NGUYÊN 100%)
+# HTML TEMPLATE (GIỮ NGUYÊN)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -120,7 +142,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>MD5 </span></div>
+    <div class="header-title">LE MINH <span>MD5 v5</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -342,10 +364,9 @@ def _regime(results):
 
 
 # =====================================================================
-# CORE HASH DEEP MD5
+# CORE HASH MD5
 # =====================================================================
 def encode_tx(results, length):
-    """An toàn: kiểm tra len trước khi slice."""
     if not results or len(results) < length: return None
     return "".join("T" if r == "Tài" else "X" for r in results[:length])
 
@@ -375,15 +396,30 @@ def hamming_distance(h1, h2):
     return sum(a != b for a, b in zip(b1, b2))
 
 
+def hash_sum_mod(hash_hex):
+    """Tổng giá trị hex mod 3/5/7."""
+    if not hash_hex: return 0, 0, 0
+    total = sum(int(c, 16) for c in hash_hex)
+    return total % 3, total % 5, total % 7
+
+
+def hex_delta(h1, h2):
+    """Delta hex: XOR từng ký tự → hex string."""
+    if not h1 or not h2 or len(h1) != len(h2): return None
+    delta = []
+    for c1, c2 in zip(h1, h2):
+        delta.append(format(int(c1, 16) ^ int(c2, 16), 'x'))
+    return "".join(delta)
+
+
+# =====================================================================
+# LEARN — học tất cả DB
+# =====================================================================
 def learn_hash_deep_from_history(valid):
-    """
-    Học từ lịch sử — KHÔNG reset DB (chỉ append).
-    Reset chỉ xảy ra trong /api/reset.
-    """
     n = len(valid)
     if n < 15: return
 
-    # Học HASH_DEEP_DB (4 tầng)
+    # HASH_DEEP_DB (4 tầng)
     for depth in (5, 7, 10, 13):
         if n <= depth: continue
         db = HASH_DEEP_DB[depth]
@@ -395,51 +431,62 @@ def learn_hash_deep_from_history(valid):
             if not h: continue
             db[h][valid[i]['result']] += 1
 
-    # Học MD5_BIT_DB
-    if n >= 20:
-        for i in range(13, n):
-            history = [v['result'] for v in valid[i-13:i]][::-1]
-            tx = encode_tx(history, 13)
-            if not tx: continue
-            h = hash_deep_md5(tx, depth_level=2)
-            if not h: continue
-            bits = hash_to_bits(h)
-            for bit_idx in range(128):
-                if bit_idx < len(bits) and bits[bit_idx] == 1:
-                    MD5_BIT_DB[bit_idx][valid[i]['result']] += 1
+    if n < 20: return
 
-    # Học MD5_NGRAM_DB
-    if n >= 20:
-        for i in range(13, n):
-            history = [v['result'] for v in valid[i-13:i]][::-1]
-            tx = encode_tx(history, 13)
-            if not tx: continue
-            h = hash_deep_md5(tx, depth_level=2)
-            if not h: continue
-            for ng_size in (2, 3, 4):
-                for start in range(0, len(h) - ng_size + 1):
-                    gram = h[start:start + ng_size]
-                    MD5_NGRAM_DB[ng_size][gram][valid[i]['result']] += 1
+    # Chuẩn bị hash list
+    hash_list = []  # [(hash, result)]
+    for i in range(13, n):
+        history = [v['result'] for v in valid[i-13:i]][::-1]
+        tx = encode_tx(history, 13)
+        if not tx: continue
+        h = hash_deep_md5(tx, depth_level=2)
+        if h:
+            hash_list.append((h, valid[i]['result']))
 
-    # Học MD5_HAMMING_DB — sửa index đúng
-    if n >= 20:
-        hash_list = []  # (hash, result_at_i)
-        for i in range(13, n):
-            history = [v['result'] for v in valid[i-13:i]][::-1]
-            tx = encode_tx(history, 13)
-            if not tx: continue
-            h = hash_deep_md5(tx, depth_level=2)
-            if h:
-                hash_list.append((h, valid[i]['result']))
-        for i in range(len(hash_list) - 1):
-            hd = hamming_distance(hash_list[i][0], hash_list[i+1][0])
-            bin_key = hd // 8
-            # Nhãn = kết quả của phiên i+1 (phiên sau hash_list[i])
-            MD5_HAMMING_DB[bin_key][hash_list[i+1][1]] += 1
+    # MD5_BIT_DB
+    for h, res in hash_list:
+        bits = hash_to_bits(h)
+        for bit_idx in range(128):
+            if bit_idx < len(bits) and bits[bit_idx] == 1:
+                MD5_BIT_DB[bit_idx][res] += 1
+
+    # MD5_NGRAM_DB
+    for h, res in hash_list:
+        for ng_size in (2, 3, 4):
+            for start in range(0, len(h) - ng_size + 1):
+                gram = h[start:start + ng_size]
+                MD5_NGRAM_DB[ng_size][gram][res] += 1
+
+    # MD5_HAMMING_DB
+    for i in range(len(hash_list) - 1):
+        hd = hamming_distance(hash_list[i][0], hash_list[i+1][0])
+        bin_key = hd // 8
+        MD5_HAMMING_DB[bin_key][hash_list[i+1][1]] += 1
+
+    # 🆕 MD5_DELTA_DB — delta với 1/2/3 hash trước
+    for i in range(len(hash_list)):
+        for offset in (1, 2, 3):
+            if i + offset < len(hash_list):
+                delta = hex_delta(hash_list[i][0], hash_list[i+offset][0])
+                if delta:
+                    MD5_DELTA_DB[offset][delta][hash_list[i][1]] += 1
+
+    # 🆕 MD5_HEX_DIGIT_DB — từng vị trí hex
+    for h, res in hash_list:
+        for pos in range(min(32, len(h))):
+            val = int(h[pos], 16)
+            MD5_HEX_DIGIT_DB[pos][val][res] += 1
+
+    # 🆕 MD5_SUM_MOD_DB
+    for h, res in hash_list:
+        m3, m5, m7 = hash_sum_mod(h)
+        MD5_SUM_MOD_DB["mod3"][m3][res] += 1
+        MD5_SUM_MOD_DB["mod5"][m5][res] += 1
+        MD5_SUM_MOD_DB["mod7"][m7][res] += 1
 
 
 # =====================================================================
-# ALGO 1: HASH DEEP MULTI-DEPTH LOOKUP
+# ALGO: HASH DEEP MULTI-DEPTH
 # =====================================================================
 def algo_hash_deep_lookup(results):
     combined_score = {"Tài": 0.0, "Xỉu": 0.0}
@@ -473,7 +520,7 @@ def algo_hash_deep_lookup(results):
 
 
 # =====================================================================
-# ALGO 2: MD5 BIT ANALYSIS
+# ALGO: MD5 BIT ANALYSIS
 # =====================================================================
 def algo_md5_bit_analysis(results):
     if len(results) < 13: return None
@@ -509,7 +556,7 @@ def algo_md5_bit_analysis(results):
 
 
 # =====================================================================
-# ALGO 3: MD5 N-GRAM ANALYSIS
+# ALGO: MD5 N-GRAM
 # =====================================================================
 def algo_md5_ngram(results):
     if len(results) < 13: return None
@@ -546,7 +593,7 @@ def algo_md5_ngram(results):
 
 
 # =====================================================================
-# ALGO 4: MD5 HAMMING DISTANCE
+# ALGO: MD5 HAMMING
 # =====================================================================
 def algo_md5_hamming(results):
     if len(results) < 15: return None
@@ -568,6 +615,128 @@ def algo_md5_hamming(results):
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
     weight = min(18, 10 + abs(z) * 3)
     return (pred, weight, f"md5_hamming_{hd}")
+
+
+# =====================================================================
+# 🆕 ALGO: MD5 DELTA CHAIN
+# =====================================================================
+def algo_md5_delta_chain(results):
+    """
+    So sánh hash hiện tại với hash 1/2/3 phiên trước.
+    Delta hex XOR → tra DB xem delta này ra Tài/Xỉu thế nào.
+    """
+    n = len(results)
+    if n < 15: return None
+    tx_now = encode_tx(results, 13)
+    if not tx_now: return None
+    h_now = hash_deep_md5(tx_now, depth_level=2)
+    if not h_now: return None
+
+    st = sx = 0.0
+    hits = 0
+    for offset in (1, 2, 3):
+        if n <= 13 + offset - 1: continue
+        tx_prev = encode_tx(results[offset:], 13)
+        if not tx_prev: continue
+        h_prev = hash_deep_md5(tx_prev, depth_level=2)
+        if not h_prev: continue
+        delta = hex_delta(h_now, h_prev)
+        if not delta: continue
+        db = MD5_DELTA_DB[offset]
+        if delta not in db: continue
+        cnt = db[delta]
+        total = cnt["Tài"] + cnt["Xỉu"]
+        if total < 2: continue
+        p_tai = (cnt["Tài"] + 1) / (total + 2)
+        z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+        if abs(z) < 1.0: continue
+        w = abs(z) * 2 * (1.0 / offset)  # offset nhỏ quan trọng hơn
+        if p_tai > 0.5: st += w
+        else: sx += w
+        hits += 1
+
+    if hits < 1: return None
+    if st == sx: return None
+    pred = "Tài" if st > sx else "Xỉu"
+    ratio = max(st, sx) / (st + sx)
+    if ratio < 0.58: return None
+    weight = min(20, 10 + (ratio - 0.5) * 30)
+    return (pred, weight, f"md5_delta_{hits}")
+
+
+# =====================================================================
+# 🆕 ALGO: MD5 HEX DIGIT
+# =====================================================================
+def algo_md5_hex_digit(results):
+    """
+    Phân tích từng vị trí hex (32 vị trí × 16 giá trị).
+    Mỗi vị trí có thiên lệch → vote.
+    """
+    if len(results) < 13: return None
+    tx = encode_tx(results, 13)
+    if not tx: return None
+    h = hash_deep_md5(tx, depth_level=2)
+    if not h: return None
+
+    st = sx = 0.0
+    active_pos = 0
+    for pos in range(min(32, len(h))):
+        val = int(h[pos], 16)
+        cnt = MD5_HEX_DIGIT_DB[pos][val]
+        total = cnt["Tài"] + cnt["Xỉu"]
+        if total < 5: continue
+        p_tai = (cnt["Tài"] + 1) / (total + 2)
+        z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+        if abs(z) < 1.0: continue
+        w = abs(z) * 2
+        if p_tai > 0.5: st += w
+        else: sx += w
+        active_pos += 1
+
+    if active_pos < 5: return None
+    if st == sx: return None
+    pred = "Tài" if st > sx else "Xỉu"
+    ratio = max(st, sx) / (st + sx)
+    if ratio < 0.58: return None
+    weight = min(20, 10 + (ratio - 0.5) * 35)
+    return (pred, weight, f"md5_hex_digit_{active_pos}")
+
+
+# =====================================================================
+# 🆕 ALGO: MD5 SUM MOD
+# =====================================================================
+def algo_md5_sum_mod(results):
+    """
+    Tổng hex của hash → mod 3/5/7 → tra DB theo từng mod.
+    """
+    if len(results) < 13: return None
+    tx = encode_tx(results, 13)
+    if not tx: return None
+    h = hash_deep_md5(tx, depth_level=2)
+    if not h: return None
+
+    m3, m5, m7 = hash_sum_mod(h)
+    st = sx = 0.0
+    hits = 0
+    for mod_name, key, wf in (("mod3", m3, 0.7), ("mod5", m5, 1.0), ("mod7", m7, 1.3)):
+        cnt = MD5_SUM_MOD_DB[mod_name][key]
+        total = cnt["Tài"] + cnt["Xỉu"]
+        if total < 5: continue
+        p_tai = (cnt["Tài"] + 1) / (total + 2)
+        z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+        if abs(z) < 1.0: continue
+        w = abs(z) * 2 * wf
+        if p_tai > 0.5: st += w
+        else: sx += w
+        hits += 1
+
+    if hits < 1: return None
+    if st == sx: return None
+    pred = "Tài" if st > sx else "Xỉu"
+    ratio = max(st, sx) / (st + sx)
+    if ratio < 0.58: return None
+    weight = min(18, 10 + (ratio - 0.5) * 30)
+    return (pred, weight, f"md5_sum_mod_{hits}")
 
 
 # =====================================================================
@@ -658,7 +827,7 @@ def algo_break_rhythm(results):
 
 
 # =====================================================================
-# DATA-DRIVEN ALGORITHMS
+# DATA-DRIVEN
 # =====================================================================
 def data_markov2(results):
     n = len(results)
@@ -768,6 +937,9 @@ def analyze_full_bridge(results):
         algo_md5_bit_analysis,
         algo_md5_ngram,
         algo_md5_hamming,
+        algo_md5_delta_chain,    # 🆕
+        algo_md5_hex_digit,      # 🆕
+        algo_md5_sum_mod,        # 🆕
         algo_hash_deep_lookup,
         algo_5p_alternation,
         algo_trend_break,
@@ -790,7 +962,7 @@ def analyze_full_bridge(results):
 # =====================================================================
 # PREDICTOR
 # =====================================================================
-def full_bridge_predict_adaptive(results, replay_n=80):
+def full_bridge_predict_adaptive(results):
     n = len(results)
     if n == 0: return "Tài", 50, []
     if n == 1: return _opp(results[0]), 52, []
@@ -799,7 +971,7 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         return results[1], 52, []
 
     signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
-    replay_count = min(replay_n, n - 3)
+    replay_count = min(REPLAY_N, n - 3)
     for j in range(replay_count):
         history = results[j + 1:]; actual = results[j]
         decay = math.exp(-j / max(replay_count / 2.0, 1.0))
@@ -826,7 +998,7 @@ def full_bridge_predict_adaptive(results, replay_n=80):
             accuracy_mult *= 1.15
         if "trend_" in name or "rhythm_" in name:
             accuracy_mult *= 1.12
-        if "md5_bit_" in name or "md5_ngram_" in name:
+        if "md5_" in name:
             accuracy_mult *= 1.08
         adjusted = weight * accuracy_mult
         if pred_sig == "Tài": st += adjusted
@@ -923,10 +1095,9 @@ def apply_recovery(base_pred, conf, loss_streak, results=None):
 
 
 # =====================================================================
-# DB RESET HELPERS — dùng .clear() đúng cách
+# RESET HELPERS
 # =====================================================================
 def reset_all_databases():
-    """Xoá toàn bộ dữ liệu DB, giữ nguyên tham chiếu."""
     for depth in (5, 7, 10, 13):
         HASH_DEEP_DB[depth].clear()
     for bit in range(128):
@@ -935,6 +1106,16 @@ def reset_all_databases():
     for ng_size in (2, 3, 4):
         MD5_NGRAM_DB[ng_size].clear()
     MD5_HAMMING_DB.clear()
+    for offset in (1, 2, 3):
+        MD5_DELTA_DB[offset].clear()
+    for pos in range(32):
+        for val in range(16):
+            MD5_HEX_DIGIT_DB[pos][val]["Tài"] = 0
+            MD5_HEX_DIGIT_DB[pos][val]["Xỉu"] = 0
+    for mod_name in ("mod3", "mod5", "mod7"):
+        for k in MD5_SUM_MOD_DB[mod_name]:
+            MD5_SUM_MOD_DB[mod_name][k]["Tài"] = 0
+            MD5_SUM_MOD_DB[mod_name][k]["Xỉu"] = 0
     LOSS_HISTORY.clear()
 
 
@@ -959,7 +1140,6 @@ def history():
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
-        # Chỉ học DB nếu reset chưa xảy ra hoặc cần rebuild
         learn_hash_deep_from_history(valid)
 
         loss_streak = compute_loss_streak(valid)
@@ -982,8 +1162,7 @@ def history():
             'base_prediction': base_pred if flipped else None,
         })
 
-        scan_limit = min(len(valid), 200)
-        for i in range(len(valid) - 1, len(valid) - scan_limit - 1, -1):
+        for i in range(len(valid) - 1, len(valid) - min(len(valid), SCAN_LIMIT) - 1, -1):
             if i < 0: break
             current_session = valid[i]
             pred, conf, is_correct = get_prediction_for(valid, i)
@@ -1031,6 +1210,9 @@ def predict():
         bit_signal = algo_md5_bit_analysis(results)
         ngram_signal = algo_md5_ngram(results)
         hamming_signal = algo_md5_hamming(results)
+        delta_signal = algo_md5_delta_chain(results)
+        hex_signal = algo_md5_hex_digit(results)
+        sum_mod_signal = algo_md5_sum_mod(results)
         trend_signal = algo_trend_break(results)
         rhythm_signal = algo_break_rhythm(results)
 
@@ -1045,13 +1227,15 @@ def predict():
             'base_prediction': base_pred, 'base_confidence': base_conf,
             'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak, 'total_sessions': len(valid),
-            'last5_pattern': last5_tx,
-            'last13_hash': last13_hash,
+            'last5_pattern': last5_tx, 'last13_hash': last13_hash,
             'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
             'hash_deep': {'pred': hash_signal[0], 'name': hash_signal[2]} if hash_signal else None,
             'md5_bit': {'pred': bit_signal[0], 'name': bit_signal[2]} if bit_signal else None,
             'md5_ngram': {'pred': ngram_signal[0], 'name': ngram_signal[2]} if ngram_signal else None,
             'md5_hamming': {'pred': hamming_signal[0], 'name': hamming_signal[2]} if hamming_signal else None,
+            'md5_delta': {'pred': delta_signal[0], 'name': delta_signal[2]} if delta_signal else None,
+            'md5_hex_digit': {'pred': hex_signal[0], 'name': hex_signal[2]} if hex_signal else None,
+            'md5_sum_mod': {'pred': sum_mod_signal[0], 'name': sum_mod_signal[2]} if sum_mod_signal else None,
             'trend': {'pred': trend_signal[0], 'name': trend_signal[2]} if trend_signal else None,
             'rhythm': {'pred': rhythm_signal[0], 'name': rhythm_signal[2]} if rhythm_signal else None,
             'signals': detail,
@@ -1102,7 +1286,7 @@ def lc79():
         last = valid[-1]; next_phien = last['phien'] + 1
 
         return jsonify({
-            'Id': 'le minh md5 deep v4', 'Phien': str(next_phien),
+            'Id': 'le minh md5 deep v5', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
             'Base_du_doan': base_pred if flipped else None,
@@ -1176,7 +1360,6 @@ def reset_api():
                 RESET_ID = valid[-1]['phien']
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
                 PREDICTION_CACHE = {}
-                # Reset DB đúng cách bằng .clear()
                 reset_all_databases()
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
