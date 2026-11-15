@@ -29,6 +29,11 @@ HASH_DEEP_DB = {
     5:  defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
 }
 
+# =====================================================================
+# LOSS TRACKER — theo dõi lịch sử thua để fix gãy
+# =====================================================================
+LOSS_HISTORY = deque(maxlen=20)  # [(phien, pred, actual), ...]
+
 
 # =====================================================================
 # HTML TEMPLATE (GIỮ NGUYÊN 100%)
@@ -330,7 +335,7 @@ def _regime(results):
 
 
 # =====================================================================
-# HASH DEEP MD5
+# 🧬 HASH DEEP MD5 — 4 TẦNG
 # =====================================================================
 def encode_tx(results, length):
     if len(results) < length: return None
@@ -338,6 +343,7 @@ def encode_tx(results, length):
 
 
 def hash_deep_md5(tx_string, depth_level=2):
+    """Băm sâu nhiều tầng MD5."""
     salted = f"leminh_deep_{depth_level}|{tx_string}"
     h = hashlib.md5(salted.encode('utf-8')).hexdigest()
     for _ in range(depth_level - 1):
@@ -346,9 +352,11 @@ def hash_deep_md5(tx_string, depth_level=2):
 
 
 def learn_hash_deep_from_history(valid):
+    """Học HASH_DEEP_DB từ lịch sử API ở 4 độ sâu: 5, 7, 10, 13."""
     global HASH_DEEP_DB
     n = len(valid)
     if n < 15: return
+
     for depth in (5, 7, 10, 13):
         if n <= depth: continue
         db = HASH_DEEP_DB[depth]
@@ -362,9 +370,11 @@ def learn_hash_deep_from_history(valid):
 
 
 def algo_hash_deep_lookup(results):
+    """Tra cứu 4 độ sâu, ensemble có trọng số."""
     combined_score = {"Tài": 0.0, "Xỉu": 0.0}
     hits = []
     total_samples = 0
+
     for depth, weight_factor in ((13, 1.0), (10, 0.8), (7, 0.6), (5, 0.4)):
         tx = encode_tx(results, depth)
         if not tx: continue
@@ -374,33 +384,42 @@ def algo_hash_deep_lookup(results):
         counts = db[h]
         total = counts["Tài"] + counts["Xỉu"]
         if total < 2: continue
+
         p_tai = (counts["Tài"] + 1) / (total + 2)
         z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+
         pred = "Tài" if p_tai > 0.5 else "Xỉu"
         weight = min(24, 10 + abs(z) * 4) * weight_factor
         combined_score[pred] += weight
-        hits.append({'depth': depth, 'pred': pred, 'samples': total})
+        hits.append({'depth': depth, 'pred': pred, 'samples': total,
+                     'p_tai': round(p_tai, 3), 'z': round(z, 2)})
         total_samples += total
+
     if not hits or total_samples < 3:
         return None
+
     st = combined_score["Tài"]; sx = combined_score["Xỉu"]
     if st == sx: return None
     pred = "Tài" if st > sx else "Xỉu"
     ratio = max(st, sx) / (st + sx)
     z_total = (ratio - 0.5) * 4
+
     if abs(z_total) < 1.2: return None
+
     weight = min(25, 10 + abs(z_total) * 5)
     return (pred, weight, f"hash_deep_multi_{total_samples}")
 
 
 # =====================================================================
-# 5P ALTERNATION
+# 🔥 5P ALTERNATION — Đảo thuận nghịch 1-1
 # =====================================================================
 def algo_5p_alternation(results):
     n = len(results)
     if n < 10: return None
+
     last5 = results[:5]
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
+
     if alt_count == 4:
         tai_next = xiu_next = 0
         key5 = tuple(last5)
@@ -416,53 +435,102 @@ def algo_5p_alternation(results):
             elif p_tai <= 0.38:
                 return ("Xỉu", min(24, 13 + (0.5 - p_tai) * 25), "5p_alt_data_X")
         return (_opp(last5[0]), 18, "5p_alt_continue")
+
     if alt_count == 3:
+        tai_next = xiu_next = 0
+        key5 = tuple(last5)
+        for i in range(min(n - 5, 50)):
+            if tuple(results[i:i+5]) == key5:
+                if results[i+5] == "Tài": tai_next += 1
+                else: xiu_next += 1
+        total_seen = tai_next + xiu_next
+        if total_seen >= 3:
+            p_tai = (tai_next + 1) / (total_seen + 2)
+            if p_tai >= 0.62:
+                return ("Tài", min(22, 12 + (p_tai - 0.5) * 22), "5p_alt_reverse_data_T")
+            elif p_tai <= 0.38:
+                return ("Xỉu", min(22, 12 + (0.5 - p_tai) * 22), "5p_alt_reverse_data_X")
         return (_opp(last5[0]), 15, "5p_alt_reverse")
+
     return None
 
 
 # =====================================================================
-# TREND BREAK
+# 🔥 TREND DETECTOR — BẺ CẦU XU HƯỚNG
 # =====================================================================
 def algo_trend_break(results):
+    """
+    Phát hiện xu hướng bằng linear regression trên 20 phiên.
+    Nếu slope mạnh + đổi chiều → bẻ cầu.
+    """
     n = len(results)
     if n < 20: return None
-    window = list(reversed(results[:20]))
+
+    # Chuyển T/X → 1/0 (gần nhất = cuối mảng)
+    window = list(reversed(results[:20]))  # cũ → mới
     b = [1 if r == "Tài" else 0 for r in window]
-    x_mean = 9.5
+
+    # Linear regression: y = a + b*x
+    x_mean = 9.5  # (0+...+19)/20
     y_mean = sum(b) / 20
     num = sum((i - x_mean) * (b[i] - y_mean) for i in range(20))
     den = sum((i - x_mean) ** 2 for i in range(20))
     slope = num / den if den else 0
+
+    # Slope > 0: xu hướng Tài tăng; slope < 0: Xỉu tăng
+    # Kiểm tra 3 phiên gần nhất có đi ngược xu hướng không
     last3 = b[-3:]
-    if slope > 0.04 and sum(last3) <= 1:
-        return ("Tài", min(20, 12 + abs(slope) * 30), "trend_bounce_T")
-    elif slope < -0.04 and sum(last3) >= 2:
-        return ("Xỉu", min(20, 12 + abs(slope) * 30), "trend_bounce_X")
+    if slope > 0.04:
+        # Xu hướng Tài tăng → nếu 3 phiên gần nhất đang giảm → bẻ về Tài
+        if sum(last3) <= 1:
+            return ("Tài", min(20, 12 + abs(slope) * 30), "trend_bounce_T")
+    elif slope < -0.04:
+        if sum(last3) >= 2:
+            return ("Xỉu", min(20, 12 + abs(slope) * 30), "trend_bounce_X")
+
+    # Slope cực mạnh + 3 phiên cuối cùng hướng → tiếp tục
     if abs(slope) > 0.08:
         last_dir = "Tài" if sum(last3) >= 2 else "Xỉu"
         if (slope > 0 and last_dir == "Tài") or (slope < 0 and last_dir == "Xỉu"):
             return (last_dir, min(18, 12 + abs(slope) * 25), f"trend_continue_{last_dir[0]}")
+
     return None
 
 
 # =====================================================================
-# BREAK RHYTHM
+# 🔥 GÃY NHỊP 5P — PHÁT HIỆN VÀ BẺ
 # =====================================================================
 def algo_break_rhythm(results):
+    """
+    Phát hiện gãy nhịp trong 8 phiên gần nhất.
+    - Gãy nhịp: pattern có 1-2 chỗ đột ngột không theo quy luật
+    - Bẻ: dự đoán theo nhịp chính (bỏ qua ngoại lệ)
+    """
     n = len(results)
     if n < 12: return None
+
     last8 = results[:8]
     alt_count = sum(1 for i in range(7) if last8[i] != last8[i+1])
+
+    # Gãy nhịp rõ: 5-6 lần đảo trong 7 phiên (nhịp chính là đảo)
     if 5 <= alt_count <= 6:
-        return (_opp(last8[0]), 16, "break_rhythm_alt")
+        # Tìm vị trí gãy nhịp
+        for i in range(7):
+            if last8[i] == last8[i+1]:
+                # Gãy tại vị trí i → phiên i+1 là ngoại lệ
+                # Nhịp chính là đảo → phiên tiếp theo phải đảo từ last8[0]
+                return (_opp(last8[0]), 16, "break_rhythm_alt")
+
+    # Gãy nhịp bệt: 1-2 lần đảo trong 7 (nhịp chính là bệt)
     if alt_count <= 2:
+        # Đang bệt → tiếp tục bệt
         return (last8[0], 14, "break_rhythm_streak")
+
     return None
 
 
 # =====================================================================
-# DATA-DRIVEN
+# DATA-DRIVEN ALGORITHMS
 # =====================================================================
 def data_markov2(results):
     n = len(results)
@@ -568,9 +636,18 @@ def data_tilt(results):
 def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
-    for fn in (algo_hash_deep_lookup, algo_5p_alternation, algo_trend_break,
-               algo_break_rhythm, data_markov2, data_pattern3, data_alternation,
-               data_streak_break, data_bayes_ratio, data_tilt):
+    for fn in (
+        algo_hash_deep_lookup,
+        algo_5p_alternation,
+        algo_trend_break,       # 🔥 MỚI: bẻ cầu xu hướng
+        algo_break_rhythm,      # 🔥 MỚI: gãy nhịp 5P
+        data_markov2,
+        data_pattern3,
+        data_alternation,
+        data_streak_break,
+        data_bayes_ratio,
+        data_tilt,
+    ):
         try:
             s = fn(results)
             if s: signals.append(s)
@@ -607,11 +684,18 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     st = sx = 0.0; detail = []
     for pred_sig, weight, name in signals:
         s = signal_stats[name]
-        acc = (s['wins'] + 1.0) / (s['total'] + 2.0) if s['total'] >= 3 else 0.5
+        if s['total'] >= 3:
+            acc = (s['wins'] + 1.0) / (s['total'] + 2.0)
+        else:
+            acc = 0.5
         accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
-        if regime == "streak" and "break" in name: accuracy_mult *= 1.10
-        elif regime == "alternation" and ("alt" in name or "5p" in name): accuracy_mult *= 1.15
-        if "trend_" in name or "rhythm_" in name: accuracy_mult *= 1.12
+        if regime == "streak" and "break" in name:
+            accuracy_mult *= 1.10
+        elif regime == "alternation" and ("alt" in name or "5p" in name):
+            accuracy_mult *= 1.15
+        # 🔥 Boost trend/rhythm khi có
+        if "trend_" in name or "rhythm_" in name:
+            accuracy_mult *= 1.12
         adjusted = weight * accuracy_mult
         if pred_sig == "Tài": st += adjusted
         else: sx += adjusted
@@ -651,10 +735,7 @@ def get_prediction_for(valid, i):
 
 
 def compute_loss_streak(valid, max_scan=10):
-    """FIX: Reset streak khi regime thay đổi."""
     if len(valid) < 5: return 0
-    results_now = [v['result'] for v in valid][::-1]
-    regime_now = _regime(results_now)
     streak = 0
     end = len(valid) - 1
     start = max(0, end - max_scan)
@@ -663,63 +744,70 @@ def compute_loss_streak(valid, max_scan=10):
         if is_correct is None: break
         if is_correct: break
         streak += 1
-        # Nếu regime tại thời điểm thua khác regime hiện tại → reset
-        if i >= 3:
-            hist_at_loss = [v['result'] for v in valid[:i]][::-1]
-            regime_at_loss = _regime(hist_at_loss)
-            if regime_at_loss != regime_now:
-                return 0
     return streak
 
 
 # =====================================================================
-# AUTO-FIX THÔNG MINH — KHÔNG FLIP MÙ
+# 🔥 AUTO-FIX GÃY 2-3 TAY + BẺ CẦU XU HƯỚNG
 # =====================================================================
 def apply_recovery(base_pred, conf, loss_streak, results=None):
+    """
+    Auto-fix thông minh:
+    - Thua 1: fix mềm, giảm conf
+    - Thua 2: BẺ CẦU có điều kiện — kiểm tra xu hướng
+    - Thua 3: BẺ MẠNH + boost conf + bẻ theo xu hướng
+    - Thua ≥4: đảo khẩn
+    """
     if loss_streak < 1:
         return base_pred, conf, False, None
 
     regime = _regime(results) if results else "balanced"
 
-    # === THUA 1 ===
+    # === THUA 1 TAY — Fix mềm ===
     if loss_streak == 1:
         if regime == "alternation":
-            return base_pred, max(50, conf - 3), False, "hold_alt_1"
-        return base_pred, max(50, conf - 5), False, "soft_hold_1"
+            return base_pred, max(50, conf - 3), False, "hold_alt"
+        return base_pred, max(50, conf - 5), False, "soft_hold"
 
-    # === THUA 2 — CHỈ FLIP KHI ĐỦ ĐIỀU KIỆN ===
+    # === THUA 2 TAY — BẺ CẦU có điều kiện ===
     if loss_streak == 2:
-        # Alternation → không flip
-        if regime == "alternation":
-            return base_pred, max(55, conf - 5), False, "hold_alt_2"
-        # Conf gốc cao → không flip, chỉ giảm
-        if conf >= 75:
-            return base_pred, max(60, conf - 8), False, "hold_high_conf_2"
-        # Streak → flip
-        if regime == "streak":
-            return _opp(base_pred), min(85, max(conf, 72)), True, "flip_streak_2"
-        # Balanced → chỉ flip nếu trend/rhythm ủng hộ
+        # Kiểm tra xu hướng để bẻ đúng hướng
         trend_signal = algo_trend_break(results) if results else None
         rhythm_signal = algo_break_rhythm(results) if results else None
-        if trend_signal and trend_signal[0] == _opp(base_pred):
-            return _opp(base_pred), min(85, max(conf, 74)), True, "flip_trend_2"
-        if rhythm_signal and rhythm_signal[0] == _opp(base_pred):
-            return _opp(base_pred), min(85, max(conf, 73)), True, "flip_rhythm_2"
-        return base_pred, max(55, conf - 6), False, "hold_balanced_2"
 
-    # === THUA 3 ===
+        if regime == "alternation":
+            # Đang đảo → không bẻ, giữ nguyên
+            return base_pred, max(55, conf - 3), False, "hold_alt_2"
+
+        if regime == "streak":
+            # Đang bệt → bẻ mạnh (đảo hướng)
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True, "flip_streak_2"
+
+        # Balanced → kiểm tra trend/rhythm
+        if trend_signal and trend_signal[0] == _opp(base_pred):
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 74)), True, "flip_trend_2"
+        if rhythm_signal and rhythm_signal[0] == _opp(base_pred):
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 73)), True, "flip_rhythm_2"
+
+        # Mặc định: đảo
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 72)), True, "flip_2"
+
+    # === THUA 3 TAY — BẺ MẠNH ===
     if loss_streak == 3:
         if regime == "alternation":
+            # Đang đảo mà thua 3 → đổi chiến thuật: follow xu hướng
             if results and len(results) >= 3:
-                return results[0], min(85, max(conf, 72)), False, "follow_3"
+                return results[0], min(MAX_CONFIDENCE, max(conf, 72)), False, "follow_3"
             return base_pred, max(55, conf - 5), False, "hold_alt_3"
-        return _opp(base_pred), min(88, conf + 10), True, "flip_3_strong"
 
-    # === THUA ≥4 ===
+        # Đảo + boost mạnh
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 12), True, "flip_3_strong"
+
+    # === THUA ≥4 — ĐẢO KHẨN ===
     if loss_streak >= 5:
-        return _opp(base_pred), min(89, conf + 12), True, "flip_5plus"
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 15), True, "flip_5plus"
     if loss_streak == 4:
-        return _opp(base_pred), min(88, conf + 10), True, "flip_4"
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 13), True, "flip_4"
 
     return base_pred, conf, False, None
 
@@ -746,6 +834,7 @@ def history():
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
         learn_hash_deep_from_history(valid)
+
         loss_streak = compute_loss_streak(valid)
         out = []; correct_count = 0; total_past = 0
         latest_session = valid[-1]
@@ -803,6 +892,7 @@ def predict():
 
         learn_hash_deep_from_history(valid)
         results = [v['result'] for v in valid][::-1]
+
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(
@@ -813,6 +903,9 @@ def predict():
         hash_signal = algo_hash_deep_lookup(results)
         trend_signal = algo_trend_break(results)
         rhythm_signal = algo_break_rhythm(results)
+        last5_tx = encode_tx(results, 5)
+        last13_tx = encode_tx(results, 13)
+        last13_hash = hash_deep_md5(last13_tx, depth_level=2) if last13_tx else None
 
         return jsonify({
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
@@ -821,13 +914,16 @@ def predict():
             'base_prediction': base_pred, 'base_confidence': base_conf,
             'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak, 'total_sessions': len(valid),
-            'last5_pattern': encode_tx(results, 5),
-            'last13_hash': hash_deep_md5(encode_tx(results, 13), 2) if encode_tx(results, 13) else None,
+            'last5_pattern': last5_tx,
+            'last13_hash': last13_hash,
             'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
             'hash_deep': {'pred': hash_signal[0], 'name': hash_signal[2]} if hash_signal else None,
             'trend': {'pred': trend_signal[0], 'name': trend_signal[2]} if trend_signal else None,
             'rhythm': {'pred': rhythm_signal[0], 'name': rhythm_signal[2]} if rhythm_signal else None,
             'signals': detail,
+            'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
+            'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
+            'signal_count': len(detail),
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
@@ -849,6 +945,7 @@ def lc79():
 
         learn_hash_deep_from_history(valid)
         results = [v['result'] for v in valid][::-1]
+
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(
@@ -858,12 +955,13 @@ def lc79():
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
         xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
         total_sig = tai_score + xiu_score
-        conf_float = 50.0
         if total_sig > 0:
             ratio = max(tai_score, xiu_score) / total_sig
             base_conf_f = 50 + (ratio - 0.5) * 100
             evidence = min(1.0, total_sig / 50.0)
             conf_float = max(50.0, min(float(MAX_CONFIDENCE), 50 + (base_conf_f - 50) * evidence))
+        else:
+            conf_float = 50.0
         conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
@@ -904,12 +1002,13 @@ def lc79md5():
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
         xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
         total_sig = tai_score + xiu_score
-        conf_float = 50.0
         if total_sig > 0:
             ratio = max(tai_score, xiu_score) / total_sig
             base_conf_f = 50 + (ratio - 0.5) * 100
             evidence = min(1.0, total_sig / 50.0)
             conf_float = max(50.0, min(float(MAX_CONFIDENCE), 50 + (base_conf_f - 50) * evidence))
+        else:
+            conf_float = 50.0
         conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
 
         last = valid[-1]
@@ -934,7 +1033,7 @@ def lc79md5():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, HASH_DEEP_DB
+    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, HASH_DEEP_DB, LOSS_HISTORY
     try:
         raw_rows, success = fetch_sessions()
         if success and raw_rows:
@@ -949,6 +1048,7 @@ def reset_api():
                     7:  defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
                     5:  defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
                 }
+                LOSS_HISTORY.clear()
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
     except Exception as e:
