@@ -385,18 +385,26 @@ def learn_hash_deep_from_history(valid):
 
 
 # =====================================================================
-# 🎯 NÂNG CẤP: CẦU 5 PHIÊN CHI TIẾT — KHÔNG NGHIÊNG PHIÊN
+# 🎯 CẦU 5 PHIÊN CHI TIẾT — KHÔNG NGHIÊNG 1 HAY 2 PHIÊN
 # =====================================================================
 
 def _classify_cau5_detail(bits):
     """
     Phân tích chi tiết cầu 5 phiên.
     bits: [b0, b1, b2, b3, b4] với b0 = phiên mới nhất.
-    Trả về dict: type, sub, strength, weight_profile
+
+    Trả về dict: type, sub, strength, groups, b4_eq_b0.
+
+    Phân loại:
+      - 1-1 (Đảo full 5): TXTXT → strength 0.60 (dài, dễ gãy)
+      - Đảo 4/5: 1 cặp trùng → strength 0.80 (ngắn, mạnh)
+      - Thuận (Bệt full 5): TTTTT → strength 0.50 (rất dễ gãy)
+      - Nghịch 2 block: 4-1, 1-4, 3-2, 2-3
+      - 2-2 clean (b4==b0): A A B B A hoặc A B B A A → strength 0.72
+      - 2-2 noise (b4!=b0): strength 0.45
     """
     alt = sum(1 for i in range(4) if bits[i] != bits[i + 1])
 
-    # Đếm block
     groups = []
     cur = bits[0]; cnt = 1
     for i in range(1, 5):
@@ -405,103 +413,138 @@ def _classify_cau5_detail(bits):
             groups.append(cnt); cur = bits[i]; cnt = 1
     groups.append(cnt)
 
-    # Phân loại chi tiết
+    b4_eq_b0 = (bits[4] == bits[0])
+
+    # Đảo 5/5 hoàn hảo — dài, dễ gãy → strength thấp
     if alt == 4:
-        return {"type": "1-1", "sub": "full", "strength": 1.0, "groups": groups}
-    if alt == 3:
-        # T-X-T-X-X hoặc T-T-X-T-X
-        if bits[0] != bits[1] and bits[1] != bits[2] and bits[2] != bits[3]:
-            return {"type": "dao", "sub": "4-1", "strength": 0.85, "groups": groups}
-        return {"type": "dao", "sub": "1-4", "strength": 0.85, "groups": groups}
+        return {"type": "1-1", "sub": "full", "strength": 0.60,
+                "groups": groups, "b4_eq_b0": b4_eq_b0}
+
+    # Bệt 5/5 — rất dễ gãy
     if alt == 0:
-        return {"type": "thuan", "sub": "full", "strength": 1.0, "groups": groups}
-    if alt == 1:
-        if groups[0] >= 3 or groups[-1] >= 3:
-            return {"type": "nghich", "sub": f"{groups[0]}-{groups[-1]}", "strength": 0.75, "groups": groups}
-        return {"type": "nghich", "sub": f"{groups[0]}-{groups[1]}", "strength": 0.65, "groups": groups}
-    if alt == 2:
-        # 2-2-1, 2-1-2, 1-2-2, 3-2, 2-3
-        if len(groups) == 3:
-            sub = f"{groups[0]}-{groups[1]}-{groups[2]}"
-            # 2-2-1 hoặc 2-1-2: strength trung bình
-            if groups[0] == 2 and groups[1] == 2:
-                return {"type": "nghich", "sub": "2-2-1", "strength": 0.7, "groups": groups}
-            if groups[1] == 2 and groups[2] == 2:
-                return {"type": "nghich", "sub": "1-2-2", "strength": 0.7, "groups": groups}
-            if groups[0] == 2 and groups[2] == 2:
-                return {"type": "dao", "sub": "2-1-2", "strength": 0.6, "groups": groups}
-            return {"type": "nghich", "sub": sub, "strength": 0.55, "groups": groups}
-        if len(groups) == 2:
-            sub = f"{groups[0]}-{groups[1]}"
-            strength = 0.7 if max(groups) >= 3 else 0.6
-            return {"type": "nghich", "sub": sub, "strength": strength, "groups": groups}
+        return {"type": "thuan", "sub": "full", "strength": 0.50,
+                "groups": groups, "b4_eq_b0": b4_eq_b0}
+
+    # Đảo 4/5 — mạnh hơn đảo 5/5
+    if alt == 3:
+        if bits[0] != bits[1] and bits[1] != bits[2] and bits[2] != bits[3]:
+            sub = "4-1"
+        else:
+            sub = "1-4"
+        return {"type": "dao", "sub": sub, "strength": 0.80,
+                "groups": groups, "b4_eq_b0": b4_eq_b0}
+
+    # Nghịch 2 block (4-1, 1-4, 3-2, 2-3)
+    if alt == 1 and len(groups) == 2:
+        strength = 0.70 if max(groups) >= 3 else 0.60
+        return {"type": "nghich", "sub": f"{groups[0]}-{groups[1]}",
+                "strength": strength, "groups": groups, "b4_eq_b0": b4_eq_b0}
+
+    # 2-2 clean (b4 == b0): A A B B A hoặc A B B A A
+    if alt == 2 and len(groups) == 3 and b4_eq_b0:
+        if groups in ([2, 2, 1], [1, 2, 2]):
+            return {"type": "2-2", "sub": f"{groups[0]}-{groups[1]}-{groups[2]}",
+                    "strength": 0.72, "groups": groups, "b4_eq_b0": b4_eq_b0}
+
+    # 2-2 không clean (b4 != b0)
+    if alt == 2 and len(groups) == 3:
+        if groups in ([2, 2, 1], [1, 2, 2]):
+            return {"type": "nghich", "sub": f"{groups[0]}-{groups[1]}-{groups[2]}",
+                    "strength": 0.45, "groups": groups, "b4_eq_b0": b4_eq_b0}
+        if groups == [2, 1, 2]:
+            return {"type": "nghich", "sub": "2-1-2", "strength": 0.50,
+                    "groups": groups, "b4_eq_b0": b4_eq_b0}
+
+    if alt == 2 and len(groups) == 2:
+        return {"type": "nghich", "sub": f"{groups[0]}-{groups[1]}",
+                "strength": 0.60, "groups": groups, "b4_eq_b0": b4_eq_b0}
+
     return None
 
 
 def _vote_by_cau_theory(cau_info, bits):
     """
-    Vote lý thuyết dựa trên loại cầu — KHÔNG nghiêng phiên cố định.
-    Mỗi cầu vote theo xác suất có trọng số vị trí.
+    Vote dựa trên lý thuyết cầu. Trả về {'Tài': score, 'Xỉu': score}.
+    Nguyên tắc: KHÔNG vote 100% — luôn có đối trọng để tránh overfit.
+
+    Bảng logic đúng:
+      1-1 / đảo      : vote OPP(b0)
+      bệt            : vote b0 (yếu)
+      2-2-1 (b4==b0) : A A B B A → vote OPP(b0)   [đang ở vị trí 2/2 block A]
+      1-2-2 (b4==b0) : A B B A A → vote b0        [đang ở vị trí 1/2 block A]
+      nghich 3-2/2-3/4-1: block vừa kết thúc → vote OPP(b0)
+      nghich 1-4     : block vừa bắt đầu → vote b0
+      nghich 2-2-1/1-2-2 (b4!=b0): không clean → vote cân bằng
     """
     cau_type = cau_info["type"]
     sub = cau_info["sub"]
-    groups = cau_info["groups"]
-    strength = cau_info["strength"]
+    b4_eq_b0 = cau_info.get("b4_eq_b0", bits[4] == bits[0])
     votes = {"Tài": 0.0, "Xỉu": 0.0}
 
+    def vote(val, amt):
+        votes["Tài" if val == 1 else "Xỉu"] += amt
+
+    b0 = bits[0]
+
+    # === ĐẢO / 1-1 ===
+    if cau_type in ("dao", "1-1"):
+        vote(1 - b0, 0.80)
+        vote(b0, 0.20)
+        return votes
+
+    # === THUẬN / BỆT ===
     if cau_type == "thuan":
-        # Thuận: phiên tiếp theo giữ xu hướng b0
-        votes["Tài" if bits[0] == 1 else "Xỉu"] += 1.0 * strength
+        vote(b0, 0.65)
+        vote(1 - b0, 0.35)
         return votes
 
-    if cau_type == "dao":
-        # Đảo: phiên tiếp theo đảo b0
-        votes["Tài" if bits[0] == 0 else "Xỉu"] += 1.0 * strength
-        return votes
-
-    if cau_type == "1-1":
-        # 1-1: đảo b0 (vì chuỗi xen kẽ)
-        votes["Tài" if bits[0] == 0 else "Xỉu"] += 1.0 * strength
-        return votes
-
-    if cau_type == "nghich":
-        # Nghịch: cầu block. Không cố định — vote theo sub
-        if sub == "2-2-1":
-            # b0 b1 = block mới (2 phiên), b2 b3 = block trước, b4 lẻ
-            # → phiên 6 kỳ vọng tiếp block hiện tại (b0)
-            votes["Tài" if bits[0] == 1 else "Xỉu"] += 0.7 * strength
-            votes["Tài" if bits[0] == 0 else "Xỉu"] += 0.3 * strength
-        elif sub == "1-2-2":
-            # b0 lẻ, b1 b2 = block, b3 b4 = block cũ
-            # → phiên 6 kỳ vọng bắt đầu block mới ngược b0
-            votes["Tài" if bits[0] == 0 else "Xỉu"] += 0.65 * strength
-            votes["Tài" if bits[0] == 1 else "Xỉu"] += 0.35 * strength
-        elif sub == "3-2":
-            # 3 phiên đầu 1 kiểu, 2 phiên cuối kiểu khác
-            # → phiên 6 kỳ vọng giữ block 2 phiên hiện tại (b0)
-            votes["Tài" if bits[0] == 1 else "Xỉu"] += 0.6 * strength
-            votes["Tài" if bits[0] == 0 else "Xỉu"] += 0.4 * strength
-        elif sub == "2-3":
-            votes["Tài" if bits[0] == 1 else "Xỉu"] += 0.65 * strength
-            votes["Tài" if bits[0] == 0 else "Xỉu"] += 0.35 * strength
+    # === 2-2 CHUẨN (b4 == b0) ===
+    if cau_type == "2-2":
+        if sub.startswith("2-2-1"):
+            # A A B B A → b0 ở vị trí 2/2 block A → next = B = opp(b0)
+            vote(1 - b0, 0.70)
+            vote(b0, 0.30)
+        elif sub.startswith("1-2-2"):
+            # A B B A A → b0 ở vị trí 1/2 block A → next = A = b0
+            vote(b0, 0.70)
+            vote(1 - b0, 0.30)
         else:
-            # fallback: vote theo block hiện tại (b0)
-            votes["Tài" if bits[0] == 1 else "Xỉu"] += 0.55 * strength
-            votes["Tài" if bits[0] == 0 else "Xỉu"] += 0.45 * strength
+            vote(b0, 0.50)
+            vote(1 - b0, 0.50)
         return votes
 
-    return None
+    # === NGHỊCH (không clean / 2 block thường) ===
+    if cau_type == "nghich":
+        if sub.startswith("2-2-1") or sub.startswith("1-2-2"):
+            vote(b0, 0.55)
+            vote(1 - b0, 0.45)
+        elif sub == "2-1-2":
+            vote(b0, 0.50)
+            vote(1 - b0, 0.50)
+        elif sub == "1-4":
+            # Block vừa bắt đầu → tiếp tục b0
+            vote(b0, 0.65)
+            vote(1 - b0, 0.35)
+        elif sub in ("3-2", "2-3", "4-1"):
+            # Block vừa kết thúc → đảo chiều
+            vote(1 - b0, 0.65)
+            vote(b0, 0.35)
+        else:
+            vote(b0, 0.50)
+            vote(1 - b0, 0.50)
+        return votes
+
+    # Fallback
+    vote(b0, 0.50)
+    vote(1 - b0, 0.50)
+    return votes
 
 
 def algo_cau_5phien(results):
     """
-    NÂNG CẤP: Cầu 5 phiên — không nghiêng phiên cố định.
-    
-    Chiến lược:
-    1. Phân loại cầu chi tiết (type + sub + strength)
-    2. Vote lý thuyết theo cấu trúc cầu (không cố định phiên)
-    3. Tra lịch sử: pattern exact + pattern type + sub-pattern
-    4. Blend có trọng số, không bên nào vượt 70%
+    NÂNG CẤP: Cầu 5 phiên — không quá nghiêng 1 phiên, không quá nghiêng 2 phiên.
+    Phân loại: Đảo / Thuận / Nghịch / 1-1 / 2-2
+    Anti-overfit: cap xác suất 65%.
     """
     n = len(results)
     if n < 5: return None
@@ -517,26 +560,24 @@ def algo_cau_5phien(results):
     theory_votes = _vote_by_cau_theory(cau_info, bits)
     if not theory_votes: return None
 
-    # Chuẩn hoá theory về [0,1]
     th_total = theory_votes["Tài"] + theory_votes["Xỉu"]
     if th_total > 0:
         theory_votes["Tài"] /= th_total
         theory_votes["Xỉu"] /= th_total
 
-    # === TẦNG 2: Tra lịch sử pattern exact (có trọng số khoảng cách) ===
+    # === TẦNG 2: Exact pattern (decay theo khoảng cách) ===
     key = tuple(bits)
     tai_exact = xiu_exact = 0.0
     scan = min(n - 5, 100)
     for i in range(scan):
         window = tuple(1 if results[i + k] == "Tài" else 0 for k in range(5))
         if window == key:
-            # Trọng số giảm dần theo khoảng cách (mẫu gần quan trọng hơn)
             decay = math.exp(-i / 40.0)
             if results[i + 5] == "Tài": tai_exact += decay
             else: xiu_exact += decay
     total_exact = tai_exact + xiu_exact
 
-    # === TẦNG 3: Tra lịch sử pattern TYPE (cùng loại cầu) ===
+    # === TẦNG 3: Cùng loại cầu ===
     tai_type = xiu_type = 0.0
     scan_type = min(n - 5, 120)
     for i in range(scan_type):
@@ -548,7 +589,7 @@ def algo_cau_5phien(results):
             else: xiu_type += decay
     total_type = tai_type + xiu_type
 
-    # === TẦNG 4: Tra sub-pattern (cùng type + sub) ===
+    # === TẦNG 4: Cùng sub-pattern ===
     tai_sub = xiu_sub = 0.0
     scan_sub = min(n - 5, 120)
     for i in range(scan_sub):
@@ -560,33 +601,28 @@ def algo_cau_5phien(results):
             else: xiu_sub += decay
     total_sub = tai_sub + xiu_sub
 
-    # === TỔNG HỢP — không bên nào > 70% ===
-    # Trọng số từng tầng
-    W_THEORY = 0.35   # lý thuyết (ổn định)
-    W_EXACT = 0.30    # exact pattern (chính xác nhất)
-    W_TYPE = 0.20     # cùng loại cầu
-    W_SUB = 0.15      # cùng sub-pattern
+    # === TỔNG HỢP có trọng số ===
+    W_THEORY = 0.35
+    W_EXACT = 0.30
+    W_TYPE = 0.20
+    W_SUB = 0.15
 
     p_tai = 0.0
     total_w = 0.0
 
-    # Theory
     p_tai += theory_votes["Tài"] * W_THEORY
     total_w += W_THEORY
 
-    # Exact
     if total_exact >= 2.0:
         p_exact = (tai_exact + 1) / (total_exact + 2)
         p_tai += p_exact * W_EXACT
         total_w += W_EXACT
 
-    # Type
     if total_type >= 5.0:
         p_type = (tai_type + 1) / (total_type + 2)
         p_tai += p_type * W_TYPE
         total_w += W_TYPE
 
-    # Sub
     if total_sub >= 3.0:
         p_sub = (tai_sub + 1) / (total_sub + 2)
         p_tai += p_sub * W_SUB
@@ -596,11 +632,10 @@ def algo_cau_5phien(results):
     p_tai /= total_w
     p_xiu = 1 - p_tai
 
-    # === ANTI-OVERFIT: cap 70% ===
-    p_tai = max(0.30, min(0.70, p_tai))
+    # === ANTI-OVERFIT: cap 65% — không quá nghiêng ===
+    p_tai = max(0.35, min(0.65, p_tai))
     p_xiu = 1 - p_tai
 
-    # === QUYẾT ĐỊNH ===
     if p_tai > p_xiu:
         pred = "Tài"
         edge = p_tai - 0.5
@@ -610,10 +645,8 @@ def algo_cau_5phien(results):
     else:
         return None
 
-    # Edge tối thiểu để vote
-    if edge < 0.05: return None
+    if edge < 0.03: return None
 
-    # Weight theo strength × edge × data availability
     data_bonus = min(1.0, (total_exact + total_type + total_sub) / 20.0)
     weight = min(24, 10 + edge * 40 + strength * 4 + data_bonus * 4)
 
@@ -622,7 +655,7 @@ def algo_cau_5phien(results):
 
 
 # =====================================================================
-# CÁC ALGO CŨ (giữ nguyên)
+# CÁC ALGO CŨ
 # =====================================================================
 def algo_hash_deep_lookup(results):
     combined_score = {"Tài": 0.0, "Xỉu": 0.0}
@@ -901,7 +934,7 @@ def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
     for fn in (
-        algo_cau_5phien,          # ⭐ nâng cấp
+        algo_cau_5phien,          # ⭐ nâng cấp — đứng đầu
         algo_md5_bit_analysis,
         algo_md5_ngram,
         algo_md5_hamming,
@@ -1011,7 +1044,7 @@ def compute_loss_streak(valid, max_scan=10):
 
 
 # =====================================================================
-# RECOVERY — không flip máy móc
+# RECOVERY
 # =====================================================================
 def apply_recovery(base_pred, conf, loss_streak, results=None):
     if loss_streak < 1: return base_pred, conf, False, None
@@ -1104,6 +1137,8 @@ def predict():
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
 
         cau_signal = algo_cau_5phien(results)
+        bits = [1 if r == "Tài" else 0 for r in results[:5]] if len(results) >= 5 else []
+        cau_info = _classify_cau5_detail(bits) if len(bits) == 5 else None
         return jsonify({
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
             'last_result': valid[-1]['result'], 'last_dice': valid[-1]['dice'],
@@ -1112,12 +1147,47 @@ def predict():
             'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak, 'total_sessions': len(valid),
             'last5_pattern': encode_tx(results, 5),
-            'cau_5phien': {'pred': cau_signal[0], 'name': cau_signal[2]} if cau_signal else None,
+            'cau_5phien': {
+                'pred': cau_signal[0], 'name': cau_signal[2],
+                'type': cau_info['type'] if cau_info else None,
+                'sub': cau_info['sub'] if cau_info else None,
+                'strength': cau_info['strength'] if cau_info else None,
+            } if cau_signal else None,
             'signals': detail,
             'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
             'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
             'signal_count': len(detail),
             'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/cau_debug')
+def cau_debug():
+    """Debug chi tiết cầu 5 phiên đang phân tích."""
+    try:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
+        results = [v['result'] for v in valid][::-1]
+        if len(results) < 5:
+            return jsonify({'error': 'Cần ít nhất 5 phiên'}), 400
+        bits = [1 if r == "Tài" else 0 for r in results[:5]]
+        cau_info = _classify_cau5_detail(bits)
+        votes = _vote_by_cau_theory(cau_info, bits) if cau_info else None
+        signal = algo_cau_5phien(results)
+        return jsonify({
+            'last5': results[:5],
+            'bits_newest_first': bits,
+            'pattern_5p': encode_tx(results, 5),
+            'cau_info': cau_info,
+            'theory_votes': votes,
+            'signal': {'pred': signal[0], 'weight': signal[1], 'name': signal[2]} if signal else None,
         })
     except Exception as e:
         traceback.print_exc()
@@ -1154,7 +1224,7 @@ def lc79():
         groups = get_groups(results)
         last = valid[-1]
         return jsonify({
-            'Id': 'le minh md5 deep v5', 'Phien': str(last['phien'] + 1),
+            'Id': 'le minh md5 deep v6', 'Phien': str(last['phien'] + 1),
             'Ket_qua': last['result'].lower(),
             'Lich_su': "-" + "-".join(str(g) for g in groups[:4]),
             'Du_doan': pred, 'Do_tin_cay': f"{cff:.1f}".replace(".", ",") + "%",
