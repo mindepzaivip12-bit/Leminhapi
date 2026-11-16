@@ -8,7 +8,7 @@ from datetime import datetime
 from collections import defaultdict, deque, OrderedDict
 from functools import lru_cache
 import requests
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -26,12 +26,16 @@ MAX_CONFIDENCE = 90
 LEARNED_PHIEN = 0
 LEARN_LOCK = threading.Lock()
 
-# ==== LOCKS MỚI ====
+# ==== LOCKS ====
 FETCH_LOCK = threading.Lock()
 PREDICTION_LOCK = threading.Lock()
 HISTORY_LOCK = threading.Lock()
-SIGNAL_STATS_CACHE = {}  # Cache signal stats theo (history_tuple)
+SIGNAL_STATS_CACHE = {}  # Cache signal stats theo (version, history_tuple)
 SIGNAL_STATS_LOCK = threading.Lock()
+
+# ✅ Signal version tracking để invalidate cache khi DB thay đổi
+LEARNED_SIGNAL_VERSION = 0
+SIGNAL_VERSION_LOCK = threading.Lock()
 
 HASH_DEEP_DB = {
     13: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
@@ -251,13 +255,13 @@ setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# CÁC HÀM XỬ LÝ (nâng cấp với retry + lock)
+# FETCH
 # =====================================================================
 def fetch_sessions():
     """Fetch với retry logic và timeout hợp lý."""
     headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
     last_err = None
-    for attempt in range(2):  # 2 lần thử
+    for attempt in range(2):
         try:
             r = requests.get(API_URL_MD5, timeout=5, headers=headers)
             if r.status_code == 200:
@@ -275,7 +279,7 @@ def fetch_sessions():
         except Exception as e:
             last_err = e
             if attempt == 0:
-                time.sleep(0.3)  # small delay trước khi retry
+                time.sleep(0.3)
     if last_err:
         print(f"[API ERROR]: {last_err}")
     return [], False
@@ -341,9 +345,13 @@ def hamming_distance(h1, h2):
     if not h1 or not h2 or len(h1) != len(h2): return 0
     return sum(a != b for a, b in zip(hash_to_bits(h1), hash_to_bits(h2)))
 
+# =====================================================================
+# LEARN INCREMENTAL (đã thêm version invalidation)
+# =====================================================================
 def learn_incremental(valid):
-    global LEARNED_PHIEN
+    global LEARNED_PHIEN, LEARNED_SIGNAL_VERSION
     if not valid: return
+    db_changed = False
     with LEARN_LOCK:
         new_indices = [idx for idx, v in enumerate(valid) if v['phien'] > LEARNED_PHIEN]
         if not new_indices: return
@@ -359,6 +367,7 @@ def learn_incremental(valid):
                 h = hash_deep_md5(tx, depth_level=2)
                 if not h: continue
                 db[h][valid[idx]['result']] += 1
+                db_changed = True
         if n >= 14:
             hash_cache = {}
             for idx in new_indices:
@@ -377,6 +386,7 @@ def learn_incremental(valid):
                     for start in range(0, len(h) - ng_size + 1):
                         gram = h[start:start + ng_size]
                         MD5_NGRAM_DB[ng_size][gram][valid[idx]['result']] += 1
+                db_changed = True
             for idx in new_indices:
                 if idx < 14 or idx not in hash_cache: continue
                 prev_idx = idx - 1
@@ -392,9 +402,13 @@ def learn_incremental(valid):
                 hd = hamming_distance(hash_cache[idx], h_prev)
                 MD5_HAMMING_DB[hd // 8][valid[idx]['result']] += 1
         LEARNED_PHIEN = valid[-1]['phien']
+    # ✅ Invalidate signal stats cache vì DB đã thay đổi
+    if db_changed:
+        with SIGNAL_VERSION_LOCK:
+            LEARNED_SIGNAL_VERSION += 1
 
 # =====================================================================
-# CÁC THUẬT TOÁN (giữ nguyên 100%)
+# CÁC THUẬT TOÁN
 # =====================================================================
 def algo_lc79_specialist(results):
     n = len(results)
@@ -1013,7 +1027,7 @@ def algo_pair_pattern(results):
     return None
 
 # =====================================================================
-# ANALYZER (giữ nguyên logic)
+# ANALYZER
 # =====================================================================
 def analyze_full_bridge(results):
     if len(results) < 3: return []
@@ -1067,6 +1081,9 @@ def analyze_full_bridge(results):
         pass
     return signals
 
+# =====================================================================
+# ✅ FULL BRIDGE PREDICT - cache key có version invalidation
+# =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=80):
     n = len(results)
     if n == 0: return "Tài", 50, []
@@ -1075,13 +1092,15 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         if results[0] == results[1]: return _opp(results[0]), 55, []
         return results[1], 52, []
 
-    # ==== CACHE signal_stats theo hash của history slice ====
-    cache_key = tuple(results[:min(n, replay_n + 30)])  # lấy đủ dài để replay
+    # ✅ Cache key gồm version → tự invalidate khi DB thay đổi
+    with SIGNAL_VERSION_LOCK:
+        version = LEARNED_SIGNAL_VERSION
+    cache_key = (version, tuple(results[:min(n, replay_n + 30)]))
     signal_stats = None
     with SIGNAL_STATS_LOCK:
         if cache_key in SIGNAL_STATS_CACHE:
             signal_stats = SIGNAL_STATS_CACHE[cache_key]
-    
+
     if signal_stats is None:
         signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
         replay_count = min(replay_n, n - 3)
@@ -1092,10 +1111,8 @@ def full_bridge_predict_adaptive(results, replay_n=80):
                 signal_stats[name]['total'] += decay
                 if pred_sig == actual:
                     signal_stats[name]['wins'] += decay
-        # Lưu cache (giới hạn size)
         with SIGNAL_STATS_LOCK:
             if len(SIGNAL_STATS_CACHE) > 200:
-                # xoá 50 entry cũ nhất (theo insertion order)
                 for _ in range(50):
                     try: SIGNAL_STATS_CACHE.pop(next(iter(SIGNAL_STATS_CACHE)))
                     except StopIteration: break
@@ -1171,14 +1188,13 @@ def get_prediction_for(valid, i):
         if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
     hist = [v['result'] for v in valid[:i]][::-1]
     if len(hist) < 3:
+        # ✅ Vẫn cache để tránh lặp lại
         result = ("-", 50, None)
     else:
         pred, conf, _ = full_bridge_predict_adaptive(hist)
-        is_correct = (pred == valid[i]['result'])
-        result = (pred, conf, is_correct)
+        result = (pred, conf, pred == valid[i]['result'])
     with PREDICTION_LOCK:
         if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE:
-            # FIFO eviction thay vì clear() — giữ cache hoạt động liên tục
             for _ in range(MAX_PREDICTION_CACHE // 4):
                 try: PREDICTION_CACHE.pop(next(iter(PREDICTION_CACHE)))
                 except StopIteration: break
@@ -1240,7 +1256,6 @@ def get_stable_next_prediction(valid):
     with PREDICTION_LOCK:
         NEXT_PREDICTION_CACHE[next_phien] = (pred, conf, flipped, reason, base_pred)
         if len(NEXT_PREDICTION_CACHE) > 200:
-            # FIFO eviction
             try: NEXT_PREDICTION_CACHE.popitem(last=False)
             except KeyError: pass
     return NEXT_PREDICTION_CACHE[next_phien]
@@ -1258,26 +1273,30 @@ def reset_all_databases():
         MD5_HAMMING_DB.clear()
         LOSS_HISTORY.clear()
         LEARNED_PHIEN = RESET_ID
-    # Xoá signal stats cache
     with SIGNAL_STATS_LOCK:
         SIGNAL_STATS_CACHE.clear()
 
 # =====================================================================
-# HELPER: _prepare_valid_state (dùng chung cho các route)
+# HELPER: _prepare_valid_state (đã tối ưu)
 # =====================================================================
 def _prepare_valid_state():
-    """Fetch + merge history + return (valid, success). Thread-safe."""
+    """Fetch + merge + learn + return (valid, success). Thread-safe."""
     with HISTORY_LOCK:
         raw_rows, success = fetch_sessions()
         if success:
-            for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+            for row in raw_rows:
+                HISTORY_CACHE[row['phien']] = row
         for k in [k for k in HISTORY_CACHE if k < RESET_ID]:
             del HISTORY_CACHE[k]
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
-        return valid, success or bool(HISTORY_CACHE)
+        ok = success or bool(HISTORY_CACHE)
+    # ✅ Learn ngoài HISTORY_LOCK
+    if ok and valid:
+        learn_incremental(valid)
+    return valid, ok
 
 # =====================================================================
-# ROUTES (giữ nguyên logic, dùng helper chung)
+# ROUTES
 # =====================================================================
 @app.route('/')
 def index():
@@ -1285,11 +1304,13 @@ def index():
 
 @app.route('/health')
 def health():
-    """Endpoint monitoring mới — không ảnh hưởng logic."""
+    with SIGNAL_VERSION_LOCK:
+        version = LEARNED_SIGNAL_VERSION
     return jsonify({
         'status': 'ok',
         'reset_id': RESET_ID,
         'learned_phien': LEARNED_PHIEN,
+        'signal_version': version,
         'history_size': len(HISTORY_CACHE),
         'prediction_cache_size': len(PREDICTION_CACHE),
         'next_cache_size': len(NEXT_PREDICTION_CACHE),
@@ -1306,7 +1327,6 @@ def history():
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
-        learn_incremental(valid)
 
         next_phien = valid[-1]['phien'] + 1
         cached_next = get_stable_next_prediction(valid)
@@ -1356,18 +1376,35 @@ def history():
 
 @app.route('/api/predict')
 def predict():
-    global RESET_ID
     try:
         valid, ok = _prepare_valid_state()
         if not ok:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
-        learn_incremental(valid)
-        results = [v['result'] for v in valid][::-1]
 
+        results = [v['result'] for v in valid][::-1]
         loss_streak = compute_loss_streak(valid)
-        base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
-        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
+
+        # ✅ Tận dụng cache từ get_stable_next_prediction
+        cached = get_stable_next_prediction(valid)
+        if cached and cached[0] is not None:
+            pred, conf, flipped, reason, base_pred = cached
+            _, base_conf, detail = full_bridge_predict_adaptive(results)
+        else:
+            base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
+            pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
+
+        # Compact mode cho app mobile
+        if request.args.get('compact') == '1':
+            return jsonify({
+                'next_phien': valid[-1]['phien'] + 1,
+                'prediction': pred, 'confidence': conf,
+                'base_prediction': base_pred, 'base_confidence': base_conf,
+                'recovery_flipped': flipped, 'recovery_reason': reason,
+                'loss_streak': loss_streak,
+                'last_result': valid[-1]['result'],
+                'last_dice': valid[-1]['dice'],
+            })
 
         cau5 = analyze_5phien(results)
         cau_info = None
@@ -1432,13 +1469,11 @@ def predict():
 
 @app.route('/lc79')
 def lc79():
-    global RESET_ID
     try:
         valid, ok = _prepare_valid_state()
         if not ok:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
-        learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
@@ -1480,13 +1515,11 @@ def lc79():
 
 @app.route('/lc79md5')
 def lc79md5():
-    global RESET_ID
     try:
         valid, ok = _prepare_valid_state()
         if not ok:
             return jsonify({'error': 'Không thể kết nối API'}), 500
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
-        learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
@@ -1533,20 +1566,27 @@ def lc79md5():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, LEARNED_PHIEN, NEXT_PREDICTION_CACHE
+    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, LEARNED_PHIEN, NEXT_PREDICTION_CACHE, LEARNED_SIGNAL_VERSION
     try:
         raw_rows, success = fetch_sessions()
         if success and raw_rows:
             valid = sorted(raw_rows, key=lambda x: x['phien'])
             if valid:
-                RESET_ID = valid[-1]['phien']
-                LEARNED_PHIEN = RESET_ID
-                with HISTORY_LOCK:
-                    HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
-                with PREDICTION_LOCK:
-                    PREDICTION_CACHE = {}
-                    NEXT_PREDICTION_CACHE.clear()
-                reset_all_databases()
+                new_reset_id = valid[-1]['phien']
+                # ✅ Lock lồng nhau đảm bảo atomic
+                with LEARN_LOCK:
+                    with HISTORY_LOCK:
+                        with PREDICTION_LOCK:
+                            RESET_ID = new_reset_id
+                            LEARNED_PHIEN = new_reset_id
+                            HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
+                            PREDICTION_CACHE.clear()
+                            NEXT_PREDICTION_CACHE.clear()
+                            reset_all_databases()
+                with SIGNAL_STATS_LOCK:
+                    SIGNAL_STATS_CACHE.clear()
+                with SIGNAL_VERSION_LOCK:
+                    LEARNED_SIGNAL_VERSION += 1
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
     except Exception as e:
@@ -1554,5 +1594,4 @@ def reset_api():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    # threaded=True để Flask xử lý concurrent requests tốt hơn
     app.run(host='0.0.0.0', port=port, threaded=True)
