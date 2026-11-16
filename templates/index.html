@@ -1,533 +1,1083 @@
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>TOOL AUTO LC79</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<style>
-:root{
-  --bg-0:#f0f4ff;
-  --panel:rgba(255,255,255,.78);
-  --line:rgba(140,160,220,.22);
-  --txt:#1a1f3a;
-  --dim:#6b7a9e;
-  --accent:#5b8cff;
-  --accent-2:#a855f7;
-  --tai:#3b82f6;
-  --xiu:#ef4444;
-  --ok:#10b981;
-  --warn:#f59e0b;
-  --err:#ef4444;
-  --radius:18px;
+import os
+import math
+import hashlib
+import traceback
+import threading
+from datetime import datetime
+from collections import defaultdict, deque
+import requests
+from flask import Flask, render_template_string, jsonify
+from flask_cors import CORS
+
+app = Flask(__name__)
+CORS(app)
+
+API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
+
+HISTORY_CACHE = {}
+PREDICTION_CACHE = {}
+# ==== CACHE NEXT PREDICTION (CỐ ĐỊNH) ====
+NEXT_PREDICTION_CACHE = {}   # {phien: (pred, conf, flipped, reason, base_pred)}
+MAX_PREDICTION_CACHE = 2000
+RESET_ID = 0
+MAX_CONFIDENCE = 90
+
+LEARNED_PHIEN = 0
+LEARN_LOCK = threading.Lock()
+
+HASH_DEEP_DB = {
+    13: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    10: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    7:  defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    5:  defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
-body{
-  font-family:'Space Grotesk',system-ui,sans-serif;
-  color:var(--txt);
-  background:
-    radial-gradient(1200px 600px at 10% 0%,rgba(91,140,255,.18),transparent 60%),
-    radial-gradient(900px 500px at 95% 10%,rgba(168,85,247,.14),transparent 55%),
-    radial-gradient(800px 700px at 50% 110%,rgba(16,185,129,.10),transparent 50%),
-    linear-gradient(135deg,#f0f4ff 0%,#e8eeff 50%,#f5f0ff 100%);
-  min-height:100vh;padding:24px 18px 40px;overflow-x:hidden;
+MD5_BIT_DB = {bit: {"Tài": 0, "Xỉu": 0} for bit in range(128)}
+MD5_NGRAM_DB = {
+    2: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    3: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    4: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
 }
-body::before{
-  content:"";position:fixed;inset:0;pointer-events:none;
-  background-image:linear-gradient(rgba(140,160,220,.04) 1px,transparent 1px), linear-gradient(90deg,rgba(140,160,220,.04) 1px,transparent 1px);
-  background-size:48px 48px;mask-image:radial-gradient(ellipse at center,black 40%,transparent 85%);z-index:0;
-}
-.wrap{position:relative;z-index:1;max-width:1120px;margin:0 auto}
+MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+LOSS_HISTORY = deque(maxlen=20)
 
-/* HEADER */
-.header{
-  display:flex;align-items:center;gap:16px;padding:22px 26px;margin-bottom:22px;
-  background:var(--panel);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-  border:1px solid var(--line);border-radius:var(--radius);
-  box-shadow:0 18px 50px rgba(91,140,255,.10),0 2px 8px rgba(0,0,0,.03);
-}
-.logo{width:58px;height:58px;flex-shrink:0;position:relative;filter:drop-shadow(0 4px 18px rgba(91,140,255,.30))}
-.logo svg{width:100%;height:100%;display:block}
-.brand h1{
-  font-size:24px;font-weight:800;letter-spacing:-.5px;text-transform:uppercase;
-  background:linear-gradient(90deg,#3b82f6,#a855f7,#5b8cff,#3b82f6);background-size:300% auto;
-  -webkit-background-clip:text;background-clip:text;color:transparent;animation:shine 8s linear infinite;
-}
-@keyframes shine{to{background-position:300% center}}
-.brand p{color:var(--dim);font-size:13px;margin-top:4px;letter-spacing:.3px;font-weight:500}
+HTML_TEMPLATE = """..."""  # giữ nguyên template cũ
 
-/* GRID & CARDS */
-.grid{display:grid;grid-template-columns:1.05fr 1fr;gap:18px;align-items:start}
-@media(max-width:900px){.grid{grid-template-columns:1fr}}
-.card{
-  background:var(--panel);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-  border:1px solid var(--line);border-radius:var(--radius);padding:22px;
-  box-shadow:0 8px 30px rgba(91,140,255,.06),0 1px 3px rgba(0,0,0,.02);transition:border-color .25s,box-shadow .25s;
-}
-.card:hover{border-color:rgba(140,160,220,.35);box-shadow:0 12px 40px rgba(91,140,255,.10),0 1px 3px rgba(0,0,0,.02)}
-.card + .card{margin-top:18px}
-.card-head{display:flex;align-items:center;gap:10px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--line)}
-.card-head .ico{
-  width:28px;height:28px;flex-shrink:0;display:grid;place-items:center;border-radius:9px;
-  background:linear-gradient(135deg,rgba(91,140,255,.12),rgba(168,85,247,.08));border:1px solid rgba(91,140,255,.22);
-}
-.card-head .ico svg{width:15px;height:15px;stroke:#5b8cff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.card-head h2{font-size:12.5px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;color:#4a5a7e}
+def fetch_sessions():
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+        r = requests.get(API_URL_MD5, timeout=5, headers=headers)
+        if r.status_code == 200:
+            data = r.json()
+            if 'list' in data and data['list']:
+                rows = []
+                for item in data['list']:
+                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                    dices = item.get('dices', [0, 0, 0])
+                    dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
+                    total = item.get('point', sum(dices))
+                    rows.append({'phien': int(item['id']), 'result': res,
+                                 'dice': dice_str, 'total': total})
+                return rows, True
+    except Exception as e:
+        print(f"[API ERROR]: {e}")
+    return [], False
 
-/* INPUTS & BUTTONS */
-.field{margin-bottom:14px}
-.field label{display:block;font-size:11.5px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
-input{
-  width:100%;background:rgba(255,255,255,.85);border:1px solid var(--line);border-radius:11px;
-  padding:13px 15px;color:var(--txt);font-size:14.5px;font-family:'JetBrains Mono',monospace;transition:.2s;outline:none;
-}
-input::placeholder{color:#a0aec8}
-input:focus{border-color:rgba(91,140,255,.55);box-shadow:0 0 0 4px rgba(91,140,255,.12);background:#fff}
-.btn{
-  display:inline-flex;align-items:center;justify-content:center;gap:8px;border:none;border-radius:11px;
-  padding:13px 20px;font-size:14px;font-weight:600;font-family:inherit;letter-spacing:.4px;
-  cursor:pointer;color:#fff;transition:.18s;position:relative;overflow:hidden;
-}
-.btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.btn:hover:not(:disabled){transform:translateY(-1px);filter:brightness(1.08)}
-.btn:active:not(:disabled){transform:translateY(0)}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.btn-primary{background:linear-gradient(135deg,#5b8cff,#7c5bff);box-shadow:0 4px 14px rgba(91,140,255,.30)}
-.btn-ok{background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 14px rgba(16,185,129,.25)}
-.btn-err{background:linear-gradient(135deg,#ef4444,#dc2626);box-shadow:0 4px 14px rgba(239,68,68,.25)}
-.btn-warn{background:linear-gradient(135deg,#f59e0b,#d97706);box-shadow:0 4px 14px rgba(245,158,11,.25)}
-.btn-block{width:100%}
-.row{display:flex;gap:10px}
-.row > *{flex:1}
-.row > .btn{flex:0 0 auto}
+def _opp(v): return "Xỉu" if v == "Tài" else "Tài"
 
-/* PILLS & STATS */
-.pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
-.pill{
-  display:inline-flex;align-items:center;gap:7px;padding:7px 12px;border-radius:99px;font-size:12px;font-weight:500;
-  background:rgba(255,255,255,.7);border:1px solid var(--line);color:var(--dim);letter-spacing:.3px;
-}
-.pill .d{width:8px;height:8px;border-radius:50%;background:var(--dim);flex-shrink:0}
-.pill.on .d{background:var(--ok);box-shadow:0 0 12px var(--ok)}
-.pill.on{color:#059669;border-color:rgba(16,185,129,.28);background:rgba(16,185,129,.06)}
-.pill.pause .d{background:var(--warn);box-shadow:0 0 12px var(--warn)}
-.pill.pause{color:#d97706;border-color:rgba(245,158,11,.28);background:rgba(245,158,11,.06)}
-.pill.off .d{background:var(--err);box-shadow:0 0 12px var(--err)}
-.pill.off{color:#dc2626;border-color:rgba(239,68,68,.25);background:rgba(239,68,68,.05)}
+def _count_streak(results):
+    if not results: return 0
+    r0 = results[0]; c = 1
+    for r in results[1:]:
+        if r == r0: c += 1
+        else: break
+    return c
 
-.stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-radius:13px;overflow:hidden;border:1px solid var(--line);margin-bottom:18px}
-.stat{background:rgba(255,255,255,.72);padding:13px 15px;display:flex;flex-direction:column;gap:3px}
-.stat .k{font-size:11px;letter-spacing:.9px;text-transform:uppercase;color:var(--dim);font-weight:600}
-.stat .v{font-size:15.5px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#1a1f3a}
-.stat .v.mono{font-size:13px;font-weight:500;color:#4a5a7e}
-.stat.wide{grid-column:1/-1}
+def _count_alternations(results, max_len=15):
+    count = 0
+    for i in range(min(len(results) - 1, max_len)):
+        if results[i] != results[i+1]: count += 1
+        else: break
+    return count
 
-/* PREDICTION BIG */
-.big-pred{
-  grid-column:1/-1;background:linear-gradient(135deg,rgba(91,140,255,.08),rgba(168,85,247,.06));
-  border:1px solid rgba(91,140,255,.22);padding:18px 20px;border-radius:13px;
-  display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;
-}
-.big-pred .label{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--dim);font-weight:600}
-.big-pred .val{font-size:28px;font-weight:800;letter-spacing:.5px;font-family:'JetBrains Mono',monospace}
-.big-pred .val.tai{color:var(--tai);text-shadow:0 0 24px rgba(59,130,246,.35)}
-.big-pred .val.xiu{color:var(--xiu);text-shadow:0 0 24px rgba(239,68,68,.35)}
-.big-pred .val.idle{color:var(--dim);font-size:19px}
+def get_groups(results):
+    if not results: return []
+    groups = []
+    current_val = results[0]; count = 1
+    for r in results[1:]:
+        if r == current_val: count += 1
+        else:
+            groups.append(count); current_val = r; count = 1
+    groups.append(count)
+    return groups
 
-/* LOG */
-#log{height:440px;overflow-y:auto;background:rgba(255,255,255,.65);border-radius:11px;padding:15px;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.7;border:1px solid var(--line)}
-#log::-webkit-scrollbar{width:6px}
-#log::-webkit-scrollbar-thumb{background:rgba(140,160,220,.35);border-radius:3px}
-#log .entry{margin-bottom:5px;word-break:break-word;padding-left:10px;border-left:2px solid transparent}
-#log .entry .t{color:#9aa8c8;margin-right:6px}
-#log .entry.info{color:#2563eb;border-left-color:rgba(37,99,235,.35)}
-#log .entry.ok{color:#059669;border-left-color:rgba(5,150,105,.35)}
-#log .entry.warn{color:#d97706;border-left-color:rgba(217,119,6,.35)}
-#log .entry.err{color:#dc2626;border-left-color:rgba(220,38,38,.35)}
+def _regime(results):
+    if len(results) < 5: return "balanced"
+    alt = _count_alternations(results, 12)
+    streak = _count_streak(results)
+    if alt >= 4 and alt > streak: return "alternation"
+    if streak >= 3: return "streak"
+    return "balanced"
 
-/* HISTORY DICE */
-.hist{display:flex;flex-wrap:wrap;gap:6px;min-height:38px;align-items:center}
-.die{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;font-size:12px;font-weight:800;font-family:'JetBrains Mono',monospace;transition:.2s}
-.die.tai{background:rgba(59,130,246,.12);color:var(--tai);border:1px solid rgba(59,130,246,.28)}
-.die.xiu{background:rgba(239,68,68,.12);color:var(--xiu);border:1px solid rgba(239,68,68,.28)}
+def encode_tx(results, length):
+    if not results or len(results) < length: return None
+    return "".join("T" if r == "Tài" else "X" for r in results[:length])
 
-/* PRED HISTORY TABLE */
-.pred-stats{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
-.pred-stat{flex:1;min-width:100px;padding:10px 14px;border-radius:10px;background:rgba(255,255,255,.7);border:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
-.pred-stat .k{font-size:10.5px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim);font-weight:600}
-.pred-stat .v{font-size:18px;font-weight:700;font-family:'JetBrains Mono',monospace}
-.pred-stat .v.ok{color:var(--ok)}
-.pred-stat .v.err{color:var(--err)}
-.pred-stat .v.rate{color:var(--accent)}
+def hash_deep_md5(tx_string, depth_level=2):
+    if not tx_string: return None
+    salted = f"leminh_deep_{depth_level}|{tx_string}"
+    h = hashlib.md5(salted.encode('utf-8')).hexdigest()
+    for _ in range(depth_level - 1):
+        h = hashlib.md5(f"{h}|salt_{depth_level}".encode('utf-8')).hexdigest()
+    return h
 
-.pred-table-wrap{max-height:320px;overflow-y:auto;border-radius:11px;border:1px solid var(--line);background:rgba(255,255,255,.65)}
-.pred-table-wrap::-webkit-scrollbar{width:6px}
-.pred-table-wrap::-webkit-scrollbar-thumb{background:rgba(140,160,220,.35);border-radius:3px}
-.pred-table{width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:12px}
-.pred-table thead{position:sticky;top:0;z-index:1;background:rgba(248,250,255,.95);backdrop-filter:blur(8px)}
-.pred-table th{text-align:left;padding:10px 12px;font-size:10.5px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim);font-weight:600;border-bottom:1px solid var(--line)}
-.pred-table td{padding:9px 12px;border-bottom:1px solid rgba(140,160,220,.10);color:#3a4560}
-.pred-table tr:last-child td{border-bottom:none}
-.pred-table tr:hover td{background:rgba(91,140,255,.04)}
-.pred-table td.pred-tai{color:var(--tai);font-weight:600}
-.pred-table td.pred-xiu{color:var(--xiu);font-weight:600}
-.pred-table td.ok-badge{color:var(--ok);font-weight:700}
-.pred-table td.err-badge{color:var(--err);font-weight:700}
-.pred-table .session-id{color:#9aa8c8}
-.pred-table .dice-mini{display:inline-flex;gap:2px;margin-left:4px}
-.pred-table .dice-mini span{display:inline-block;padding:1px 5px;border-radius:4px;background:rgba(140,160,220,.12);font-size:10px}
-.empty-state{text-align:center;padding:30px 20px;color:var(--dim);font-size:12.5px}
+def hash_to_bits(hash_hex):
+    if not hash_hex: return []
+    bits = []
+    for c in hash_hex:
+        v = int(c, 16)
+        for shift in (3, 2, 1, 0):
+            bits.append((v >> shift) & 1)
+    return bits
 
-.msg{font-size:13px;margin-top:12px;min-height:16px;color:var(--dim);letter-spacing:.2px}
-.msg.ok{color:var(--ok)}
-.msg.err{color:var(--err)}
-.hidden{display:none!important}
-.footer{text-align:center;margin-top:28px;color:#8a98b8;font-size:11.5px;letter-spacing:.5px}
-.footer .dot-sep{margin:0 8px;color:#c0cce0}
-</style>
-</head>
-<body>
-<div class="wrap">
+def hamming_distance(h1, h2):
+    if not h1 or not h2 or len(h1) != len(h2): return 0
+    return sum(a != b for a, b in zip(hash_to_bits(h1), hash_to_bits(h2)))
 
-  <!-- HEADER -->
-  <div class="header">
-    <div class="logo">
-      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="shieldGrad" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="#5b8cff"/><stop offset="50%" stop-color="#a855f7"/><stop offset="100%" stop-color="#3b82f6"/>
-          </linearGradient>
-          <linearGradient id="coreGrad" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#06b6d4"/>
-          </linearGradient>
-          <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="2" result="blur"/>
-            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-          </filter>
-        </defs>
-        <path d="M32 4 L56 14 L56 32 C56 46 44 58 32 62 C20 58 8 46 8 32 L8 14 Z" fill="none" stroke="url(#shieldGrad)" stroke-width="2.5" opacity=".9"/>
-        <path d="M32 12 L48 19 L48 32 C48 41 41 49 32 52 C23 49 16 41 16 32 L16 19 Z" fill="rgba(91,140,255,.08)" stroke="url(#coreGrad)" stroke-width="1.5" opacity=".8"/>
-        <circle cx="32" cy="32" r="10" fill="url(#coreGrad)" opacity=".15" filter="url(#glow)"/>
-        <circle cx="32" cy="32" r="6" fill="none" stroke="url(#coreGrad)" stroke-width="2" filter="url(#glow)"/>
-        <circle cx="32" cy="32" r="2.5" fill="#fff" filter="url(#glow)"/>
-        <line x1="32" y1="16" x2="32" y2="22" stroke="#10b981" stroke-width="2" stroke-linecap="round" filter="url(#glow)"/>
-        <line x1="32" y1="42" x2="32" y2="48" stroke="#10b981" stroke-width="2" stroke-linecap="round" filter="url(#glow)"/>
-        <line x1="16" y1="32" x2="22" y2="32" stroke="#10b981" stroke-width="2" stroke-linecap="round" filter="url(#glow)"/>
-        <line x1="42" y1="32" x2="48" y2="32" stroke="#10b981" stroke-width="2" stroke-linecap="round" filter="url(#glow)"/>
-      </svg>
-    </div>
-    <div class="brand">
-      <h1>TOOL AUTO LC79</h1>
-      <p>Hệ thống phân tích cầu &amp; dự đoán Tài Xỉu tự động</p>
-    </div>
-  </div>
+# =====================================================================
+# INCREMENTAL LEARNING
+# =====================================================================
+def learn_incremental(valid):
+    global LEARNED_PHIEN
+    if not valid: return
+    with LEARN_LOCK:
+        new_indices = [idx for idx, v in enumerate(valid) if v['phien'] > LEARNED_PHIEN]
+        if not new_indices: return
+        n = len(valid)
+        for depth in (5, 7, 10, 13):
+            if n <= depth: continue
+            db = HASH_DEEP_DB[depth]
+            for idx in new_indices:
+                if idx < depth: continue
+                history = [v['result'] for v in valid[idx-depth:idx]][::-1]
+                tx = encode_tx(history, depth)
+                if not tx: continue
+                h = hash_deep_md5(tx, depth_level=2)
+                if not h: continue
+                db[h][valid[idx]['result']] += 1
+        if n >= 14:
+            hash_cache = {}
+            for idx in new_indices:
+                if idx < 13: continue
+                history = [v['result'] for v in valid[idx-13:idx]][::-1]
+                tx = encode_tx(history, 13)
+                if not tx: continue
+                h = hash_deep_md5(tx, depth_level=2)
+                if not h: continue
+                hash_cache[idx] = h
+                bits = hash_to_bits(h)
+                for bit_idx in range(128):
+                    if bit_idx < len(bits) and bits[bit_idx] == 1:
+                        MD5_BIT_DB[bit_idx][valid[idx]['result']] += 1
+                for ng_size in (2, 3, 4):
+                    for start in range(0, len(h) - ng_size + 1):
+                        gram = h[start:start + ng_size]
+                        MD5_NGRAM_DB[ng_size][gram][valid[idx]['result']] += 1
+            for idx in new_indices:
+                if idx < 14 or idx not in hash_cache: continue
+                prev_idx = idx - 1
+                if prev_idx in hash_cache:
+                    h_prev = hash_cache[prev_idx]
+                else:
+                    if prev_idx < 13: continue
+                    ph = [v['result'] for v in valid[prev_idx-13:prev_idx]][::-1]
+                    ptx = encode_tx(ph, 13)
+                    if not ptx: continue
+                    h_prev = hash_deep_md5(ptx, depth_level=2)
+                    if not h_prev: continue
+                hd = hamming_distance(hash_cache[idx], h_prev)
+                MD5_HAMMING_DB[hd // 8][valid[idx]['result']] += 1
+        LEARNED_PHIEN = valid[-1]['phien']
 
-  <div class="grid">
-    <div>
-      <!-- LOGIN -->
-      <div class="card" id="loginCard">
-        <div class="card-head">
-          <div class="ico"><svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg></div>
-          <h2>Đăng nhập game</h2>
-        </div>
-        <div class="field"><label>Tài khoản</label><input id="username" placeholder="username" autocomplete="username"></div>
-        <div class="field"><label>Mật khẩu</label><input id="password" type="password" placeholder="••••••••" autocomplete="current-password"></div>
-        <button class="btn btn-primary btn-block" id="btnLogin">
-          <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          ĐĂNG NHẬP
-        </button>
-        <div class="msg" id="loginMsg"></div>
-      </div>
+# =====================================================================
+# 5-PHIÊN CẦU ANALYSIS (ĐẢO / THUẬN / NGHỊCH / 1-1)
+# =====================================================================
+def analyze_5phien(results):
+    """Phân tích 5 phiên gần nhất để xác định cầu: Đảo, Thuận, Nghịch, 1-1"""
+    if len(results) < 5: return None
+    last5 = results[:5]
+    alt = sum(1 for i in range(4) if last5[i] != last5[i+1])
 
-      <!-- DASHBOARD -->
-      <div class="card hidden" id="dashCard">
-        <div class="card-head">
-          <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></div>
-          <h2>Bảng điều khiển</h2>
-        </div>
+    # Đảo (alternation): T-X-T-X-T hoặc X-T-X-T-X
+    if alt == 4:
+        return ("Đảo", _opp(last5[0]), 20)
 
-        <div class="pills">
-          <span class="pill" id="pillConn"><span class="d"></span><span id="txtConn">Offline</span></span>
-          <span class="pill" id="pillAuto"><span class="d"></span><span id="txtAuto">AUTO · OFF</span></span>
-        </div>
+    # Thuận (streak): 5 phiên cùng chiều, dự đoán tiếp tục
+    if alt == 0:
+        # Kiểm tra lịch sử: 5 phiên cùng chiều thường có tiếp tục không
+        n = len(results)
+        same_streak_cont = same_streak_break = 0
+        for i in range(min(n - 5, 40)):
+            if results[i:i+5] == last5:
+                if results[i+5] == last5[0]: same_streak_cont += 1
+                else: same_streak_break += 1
+        total = same_streak_cont + same_streak_break
+        if total >= 3:
+            p_cont = (same_streak_cont + 1) / (total + 2)
+            if p_cont >= 0.55:
+                return ("Thuận", last5[0], 17)
+            else:
+                return ("Thuận_break", _opp(last5[0]), 16)
+        return ("Thuận", last5[0], 15)
 
-        <div class="big-pred">
-          <div>
-            <div class="label">Dự đoán AI</div>
-            <div class="val idle" id="bigPred">—</div>
-          </div>
-          <div style="text-align:right">
-            <div class="label">Phiên</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600" id="bigSession">—</div>
-          </div>
-        </div>
+    # 1-1 (cầu 1-1): T-X-T-X hoặc X-T-X-T (4 phiên) + 1 phiên bất kỳ
+    last4 = results[:4]
+    alt4 = sum(1 for i in range(3) if last4[i] != last4[i+1])
+    if alt4 == 3:
+        return ("1-1", _opp(last4[0]), 18)
 
-        <div class="stats">
-          <div class="stat"><span class="k">Nickname</span><span class="v" id="sNick">—</span></div>
-          <div class="stat"><span class="k">Số dư</span><span class="v" id="sBalance">0</span></div>
-          <div class="stat"><span class="k">Cược phiên</span><span class="v" id="sBet">0</span></div>
-          <div class="stat"><span class="k">Bet step</span><span class="v" id="sStep">GỐC</span></div>
-          <div class="stat"><span class="k">Win / Lose</span><span class="v mono" id="sWL">0 / 0</span></div>
-          <div class="stat"><span class="k">Trạng thái</span><span class="v mono" id="sStatus">Idle</span></div>
-          <div class="stat wide"><span class="k">Pattern</span><span class="v mono" id="sPattern">—</span></div>
-        </div>
+    # Nghịch (đảo chiều sau streak): T-T-T-X hoặc X-X-X-T
+    streak = _count_streak(results)
+    if streak >= 3 and streak <= 4 and len(results) > streak:
+        # Đang ở cuối streak, dự đoán đảo
+        return ("Nghịch", _opp(results[0]), 17)
 
-        <div class="field"><label>Cược gốc (min 1.000)</label>
-          <div class="row">
-            <input id="betAmount" type="number" placeholder="10000" min="1000">
-            <button class="btn btn-warn" id="btnSetBet">
-              <svg viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
-              SET
-            </button>
-          </div>
-        </div>
+    return None
 
-        <div class="row" style="margin-top:8px">
-          <button class="btn btn-ok" id="btnToggleAuto">
-            <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            BẬT AUTO
-          </button>
-          <button class="btn btn-err" id="btnStop">
-            <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-            NGẮT BOT
-          </button>
-        </div>
-      </div>
+# =====================================================================
+# MD5 HASH-DEEP PRIMARY (5 phiên + hash-deep)
+# =====================================================================
+def algo_hash_deep_5p(results):
+    """Hash-deep dựa trên 5 phiên gần nhất (trọng tâm)"""
+    tx = encode_tx(results, 5)
+    if not tx: return None
+    h = hash_deep_md5(tx, depth_level=3)  # deep hơn cho 5p
+    if not h: return None
+    db = HASH_DEEP_DB[5]
+    if h not in db: return None
+    counts = db[h]
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 3: return None
+    p_tai = (counts["Tài"] + 1) / (total + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+    if abs(z) < 0.9: return None
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    weight = min(26, 14 + abs(z) * 4)
+    return (pred, weight, f"hash_deep_5p_{total}")
 
-      <!-- CẦU GẦN ĐÂY -->
-      <div class="card">
-        <div class="card-head">
-          <div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-          <h2>Cầu gần đây</h2>
-        </div>
-        <div class="hist" id="cauList"><span style="color:#9aa8c8;font-size:12px">Chưa có dữ liệu</span></div>
-      </div>
-    </div>
+def algo_hash_deep_13p(results):
+    """Hash-deep 13 phiên (chuẩn MD5)"""
+    tx = encode_tx(results, 13)
+    if not tx: return None
+    h = hash_deep_md5(tx, depth_level=2)
+    if not h: return None
+    db = HASH_DEEP_DB[13]
+    if h not in db: return None
+    counts = db[h]
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 3: return None
+    p_tai = (counts["Tài"] + 1) / (total + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+    if abs(z) < 1.0: return None
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    weight = min(24, 12 + abs(z) * 4)
+    return (pred, weight, f"hash_deep_13p_{total}")
 
-    <!-- RIGHT: LOG -->
-    <div class="card">
-      <div class="card-head">
-        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
-        <h2>Log realtime</h2>
-      </div>
-      <div id="log"></div>
-    </div>
-  </div>
+def algo_hash_deep_multi(results):
+    combined = {"Tài": 0.0, "Xỉu": 0.0}
+    total_samples = 0
+    for depth, wf in ((13, 1.0), (10, 0.75), (7, 0.55), (5, 0.9)):
+        tx = encode_tx(results, depth)
+        if not tx: continue
+        h = hash_deep_md5(tx, depth_level=2 if depth >= 7 else 3)
+        if not h: continue
+        db = HASH_DEEP_DB[depth]
+        if h not in db: continue
+        counts = db[h]
+        total = counts["Tài"] + counts["Xỉu"]
+        if total < 2: continue
+        p_tai = (counts["Tài"] + 1) / (total + 2)
+        z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+        pred = "Tài" if p_tai > 0.5 else "Xỉu"
+        weight = min(20, 9 + abs(z) * 3.5) * wf
+        combined[pred] += weight
+        total_samples += total
+    if total_samples < 4: return None
+    st, sx = combined["Tài"], combined["Xỉu"]
+    if st == sx: return None
+    pred = "Tài" if st > sx else "Xỉu"
+    ratio = max(st, sx) / (st + sx)
+    if ratio < 0.56: return None
+    weight = min(22, 10 + (ratio - 0.5) * 35)
+    return (pred, weight, f"hash_deep_multi_{total_samples}")
 
-  <!-- LỊCH SỬ DỰ ĐOÁN -->
-  <div class="card" style="margin-top:18px">
-    <div class="card-head">
-      <div class="ico"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
-      <h2>Lịch sử dự đoán · Đúng / Sai</h2>
-    </div>
+def algo_md5_bit_analysis(results):
+    if len(results) < 13: return None
+    tx = encode_tx(results, 13)
+    if not tx: return None
+    h = hash_deep_md5(tx, depth_level=2)
+    if not h: return None
+    bits = hash_to_bits(h)
+    if len(bits) < 128: return None
+    st = sx = 0.0; total_active = 0
+    for bit_idx in range(128):
+        if bits[bit_idx] != 1: continue
+        cnt = MD5_BIT_DB[bit_idx]
+        total = cnt["Tài"] + cnt["Xỉu"]
+        if total < 5: continue
+        p_tai = (cnt["Tài"] + 1) / (total + 2)
+        z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+        if abs(z) < 0.8: continue
+        w = abs(z) * 2
+        if p_tai > 0.5: st += w
+        else: sx += w
+        total_active += 1
+    if total_active < 5: return None
+    if st == sx: return None
+    pred = "Tài" if st > sx else "Xỉu"
+    ratio = max(st, sx) / (st + sx)
+    if ratio < 0.58: return None
+    weight = min(22, 10 + (ratio - 0.5) * 40)
+    return (pred, weight, f"md5_bit_{total_active}")
 
-    <div class="pred-stats">
-      <div class="pred-stat"><span class="k">Tổng dự đoán</span><span class="v" id="phTotal">0</span></div>
-      <div class="pred-stat"><span class="k">Đúng</span><span class="v ok" id="phCorrect">0</span></div>
-      <div class="pred-stat"><span class="k">Sai</span><span class="v err" id="phWrong">0</span></div>
-      <div class="pred-stat"><span class="k">Tỷ lệ đúng</span><span class="v rate" id="phRate">—</span></div>
-    </div>
+def algo_md5_ngram(results):
+    if len(results) < 13: return None
+    tx = encode_tx(results, 13)
+    if not tx: return None
+    h = hash_deep_md5(tx, depth_level=2)
+    if not h: return None
+    st = sx = 0.0; total_grams = 0
+    for ng_size, wf in ((2, 0.5), (3, 1.0), (4, 1.5)):
+        db = MD5_NGRAM_DB[ng_size]
+        for start in range(0, len(h) - ng_size + 1):
+            gram = h[start:start + ng_size]
+            if gram not in db: continue
+            cnt = db[gram]
+            total = cnt["Tài"] + cnt["Xỉu"]
+            if total < 3: continue
+            p_tai = (cnt["Tài"] + 1) / (total + 2)
+            z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+            if abs(z) < 1.0: continue
+            w = abs(z) * 2 * wf
+            if p_tai > 0.5: st += w
+            else: sx += w
+            total_grams += 1
+    if total_grams < 8: return None
+    if st == sx: return None
+    pred = "Tài" if st > sx else "Xỉu"
+    ratio = max(st, sx) / (st + sx)
+    if ratio < 0.58: return None
+    weight = min(20, 10 + (ratio - 0.5) * 35)
+    return (pred, weight, f"md5_ngram_{total_grams}")
 
-    <div class="pred-table-wrap">
-      <table class="pred-table">
-        <thead>
-          <tr>
-            <th>Phiên</th>
-            <th>AI dự đoán</th>
-            <th>Kết quả</th>
-            <th>Xúc xắc</th>
-            <th>Kết quả</th>
-          </tr>
-        </thead>
-        <tbody id="predHistoryBody">
-          <tr><td colspan="5" class="empty-state">Chưa có dự đoán nào</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
+def algo_md5_hamming(results):
+    if len(results) < 15: return None
+    tx_now = encode_tx(results, 13)
+    tx_prev = encode_tx(results[1:], 13) if len(results) > 14 else None
+    if not tx_now or not tx_prev: return None
+    h_now = hash_deep_md5(tx_now, depth_level=2)
+    h_prev = hash_deep_md5(tx_prev, depth_level=2)
+    if not h_now or not h_prev: return None
+    hd = hamming_distance(h_now, h_prev)
+    bin_key = hd // 8
+    if bin_key not in MD5_HAMMING_DB: return None
+    cnt = MD5_HAMMING_DB[bin_key]
+    total = cnt["Tài"] + cnt["Xỉu"]
+    if total < 4: return None
+    p_tai = (cnt["Tài"] + 1) / (total + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+    if abs(z) < 1.2: return None
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    weight = min(18, 10 + abs(z) * 3)
+    return (pred, weight, f"md5_hamming_{hd}")
 
-  <div class="footer">
-    TOOL AUTO LC79 <span class="dot-sep">·</span> Pattern Recognition × Dynamic Weights
-    <span class="dot-sep">·</span> Thắng→gốc · Gãy 1→X2 · Gãy 2→DỪNG
-  </div>
-</div>
+# =====================================================================
+# 5P PATTERN
+# =====================================================================
+def algo_5p_alternation(results):
+    n = len(results)
+    if n < 10: return None
+    last5 = results[:5]
+    alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
 
-<script>
-const socket = io('/', {
-  transports: ['websocket','polling'],
-  reconnection: true,
-  reconnectionAttempts: Infinity,
-  reconnectionDelay: 1000,
-  reconnectionDelayMax: 5000,
-  timeout: 20000,
-  pingInterval: 20000,
-  pingTimeout: 60000,
-  forceNew: false,
-});
+    if alt_count == 4:
+        tai_next = xiu_next = 0
+        key5 = tuple(last5)
+        for i in range(min(n - 5, 50)):
+            if tuple(results[i:i+5]) == key5:
+                if results[i+5] == "Tài": tai_next += 1
+                else: xiu_next += 1
+        total_seen = tai_next + xiu_next
+        if total_seen >= 3:
+            p_tai = (tai_next + 1) / (total_seen + 2)
+            if p_tai >= 0.62:
+                return ("Tài", min(24, 13 + (p_tai - 0.5) * 25), "5p_alt_data_T")
+            elif p_tai <= 0.38:
+                return ("Xỉu", min(24, 13 + (0.5 - p_tai) * 25), "5p_alt_data_X")
+        return (_opp(last5[0]), 18, "5p_alt_continue")
 
-let SID = null;
-const $ = id => document.getElementById(id);
-const fmt = n => (n||0).toLocaleString('en-US');
+    if alt_count == 3:
+        tai_next = xiu_next = 0
+        key5 = tuple(last5)
+        for i in range(min(n - 5, 50)):
+            if tuple(results[i:i+5]) == key5:
+                if results[i+5] == "Tài": tai_next += 1
+                else: xiu_next += 1
+        total_seen = tai_next + xiu_next
+        if total_seen >= 3:
+            p_tai = (tai_next + 1) / (total_seen + 2)
+            if p_tai >= 0.62:
+                return ("Tài", min(22, 12 + (p_tai - 0.5) * 22), "5p_alt_reverse_data_T")
+            elif p_tai <= 0.38:
+                return ("Xỉu", min(22, 12 + (0.5 - p_tai) * 22), "5p_alt_reverse_data_X")
+        return (_opp(last5[0]), 15, "5p_alt_reverse")
+    return None
 
-// Keep-alive worker
-const keepAliveWorker = new Worker(URL.createObjectURL(new Blob([`
-  let timer;
-  self.onmessage = e => {
-    if (e.data === 'start') timer = setInterval(() => self.postMessage('tick'), 15000);
-    else if (e.data === 'stop') clearInterval(timer);
-  };
-`], {type:'application/javascript'})));
-keepAliveWorker.onmessage = () => {
-  if (socket.connected) socket.emit('ping_keepalive', {ts: Date.now()});
-  else socket.connect();
-};
-keepAliveWorker.postMessage('start');
+def algo_trend_break(results):
+    n = len(results)
+    if n < 20: return None
+    window = list(reversed(results[:20]))
+    b = [1 if r == "Tài" else 0 for r in window]
+    x_mean = 9.5; y_mean = sum(b) / 20
+    num = sum((i - x_mean) * (b[i] - y_mean) for i in range(20))
+    den = sum((i - x_mean) ** 2 for i in range(20))
+    slope = num / den if den else 0
+    last3 = b[-3:]
+    if slope > 0.04:
+        if sum(last3) <= 1:
+            return ("Tài", min(20, 12 + abs(slope) * 30), "trend_bounce_T")
+    elif slope < -0.04:
+        if sum(last3) >= 2:
+            return ("Xỉu", min(20, 12 + abs(slope) * 30), "trend_bounce_X")
+    if abs(slope) > 0.08:
+        last_dir = "Tài" if sum(last3) >= 2 else "Xỉu"
+        if (slope > 0 and last_dir == "Tài") or (slope < 0 and last_dir == "Xỉu"):
+            return (last_dir, min(18, 12 + abs(slope) * 25), "trend_continue")
+    return None
 
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && !socket.connected) socket.connect();
-});
-setInterval(() => { if (!socket.connected) socket.connect(); }, 5000);
+def algo_break_rhythm(results):
+    n = len(results)
+    if n < 12: return None
+    last8 = results[:8]
+    alt_count = sum(1 for i in range(7) if last8[i] != last8[i+1])
+    if 5 <= alt_count <= 6:
+        return (_opp(last8[0]), 16, "break_rhythm_alt")
+    if alt_count <= 2:
+        return (last8[0], 14, "break_rhythm_streak")
+    return None
 
-// ==================== LOG ====================
-function appendLog(level, msg){
-  const el = $('log');
-  const t = new Date().toLocaleTimeString('vi-VN');
-  const d = document.createElement('div');
-  d.className = 'entry ' + (level||'info');
-  d.innerHTML = `<span class="t">${t}</span>${String(msg).replace(/</g,'&lt;')}`;
-  el.appendChild(d);
-  el.scrollTop = el.scrollHeight;
-  while(el.children.length > 400) el.removeChild(el.firstChild);
-}
+def data_markov2(results):
+    n = len(results)
+    if n < 20: return None
+    key = (results[1], results[0])
+    counts = {"Tài": 1, "Xỉu": 1}
+    for i in range(min(n - 2, 60)):
+        if (results[i+2], results[i+1]) == key:
+            counts[results[i]] += 1
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 6: return None
+    p_tai = counts["Tài"] / total
+    z = (p_tai - 0.5) / math.sqrt(0.25 / total)
+    if abs(z) < 1.2: return None
+    weight = min(20, 9 + abs(z) * 3)
+    return ("Tài" if p_tai > 0.5 else "Xỉu", weight, "markov2_data")
 
-// ==================== PRED HISTORY ====================
-function renderPredHistory(s){
-  const hist = s.pred_history || [];
-  const correct = s.ai_correct || 0;
-  const wrong = s.ai_wrong || 0;
-  const total = correct + wrong;
+def data_markov3(results):
+    n = len(results)
+    if n < 30: return None
+    key = (results[2], results[1], results[0])
+    counts = {"Tài": 1, "Xỉu": 1}
+    for i in range(min(n - 3, 80)):
+        if (results[i+3], results[i+2], results[i+1]) == key:
+            counts[results[i]] += 1
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 5: return None
+    p_tai = counts["Tài"] / total
+    z = (p_tai - 0.5) / math.sqrt(0.25 / total)
+    if abs(z) < 1.3: return None
+    weight = min(22, 10 + abs(z) * 3)
+    return ("Tài" if p_tai > 0.5 else "Xỉu", weight, "markov3_data")
 
-  $('phTotal').textContent = total;
-  $('phCorrect').textContent = correct;
-  $('phWrong').textContent = wrong;
-  $('phRate').textContent = total ? ((correct/total)*100).toFixed(1) + '%' : '—';
+def data_pattern3(results):
+    n = len(results)
+    if n < 25: return None
+    key = tuple(results[:3])
+    tai_next = xiu_next = 0
+    for i in range(min(n - 3, 60)):
+        if tuple(results[i:i+3]) == key:
+            if results[i+3] == "Tài": tai_next += 1
+            else: xiu_next += 1
+    tot = tai_next + xiu_next
+    if tot < 4: return None
+    p = (tai_next + 1) / (tot + 2)
+    if p >= 0.68: return ("Tài", min(18, 10 + (p - 0.5) * 20), "pattern3_data")
+    if p <= 0.32: return ("Xỉu", min(18, 10 + (0.5 - p) * 20), "pattern3_data")
+    return None
 
-  const tbody = $('predHistoryBody');
-  if(!hist.length){
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Chưa có dự đoán nào</td></tr>';
-    return;
-  }
-  tbody.innerHTML = hist.slice(-50).reverse().map(item => {
-    const predClass = item.pred === 'TAI' ? 'pred-tai' : 'pred-xiu';
-    const actualClass = item.actual === 'TAI' ? 'pred-tai' : 'pred-xiu';
-    const badgeClass = item.correct ? 'ok-badge' : 'err-badge';
-    const badgeTxt = item.correct ? '✓ ĐÚNG' : '✗ SAI';
-    const diceHtml = (item.dices && item.dices.length === 3)
-      ? `<span class="dice-mini"><span>${item.dices[0]}</span><span>${item.dices[1]}</span><span>${item.dices[2]}</span></span>`
-      : '—';
-    return `<tr>
-      <td class="session-id">#${item.session || '?'}</td>
-      <td class="${predClass}">${item.pred || '—'}</td>
-      <td class="${actualClass}">${item.actual || '—'}</td>
-      <td>${diceHtml}</td>
-      <td class="${badgeClass}">${badgeTxt}</td>
-    </tr>`;
-  }).join('');
-}
+def data_alternation(results):
+    n = len(results)
+    if n < 4: return None
+    alt = _count_alternations(results)
+    if alt >= 8: return (_opp(results[0]), 24, "alt_8plus")
+    if alt >= 6: return (_opp(results[0]), 20, "alt_6_7")
+    if alt >= 4: return (_opp(results[0]), 14, "alt_4_5")
+    if alt >= 3: return (_opp(results[0]), 9, "alt_3")
+    return None
 
-// ==================== STATE ====================
-function renderState(s){
-  if(!s) return;
-  if(s.logged_in){
-    $('loginCard').classList.add('hidden');
-    $('dashCard').classList.remove('hidden');
-  }
-  $('sNick').textContent = s.nickname || '—';
-  $('sBalance').textContent = fmt(s.balance);
-  $('bigSession').textContent = s.session_id ? '#'+s.session_id : '—';
-  $('sBet').textContent = fmt(s.current_bet);
-  $('sStep').textContent = s.bet_step === 0 ? 'GỐC' : `X${Math.pow(2, s.bet_step)} GỠ`;
-  $('sWL').textContent = `${s.win_count||0} / ${s.lose_count||0}`;
-  $('sPattern').textContent = s.last_pattern || '—';
+def data_streak_break(results):
+    n = len(results)
+    if n < 25: return None
+    streak = _count_streak(results)
+    if streak < 3: return None
+    current = results[0]
+    breaks = totals = 0
+    i = 0
+    while i < n - 1:
+        j = i; cnt = 1
+        while j + 1 < n and results[j] == results[j+1]:
+            cnt += 1; j += 1
+        if cnt >= streak and results[i] == current:
+            totals += 1
+            if j + 1 < n and results[j+1] != current:
+                breaks += 1
+        i = j + 1
+    if totals < 4: return None
+    p_break = (breaks + 1) / (totals + 2)
+    if p_break >= 0.65:
+        return (_opp(current), min(18, 10 + (p_break - 0.5) * 20), "streak_break_data")
+    if p_break <= 0.35:
+        return (current, min(15, 10 + (0.5 - p_break) * 15), "streak_continue_data")
+    return None
 
-  const bp = $('bigPred');
-  if(s.current_prediction === 'Tài'){ bp.textContent = 'TÀI'; bp.className = 'val tai'; }
-  else if(s.current_prediction === 'Xỉu'){ bp.textContent = 'XỈU'; bp.className = 'val xiu'; }
-  else { bp.textContent = '—'; bp.className = 'val idle'; }
+def data_bayes_ratio(results):
+    n = len(results)
+    if n < 15: return None
+    window = results[:min(30, n)]
+    tai = window.count("Tài")
+    xiu = len(window) - tai
+    alpha = 10 + tai; beta = 10 + xiu
+    p_tai = alpha / (alpha + beta)
+    var = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
+    std = math.sqrt(var) if var > 0 else 0
+    z = abs((p_tai - 0.5) / std) if std else 0
+    if z < 1.5: return None
+    weight = min(16, 9 + z * 2)
+    return ("Tài" if p_tai > 0.5 else "Xỉu", weight, "bayes_data")
 
-  let stTxt = 'Idle';
-  if(s.is_paused) stTxt = 'TẠM DỪNG';
-  else if(s.auto_bet_enabled) stTxt = 'Đang chạy';
-  $('sStatus').textContent = stTxt;
+def data_tilt(results):
+    n = len(results)
+    if n < 12: return None
+    for w, hi, lo, wgt in ((8, 7, 1, 15), (12, 10, 2, 13)):
+        if n < w: continue
+        tc = results[:w].count("Tài")
+        if tc >= hi: return ("Xỉu", wgt, f"tilt_tai_{w}")
+        if tc <= lo: return ("Tài", wgt, f"tilt_xiu_{w}")
+    return None
 
-  $('pillAuto').className = 'pill ' + (s.auto_bet_enabled ? 'on' : 'off');
-  $('txtAuto').textContent = 'AUTO · ' + (s.auto_bet_enabled ? 'ON' : 'OFF');
-  $('btnToggleAuto').innerHTML = s.auto_bet_enabled
-    ? '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> TẮT AUTO'
-    : '<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg> BẬT AUTO';
+def data_periodicity(results):
+    n = len(results)
+    if n < 24: return None
+    best_period, best_score = 0, 0.0
+    for period in range(2, min(12, n // 2)):
+        matches = total = 0
+        for i in range(period, min(n, period + 20)):
+            total += 1
+            if results[i] == results[i - period]: matches += 1
+        if total >= 10:
+            score = matches / total
+            if score > best_score:
+                best_score, best_period = score, period
+    if best_period and best_score >= 0.72:
+        pred = results[best_period - 1]
+        weight = min(22, 13 + (best_score - 0.5) * 22)
+        return (pred, weight, f"periodicity_p{best_period}")
+    return None
 
-  const pc = $('pillConn');
-  if(s.is_paused){ pc.className='pill pause'; $('txtConn').textContent='Tạm dừng'; }
-  else if(s.logged_in){ pc.className='pill on'; $('txtConn').textContent='Online'; }
-  else { pc.className='pill off'; $('txtConn').textContent='Offline'; }
+def data_volatility_break(results):
+    n = len(results)
+    if n < 15: return None
+    window = results[:12]
+    changes = sum(1 for i in range(11) if window[i] != window[i+1])
+    if changes <= 2:
+        return (_opp(results[0]), 18, "volatility_low_break")
+    if changes >= 9:
+        return (results[0], 16, "volatility_high_continue")
+    return None
 
-  const hl = $('cauList');
-  if(s.history && s.history.length){
-    hl.innerHTML = s.history.slice(-40).reverse()
-      .map(h => `<span class="die ${h==='Tài'?'tai':'xiu'}">${h==='Tài'?'T':'X'}</span>`).join('');
-  }
+def data_entropy_bias(results):
+    n = len(results)
+    if n < 15: return None
+    window = results[:20]
+    p_tai = (window.count("Tài") + 1) / (len(window) + 2)
+    p_xiu = 1 - p_tai
+    if p_tai <= 0 or p_xiu <= 0: return None
+    entropy = -(p_tai * math.log2(p_tai) + p_xiu * math.log2(p_xiu))
+    if entropy < 0.75:
+        return ("Tài" if p_tai > 0.5 else "Xỉu", 15, f"entropy_{entropy:.2f}")
+    return None
 
-  renderPredHistory(s);
-}
+def data_cusum(results):
+    n = len(results)
+    if n < 20: return None
+    window = list(reversed(results[:20]))
+    s_pos = s_neg = 0.0; target = 0.5
+    for r in window:
+        x = 1 if r == "Tài" else 0
+        s_pos = max(0, s_pos + (x - target))
+        s_neg = max(0, s_neg + (target - x))
+    if s_pos > 3.5: return ("Xỉu", 16, "cusum_T_bias")
+    if s_neg > 3.5: return ("Tài", 16, "cusum_X_bias")
+    return None
 
-// ==================== SOCKET EVENTS ====================
-socket.on('connect', ()=>{ SID = socket.id; appendLog('ok','Web socket kết nối: '+SID); });
-socket.on('disconnect', ()=> appendLog('warn','Web socket mất kết nối — đang thử lại...'));
-socket.on('reconnect', ()=> appendLog('ok','Web socket đã kết nối lại'));
-socket.on('state', renderState);
-socket.on('log', d => appendLog(d.level, d.msg));
-socket.on('login_result', j => {
-  const msg = $('loginMsg');
-  if(j.ok){
-    msg.textContent = `OK — ${j.nickname} — ${fmt(j.balance)}`;
-    msg.className='msg ok';
-  } else {
-    msg.textContent = j.error || 'Lỗi đăng nhập';
-    msg.className='msg err';
-  }
-});
+def algo_pair_pattern(results):
+    n = len(results)
+    if n < 8: return None
+    groups = get_groups(results)
+    if len(groups) < 3: return None
+    last3 = groups[:3]
+    if last3 == [2, 2, 2]: return (results[0], 18, "pattern_2_2_2")
+    if last3 == [3, 3, 3]: return (results[0], 20, "pattern_3_3_3")
+    if groups[0] == groups[1] and groups[0] <= 3 and len(groups) >= 2:
+        return (_opp(results[0]), 16, f"pattern_{groups[0]}_{groups[1]}_break")
+    return None
 
-// ==================== UI EVENTS ====================
-$('btnLogin').onclick = ()=>{
-  const u = $('username').value.trim();
-  const p = $('password').value.trim();
-  const msg = $('loginMsg');
-  if(!u || !p){ msg.textContent = 'Nhập đủ tài khoản + mật khẩu'; msg.className='msg err'; return; }
-  msg.textContent = 'Đang đăng nhập...'; msg.className = 'msg';
-  const btn = $('btnLogin'); btn.disabled = true;
-  socket.emit('login', {username: u, password: p});
-  setTimeout(()=>{ btn.disabled = false; }, 3000);
-};
+# =====================================================================
+# ANALYZER
+# =====================================================================
+def analyze_full_bridge(results):
+    if len(results) < 3: return []
+    signals = []
+    for fn in (
+        algo_hash_deep_5p,
+        algo_hash_deep_13p,
+        algo_hash_deep_multi,
+        algo_md5_bit_analysis,
+        algo_md5_ngram,
+        algo_md5_hamming,
+        algo_5p_alternation,
+        algo_trend_break,
+        algo_break_rhythm,
+        data_markov2,
+        data_markov3,
+        data_pattern3,
+        data_alternation,
+        data_streak_break,
+        data_bayes_ratio,
+        data_tilt,
+        data_periodicity,
+        data_volatility_break,
+        data_entropy_bias,
+        data_cusum,
+        algo_pair_pattern,
+    ):
+        try:
+            s = fn(results)
+            if s: signals.append(s)
+        except Exception:
+            pass
+    # Thêm 5p cầu
+    try:
+        cau = analyze_5phien(results)
+        if cau:
+            _, pred, w = cau
+            signals.append((pred, w, f"cau_{cau[0]}"))
+    except Exception:
+        pass
+    return signals
 
-$('btnSetBet').onclick = ()=>{
-  const amt = parseInt($('betAmount').value);
-  if(!amt || amt < 1000){ appendLog('err','Tối thiểu 1.000'); return; }
-  socket.emit('set_bet', {amount: amt});
-  appendLog('ok','Đã set cược gốc: '+fmt(amt));
-};
+# =====================================================================
+# PREDICTOR — KHÔNG NGHIÊNG 1 PHIÊN
+# =====================================================================
+def full_bridge_predict_adaptive(results, replay_n=80):
+    n = len(results)
+    if n == 0: return "Tài", 50, []
+    if n == 1: return _opp(results[0]), 52, []
+    if n == 2:
+        if results[0] == results[1]: return _opp(results[0]), 55, []
+        return results[1], 52, []
 
-$('btnToggleAuto').onclick = ()=> socket.emit('toggle_auto');
-$('btnStop').onclick = ()=> socket.emit('stop_bot');
+    signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
+    replay_count = min(replay_n, n - 3)
+    for j in range(replay_count):
+        history = results[j + 1:]; actual = results[j]
+        decay = math.exp(-j / max(replay_count / 2.0, 1.0))
+        for pred_sig, weight, name in analyze_full_bridge(history):
+            signal_stats[name]['total'] += decay
+            if pred_sig == actual:
+                signal_stats[name]['wins'] += decay
 
-// Enter để login
-$('password').addEventListener('keypress', e => {
-  if(e.key === 'Enter') $('btnLogin').click();
-});
+    signals = analyze_full_bridge(results)
+    if not signals: return results[0], 52, []
 
-window.addEventListener('load', ()=> appendLog('info','Sẵn sàng — nhập tài khoản để bắt đầu'));
-</script>
-</body>
-</html>
+    regime = _regime(results)
+    st = sx = 0.0; detail = []
+    for pred_sig, weight, name in signals:
+        s = signal_stats[name]
+        if s['total'] >= 3:
+            acc = (s['wins'] + 1.0) / (s['total'] + 2.0)
+        else:
+            acc = 0.5
+        accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
+        if regime == "streak" and "break" in name: accuracy_mult *= 1.10
+        elif regime == "alternation" and ("alt" in name or "5p" in name): accuracy_mult *= 1.15
+        if "trend_" in name or "rhythm_" in name: accuracy_mult *= 1.12
+        if "hash_deep_5p" in name: accuracy_mult *= 1.20  # Boost hash-deep 5p
+        if "hash_deep_13p" in name: accuracy_mult *= 1.10
+        if "md5_bit_" in name or "md5_ngram_" in name: accuracy_mult *= 1.08
+        adjusted = weight * accuracy_mult
+        if pred_sig == "Tài": st += adjusted
+        else: sx += adjusted
+        detail.append({'name': name, 'pred': pred_sig, 'base_weight': weight,
+                       'accuracy': round(acc, 3), 'adjusted_weight': round(adjusted, 2)})
+
+    total = st + sx
+    if total == 0: return results[0], 50, detail
+
+    # ==== ANTI-LEAN: nếu quá nghiêng 1 bên, kéo về ====
+    if total > 0:
+        lean = max(st, sx) / total
+        if lean > 0.85 and len(signals) <= 2:
+            # Quá ít signal mà nghiêng >85% -> không tin
+            return _opp(results[0]) if st > sx else results[0], 51, detail
+
+    if st > sx: pred, ratio = "Tài", st / total
+    elif sx > st: pred, ratio = "Xỉu", sx / total
+    else: return _opp(results[0]), 50, detail
+
+    conf = 50 + (ratio - 0.5) * 100
+    conf = conf * min(1.0, total / 50.0) + 50 * (1 - min(1.0, total / 50.0))
+
+    agree_w = sum(d['adjusted_weight'] for d in detail if d['pred'] == pred)
+    disagree_w = sum(d['adjusted_weight'] for d in detail if d['pred'] != pred)
+    total_w = agree_w + disagree_w + 1e-6
+    conflict_ratio = disagree_w / total_w
+    if conflict_ratio > 0.55: conf -= 8
+    elif conflict_ratio > 0.40: conf -= 4
+
+    if ratio >= 0.72: conf += 5
+    if len(signals) >= 6 and ratio >= 0.68: conf += 3
+    if len(signals) < 3: conf -= 5
+
+    conf = int(max(50, min(MAX_CONFIDENCE, conf)))
+    return pred, conf, detail
+
+# =====================================================================
+# PREDICTION CACHE — CỐ ĐỊNH NEXT
+# =====================================================================
+def get_prediction_for(valid, i):
+    key = valid[i]['phien']
+    if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
+    hist = [v['result'] for v in valid[:i]][::-1]
+    if len(hist) < 3:
+        result = ("-", 50, None)
+    else:
+        pred, conf, _ = full_bridge_predict_adaptive(hist)
+        is_correct = (pred == valid[i]['result'])
+        result = (pred, conf, is_correct)
+    if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE: PREDICTION_CACHE.clear()
+    PREDICTION_CACHE[key] = result
+    return result
+
+def compute_loss_streak(valid, max_scan=10):
+    if len(valid) < 5: return 0
+    streak = 0
+    end = len(valid) - 1
+    start = max(0, end - max_scan)
+    for i in range(end, start - 1, -1):
+        pred, conf, is_correct = get_prediction_for(valid, i)
+        if is_correct is None: break
+        if is_correct: break
+        streak += 1
+    return streak
+
+# =====================================================================
+# RECOVERY — GIỮ NGUYÊN NHƯNG CACHE NEXT PREDICTION SAU KHI TÍNH
+# =====================================================================
+def apply_recovery(base_pred, conf, loss_streak, results=None):
+    if loss_streak < 1:
+        return base_pred, conf, False, None
+    regime = _regime(results) if results else "balanced"
+    n = len(results) if results else 0
+    if loss_streak == 1:
+        return base_pred, max(50, conf - 3), False, "hold_1"
+    if loss_streak == 2:
+        if regime == "streak":
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True, "flip_streak_2"
+        if regime == "alternation":
+            return base_pred, max(50, conf - 2), False, "hold_alt_2"
+        trend = algo_trend_break(results) if results else None
+        rhythm = algo_break_rhythm(results) if results else None
+        if trend and trend[0] == _opp(base_pred):
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 73)), True, "flip_trend_2"
+        if rhythm and rhythm[0] == _opp(base_pred):
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 72)), True, "flip_rhythm_2"
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 70)), True, "flip_2"
+    if loss_streak == 3:
+        if regime == "alternation" and n >= 3:
+            return results[0], min(MAX_CONFIDENCE, max(conf, 72)), False, "follow_3"
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True, "flip_3"
+    if loss_streak == 4:
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 80)), True, "flip_4"
+    return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 82)), True, "flip_5plus"
+
+# =====================================================================
+# FIX: CỐ ĐỊNH NEXT PREDICTION — TÍNH 1 LẦN DUY NHẤT
+# =====================================================================
+def get_stable_next_prediction(valid):
+    """Tính 1 lần cho phiên Next, cache lại — không thay đổi nữa."""
+    if not valid:
+        return None, 50, False, None, None
+    next_phien = valid[-1]['phien'] + 1
+    if next_phien in NEXT_PREDICTION_CACHE:
+        return NEXT_PREDICTION_CACHE[next_phien]
+
+    results = [v['result'] for v in valid][::-1]
+    loss_streak = compute_loss_streak(valid)
+    base_pred, base_conf, _ = full_bridge_predict_adaptive(results)
+    pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
+
+    # Lưu cache vĩnh viễn cho phiên Next này
+    NEXT_PREDICTION_CACHE[next_phien] = (pred, conf, flipped, reason, base_pred)
+    # Giới hạn cache
+    if len(NEXT_PREDICTION_CACHE) > 200:
+        oldest = min(NEXT_PREDICTION_CACHE.keys())
+        del NEXT_PREDICTION_CACHE[oldest]
+    return NEXT_PREDICTION_CACHE[next_phien]
+
+def reset_all_databases():
+    global LEARNED_PHIEN
+    with LEARN_LOCK:
+        for depth in (5, 7, 10, 13):
+            HASH_DEEP_DB[depth].clear()
+        for bit in range(128):
+            MD5_BIT_DB[bit]["Tài"] = 0
+            MD5_BIT_DB[bit]["Xỉu"] = 0
+        for ng_size in (2, 3, 4):
+            MD5_NGRAM_DB[ng_size].clear()
+        MD5_HAMMING_DB.clear()
+        LOSS_HISTORY.clear()
+        LEARNED_PHIEN = RESET_ID
+
+# =====================================================================
+# ROUTES
+# =====================================================================
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/history')
+def history():
+    global RESET_ID
+    try:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid:
+            return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
+        learn_incremental(valid)
+
+        # ==== CỐ ĐỊNH NEXT ====
+        next_phien = valid[-1]['phien'] + 1
+        cached_next = get_stable_next_prediction(valid)
+        if cached_next and cached_next[0] is not None:
+            next_pred, next_conf, flipped, reason, base_pred = cached_next
+        else:
+            results_now = [v['result'] for v in valid][::-1]
+            ls_now = compute_loss_streak(valid)
+            bp, bc, _ = full_bridge_predict_adaptive(results_now)
+            next_pred, next_conf, flipped, reason = apply_recovery(bp, bc, ls_now, results=results_now)
+            base_pred = bp
+            NEXT_PREDICTION_CACHE[next_phien] = (next_pred, next_conf, flipped, reason, bp)
+
+        loss_streak = compute_loss_streak(valid)
+        out = []; correct_count = 0; total_past = 0
+
+        out.append({
+            'phien': next_phien, 'is_next': True,
+            'prediction': next_pred, 'result': 'Chờ...',
+            'dice': "? + ? + ?", 'is_correct': None,
+            'conf': next_conf, 'recovery_flipped': flipped,
+            'recovery_reason': reason, 'loss_streak': loss_streak,
+            'base_prediction': base_pred if flipped else None,
+        })
+
+        scan_limit = min(len(valid), 200)
+        for i in range(len(valid) - 1, len(valid) - scan_limit - 1, -1):
+            if i < 0: break
+            current_session = valid[i]
+            pred, conf, is_correct = get_prediction_for(valid, i)
+            if is_correct is not None: total_past += 1
+            if is_correct: correct_count += 1
+            out.append({'phien': current_session['phien'], 'is_next': False,
+                        'prediction': pred, 'result': current_session['result'],
+                        'dice': current_session['dice'], 'is_correct': is_correct,
+                        'conf': conf, 'recovery_flipped': False})
+        return jsonify({
+            'rows': out,
+            'stats': {'total': total_past, 'correct': correct_count},
+            'loss_streak': loss_streak, 'recovery_active': flipped,
+            'recovery_reason': reason, 'base_prediction': base_pred,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/predict')
+def predict():
+    global RESET_ID
+    try:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
+        learn_incremental(valid)
+        results = [v['result'] for v in valid][::-1]
+
+        loss_streak = compute_loss_streak(valid)
+        base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
+        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
+
+        # Cầu 5 phiên
+        cau5 = analyze_5phien(results)
+        cau_info = None
+        if cau5:
+            cau_name, cau_pred, cau_w = cau5
+            cau_info = {'name': cau_name, 'pred': cau_pred, 'weight': cau_w}
+
+        p5_signal = algo_5p_alternation(results)
+        hash5_signal = algo_hash_deep_5p(results)
+        hash13_signal = algo_hash_deep_13p(results)
+        bit_signal = algo_md5_bit_analysis(results)
+        ngram_signal = algo_md5_ngram(results)
+        hamming_signal = algo_md5_hamming(results)
+        trend_signal = algo_trend_break(results)
+        rhythm_signal = algo_break_rhythm(results)
+        last5_tx = encode_tx(results, 5)
+        last13_tx = encode_tx(results, 13)
+        last13_hash = hash_deep_md5(last13_tx, depth_level=2) if last13_tx else None
+        last5_hash = hash_deep_md5(last5_tx, depth_level=3) if last5_tx else None
+
+        return jsonify({
+            'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
+            'last_result': valid[-1]['result'], 'last_dice': valid[-1]['dice'],
+            'prediction': pred, 'confidence': conf,
+            'base_prediction': base_pred, 'base_confidence': base_conf,
+            'recovery_flipped': flipped, 'recovery_reason': reason,
+            'loss_streak': loss_streak, 'total_sessions': len(valid),
+            'cau_5phien': cau_info,
+            'last5_pattern': last5_tx, 'last5_hash_deep': last5_hash,
+            'last13_hash': last13_hash,
+            'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
+            'hash_deep_5p': {'pred': hash5_signal[0], 'name': hash5_signal[2]} if hash5_signal else None,
+            'hash_deep_13p': {'pred': hash13_signal[0], 'name': hash13_signal[2]} if hash13_signal else None,
+            'md5_bit': {'pred': bit_signal[0], 'name': bit_signal[2]} if bit_signal else None,
+            'md5_ngram': {'pred': ngram_signal[0], 'name': ngram_signal[2]} if ngram_signal else None,
+            'md5_hamming': {'pred': hamming_signal[0], 'name': hamming_signal[2]} if hamming_signal else None,
+            'trend': {'pred': trend_signal[0], 'name': trend_signal[2]} if trend_signal else None,
+            'rhythm': {'pred': rhythm_signal[0], 'name': rhythm_signal[2]} if rhythm_signal else None,
+            'signals': detail,
+            'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
+            'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
+            'signal_count': len(detail),
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/lc79')
+def lc79():
+    global RESET_ID
+    try:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
+        learn_incremental(valid)
+        results = [v['result'] for v in valid][::-1]
+        loss_streak = compute_loss_streak(valid)
+        base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
+        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
+
+        tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
+        xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
+        total_sig = tai_score + xiu_score
+        if total_sig > 0:
+            ratio = max(tai_score, xiu_score) / total_sig
+            base_conf_f = 50 + (ratio - 0.5) * 100
+            evidence = min(1.0, total_sig / 50.0)
+            conf_float = max(50.0, min(float(MAX_CONFIDENCE), 50 + (base_conf_f - 50) * evidence))
+        else:
+            conf_float = 50.0
+        conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
+        groups = get_groups(results)
+        lich_su = "-" + "-".join(str(g) for g in groups[:4])
+        last = valid[-1]; next_phien = last['phien'] + 1
+        return jsonify({
+            'Id': 'le minh md5 deep v4 fix', 'Phien': str(next_phien),
+            'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
+            'Du_doan': pred, 'Do_tin_cay': conf_str,
+            'Base_du_doan': base_pred if flipped else None,
+            'Auto_flip': flipped, 'Chuoi_thua': loss_streak,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/lc79md5')
+def lc79md5():
+    global RESET_ID
+    try:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
+        learn_incremental(valid)
+        results = [v['result'] for v in valid][::-1]
+        loss_streak = compute_loss_streak(valid)
+        base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
+        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
+
+        tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
+        xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
+        total_sig = tai_score + xiu_score
+        if total_sig > 0:
+            ratio = max(tai_score, xiu_score) / total_sig
+            base_conf_f = 50 + (ratio - 0.5) * 100
+            evidence = min(1.0, total_sig / 50.0)
+            conf_float = max(50.0, min(float(MAX_CONFIDENCE), 50 + (base_conf_f - 50) * evidence))
+        else:
+            conf_float = 50.0
+        conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
+
+        last = valid[-1]
+        dice_parts = last['dice'].split(" + ")
+        dice_short = "-".join(dice_parts) if len(dice_parts) == 3 else last['dice']
+        ket_qua_str = f"{last['result'].lower()} {dice_short}"
+        groups = get_groups(results)
+        lich_su = "-" + "-".join(str(g) for g in groups[:4])
+        next_phien = last['phien'] + 1
+        return jsonify({
+            'id': '@cskhleminh', 'phien': str(next_phien),
+            'ket_qua': ket_qua_str, 'du_doan': pred,
+            'do_tin_cay': conf_str, 'lich_su': lich_su,
+            'base_du_doan': base_pred if flipped else None,
+            'auto_flip': flipped, 'chuoi_thua': loss_streak,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/reset', methods=['POST'])
+def reset_api():
+    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, LEARNED_PHIEN, NEXT_PREDICTION_CACHE
+    try:
+        raw_rows, success = fetch_sessions()
+        if success and raw_rows:
+            valid = sorted(raw_rows, key=lambda x: x['phien'])
+            if valid:
+                RESET_ID = valid[-1]['phien']
+                LEARNED_PHIEN = RESET_ID
+                HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
+                PREDICTION_CACHE = {}
+                NEXT_PREDICTION_CACHE = {}
+                reset_all_databases()
+                return jsonify({'status': 'success', 'reset_to': RESET_ID})
+        return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
