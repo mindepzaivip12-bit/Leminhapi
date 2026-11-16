@@ -378,80 +378,80 @@ def learn_incremental(valid):
         LEARNED_PHIEN = valid[-1]['phien']
 
 # =====================================================================
-# THUẬT TOÁN ỔN ĐỊNH MỚI (STABLE ZONE & NOISE FILTER)
+# THUẬT TOÁN 7P PATTERN RADAR (ĐẢO/THUẬN/NGHỊCH/1-1/2-2/3-2/2-3)
 # =====================================================================
-
-def algo_stable_zone_10p(results):
+def algo_7p_pattern_radar(results):
     """
-    Tìm vùng ổn định của 10 phiên.
-    Nếu nhịp độ lặp lại (VD: T-T-X-T-T-X) thì đánh theo nhịp.
+    Quét 7 phiên gần nhất để nhận diện cầu:
+    - Đảo: 1-1-1-1 (Đảo liên tục)
+    - Thuận: 7-0 (7 Tài hoặc 7 Xỉu liên tiếp)
+    - Nghịch: Đang bệt dài, chuẩn bị đảo
+    - 1-1: Cầu 1-1 (T-X-T-X)
+    - 2-2: Cầu 2-2 (TT-XX-TT)
+    - 3-2 / 2-3: Cầu 3-2 hoặc 2-3
     """
     n = len(results)
-    if n < 20: return None
+    if n < 15: return None
     
-    # Lấy 10 phiên
-    last10 = results[:10]
+    last7 = results[:7]
+    groups = get_groups(last7)
     
-    # Đếm xem có bao nhiêu cặp đảo chiều trong 10 phiên (độ nhiễu)
-    noise = sum(1 for i in range(9) if last10[i] != last10[i+1])
-    
-    # Nếu nhiễu quá cao (>6) hoặc quá thấp (<2), không phải vùng ổn định
-    if noise < 2 or noise > 6: return None
-    
-    # Tìm chu kỳ lặp của 10 phiên này trong 80 phiên lịch sử
-    key10 = tuple(last10)
-    tai_next = xiu_next = 0
-    for i in range(min(n - 10, 80)):
-        if tuple(results[i:i+10]) == key10:
-            if results[i+10] == "Tài": tai_next += 1
-            else: xiu_next += 1
-            
-    total_seen = tai_next + xiu_next
-    if total_seen >= 2:
-        p_tai = (tai_next + 1) / (total_seen + 2)
-        z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
-        if abs(z) >= 0.9:
+    # 1. CẦU ĐẢO (1-1 liên tục)
+    alt = sum(1 for i in range(6) if last7[i] != last7[i+1])
+    if alt >= 5:
+        key7 = tuple(last7)
+        tai_next = xiu_next = 0
+        for i in range(min(n - 7, 60)):
+            if tuple(results[i:i+7]) == key7:
+                if results[i+7] == "Tài": tai_next += 1
+                else: xiu_next += 1
+        if (tai_next + xiu_next) >= 2:
+            p_tai = (tai_next + 1) / (tai_next + xiu_next + 2)
             pred = "Tài" if p_tai > 0.5 else "Xỉu"
-            weight = min(26, 15 + abs(z) * 4)
-            return (pred, weight, f"stable_zone_10p")
+            return (pred, 24, "7p_radar_dao_1_1")
+
+    # 2. CẦU THUẬN (Bệt 6-7 phiên)
+    if len(groups) == 1 and groups[0] >= 6:
+        # Kiểm tra lịch sử: bệt dài thì thường gãy hay tiếp?
+        streak = groups[0]
+        current = last7[0]
+        breaks = totals = 0
+        for i in range(min(n - streak, 60)):
+            if all(results[i+j] == current for j in range(streak)):
+                totals += 1
+                if i + streak < n and results[i+streak] != current:
+                    breaks += 1
+        if totals >= 3:
+            p_break = (breaks + 1) / (totals + 2)
+            if p_break >= 0.60:
+                return (_opp(current), 25, f"7p_radar_thuan_break_{streak}")
+            else:
+                return (current, 20, f"7p_radar_thuan_{streak}")
+
+    # 3. CẦU NGHỊCH (Vừa gãy bệt, đi ngược)
+    if len(groups) >= 2 and groups[0] == 1 and groups[1] >= 3:
+        return (last7[0], 22, "7p_radar_nghich")
+
+    # 4. CẦU 2-2
+    if len(groups) >= 3 and groups[0] == 2 and groups[1] == 2 and groups[2] == 2:
+        return (last7[0], 23, "7p_radar_2_2")
+    if len(groups) >= 3 and groups[0] == 2 and groups[1] == 2:
+        # Đang ở nhịp 2-2
+        if groups[2] >= 1:
+            return (last7[0], 18, "7p_radar_2_2_extend")
+
+    # 5. CẦU 3-2 hoặc 2-3
+    if len(groups) >= 3 and ((groups[0] == 3 and groups[1] == 2) or (groups[0] == 2 and groups[1] == 3)):
+        return (last7[0], 21, "7p_radar_3_2")
     
-    # Nếu không tìm thấy chu kỳ, dựa vào group cuối
-    groups = get_groups(last10)
-    if len(groups) >= 2:
-        if groups[0] < groups[1]:
-            # Nhóm đang ngắn, dự đoán tiếp tục
-            return (last10[0], 16, "stable_zone_extend")
-        else:
-            # Nhóm đang dài, dự đoán sắp gãy
-            return (_opp(last10[0]), 15, "stable_zone_break")
+    # 6. CẦU 3-3
+    if len(groups) >= 2 and groups[0] == 3 and groups[1] == 3:
+        return (last7[0], 22, "7p_radar_3_3")
+        
     return None
 
-def algo_consensus_filter(results, current_signals):
-    """
-    Bộ lọc Nhiễu (Noise Filter) và Đồng thuận (Consensus).
-    Nếu các tín hiệu quá xung đột, tự động hạ nhiệt (không dự đoán).
-    Trả về (pred, weight, name) hoặc None
-    """
-    if not current_signals: return None
-    
-    tai_score = sum(w for p, w, n in current_signals if p == "Tài")
-    xiu_score = sum(w for p, w, n in current_signals if p == "Xỉu")
-    total = tai_score + xiu_score
-    
-    if total == 0: return None
-    
-    # Nếu không có sự đồng thuận (chênh lệch < 15%)
-    ratio = max(tai_score, xiu_score) / total
-    if ratio < 0.55:
-        return None # Không đánh, nhiễu quá
-        
-    # Nếu có đồng thuận cao, đưa ra tín hiệu chốt
-    pred = "Tài" if tai_score > xiu_score else "Xỉu"
-    weight = min(15, 10 + (ratio - 0.5) * 30)
-    return (pred, weight, f"consensus_{int(ratio*100)}pct")
-
 # =====================================================================
-# CÁC THUẬT TOÁN CŨ 
+# THUẬT TOÁN 7P KHÁC
 # =====================================================================
 def algo_7p_no_reverse(results):
     n = len(results)
@@ -500,6 +500,46 @@ def algo_7p_hash_deep(results):
     weight = min(24, 13 + abs(z) * 4)
     return (pred, weight, f"7p_hash_deep_{total}")
 
+def algo_stable_zone_10p(results):
+    n = len(results)
+    if n < 20: return None
+    last10 = results[:10]
+    noise = sum(1 for i in range(9) if last10[i] != last10[i+1])
+    if noise < 2 or noise > 6: return None
+    key10 = tuple(last10)
+    tai_next = xiu_next = 0
+    for i in range(min(n - 10, 80)):
+        if tuple(results[i:i+10]) == key10:
+            if results[i+10] == "Tài": tai_next += 1
+            else: xiu_next += 1
+    total_seen = tai_next + xiu_next
+    if total_seen >= 2:
+        p_tai = (tai_next + 1) / (total_seen + 2)
+        z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
+        if abs(z) >= 0.9:
+            pred = "Tài" if p_tai > 0.5 else "Xỉu"
+            weight = min(26, 15 + abs(z) * 4)
+            return (pred, weight, f"stable_zone_10p")
+    groups = get_groups(last10)
+    if len(groups) >= 2:
+        if groups[0] < groups[1]:
+            return (last10[0], 16, "stable_zone_extend")
+        else:
+            return (_opp(last10[0]), 15, "stable_zone_break")
+    return None
+
+def algo_consensus_filter(results, current_signals):
+    if not current_signals: return None
+    tai_score = sum(w for p, w, n in current_signals if p == "Tài")
+    xiu_score = sum(w for p, w, n in current_signals if p == "Xỉu")
+    total = tai_score + xiu_score
+    if total == 0: return None
+    ratio = max(tai_score, xiu_score) / total
+    if ratio < 0.55: return None
+    pred = "Tài" if tai_score > xiu_score else "Xỉu"
+    weight = min(15, 10 + (ratio - 0.5) * 30)
+    return (pred, weight, f"consensus_{int(ratio*100)}pct")
+
 def analyze_5phien(results):
     if len(results) < 5: return None
     last5 = results[:5]
@@ -544,7 +584,6 @@ def algo_hash_deep_5p(results):
     return (pred, weight, f"hash_deep_5p_{total}")
 
 def algo_hash_deep_10p(results):
-    """Hash-Deep 10 phiên (trọng tâm ổn định)"""
     tx = encode_tx(results, 10)
     if not tx: return None
     h = hash_deep_md5(tx, depth_level=3)
@@ -938,13 +977,14 @@ def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
     
-    # Danh sách thuật toán (Đã thêm 3 thuật toán mới)
+    # Danh sách thuật toán (Đã chèn Radar 7P)
     for fn in (
-        algo_stable_zone_10p, # <-- MỚI: Cầu ổn định 10p
+        algo_7p_pattern_radar,  # <-- MỚI: Radar cầu 7 phiên (Đảo/Thuận/Nghịch/1-1/2-2/3-2/2-3)
+        algo_stable_zone_10p,
         algo_7p_no_reverse,
         algo_7p_hash_deep,
         algo_hash_deep_5p,
-        algo_hash_deep_10p,   # <-- MỚI: Hash 10p
+        algo_hash_deep_10p,
         algo_hash_deep_13p,
         algo_hash_deep_multi,
         algo_md5_bit_analysis,
@@ -980,7 +1020,6 @@ def analyze_full_bridge(results):
     except Exception:
         pass
     
-    # <-- MỚI: Lọc nhiễu và đồng thuận
     try:
         consensus = algo_consensus_filter(results, signals)
         if consensus:
@@ -1021,7 +1060,8 @@ def full_bridge_predict_adaptive(results, replay_n=80):
             acc = 0.5
         accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
         
-        # Gia tăng ưu tiên cho các thuật toán ổn định
+        # Ưu tiên cực cao cho Radar 7P và các thuật toán ổn định
+        if "7p_pattern_radar" in name: accuracy_mult *= 1.40
         if "stable_zone" in name: accuracy_mult *= 1.30
         if "consensus" in name: accuracy_mult *= 1.20
         if "7p_no_reverse" in name: accuracy_mult *= 1.25
@@ -1047,7 +1087,6 @@ def full_bridge_predict_adaptive(results, replay_n=80):
 
     if total > 0:
         lean = max(st, sx) / total
-        # Nếu nghiêng > 85% mà chỉ có 2 tín hiệu, không tin
         if lean > 0.85 and len(signals) <= 2:
             return _opp(results[0]) if st > sx else results[0], 51, detail
 
@@ -1063,7 +1102,6 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     total_w = agree_w + disagree_w + 1e-6
     conflict_ratio = disagree_w / total_w
     
-    # Hạ nhiệt nếu có xung đột mạnh
     if conflict_ratio > 0.55: conf -= 12
     elif conflict_ratio > 0.40: conf -= 6
 
@@ -1071,7 +1109,6 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     if len(signals) >= 6 and ratio >= 0.68: conf += 3
     if len(signals) < 3: conf -= 5
 
-    # NẾU NHIỄU QUÁ CAO (ít tín hiệu đồng thuận), hạ độ tin cậy
     if ratio < 0.55 and total < 30:
         conf = min(conf, 55)
 
@@ -1252,6 +1289,11 @@ def predict():
         if cau5:
             cau_name, cau_pred, cau_w = cau5
             cau_info = {'name': cau_name, 'pred': cau_pred, 'weight': cau_w}
+            
+        cau7_radar = algo_7p_pattern_radar(results)
+        cau7_info = None
+        if cau7_radar:
+            cau7_info = {'name': cau7_radar[2], 'pred': cau7_radar[0], 'weight': cau7_radar[1]}
 
         p5_signal = algo_5p_alternation(results)
         hash5_signal = algo_hash_deep_5p(results)
@@ -1275,6 +1317,7 @@ def predict():
             'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak, 'total_sessions': len(valid),
             'cau_5phien': cau_info,
+            'cau_7phien_radar': cau7_info,
             'last5_pattern': last5_tx, 'last5_hash_deep': last5_hash,
             'last13_hash': last13_hash,
             'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
@@ -1327,10 +1370,15 @@ def lc79():
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         last = valid[-1]; next_phien = last['phien'] + 1
+        
+        cau7_radar = algo_7p_pattern_radar(results)
+        radar_name = cau7_radar[2] if cau7_radar else "none"
+        
         return jsonify({
-            'Id': 'le minh md5 deep v4 fix', 'Phien': str(next_phien),
+            'Id': 'le minh md5 deep v5 radar', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
+            'Cau_7p_Radar': radar_name,
             'Base_du_doan': base_pred if flipped else None,
             'Auto_flip': flipped, 'Chuoi_thua': loss_streak,
         })
@@ -1374,10 +1422,15 @@ def lc79md5():
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         next_phien = last['phien'] + 1
+        
+        cau7_radar = algo_7p_pattern_radar(results)
+        radar_name = cau7_radar[2] if cau7_radar else "none"
+        
         return jsonify({
             'id': '@cskhleminh', 'phien': str(next_phien),
             'ket_qua': ket_qua_str, 'du_doan': pred,
             'do_tin_cay': conf_str, 'lich_su': lich_su,
+            'cau_7p_radar': radar_name,
             'base_du_doan': base_pred if flipped else None,
             'auto_flip': flipped, 'chuoi_thua': loss_streak,
         })
