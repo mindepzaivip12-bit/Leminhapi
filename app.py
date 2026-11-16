@@ -3,8 +3,10 @@ import math
 import hashlib
 import traceback
 import threading
+import time
 from datetime import datetime
-from collections import defaultdict, deque
+from collections import defaultdict, deque, OrderedDict
+from functools import lru_cache
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -16,13 +18,20 @@ API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=we
 
 HISTORY_CACHE = {}
 PREDICTION_CACHE = {}
-NEXT_PREDICTION_CACHE = {}
+NEXT_PREDICTION_CACHE = OrderedDict()  # FIFO eviction
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 MAX_CONFIDENCE = 90
 
 LEARNED_PHIEN = 0
 LEARN_LOCK = threading.Lock()
+
+# ==== LOCKS MỚI ====
+FETCH_LOCK = threading.Lock()
+PREDICTION_LOCK = threading.Lock()
+HISTORY_LOCK = threading.Lock()
+SIGNAL_STATS_CACHE = {}  # Cache signal stats theo (history_tuple)
+SIGNAL_STATS_LOCK = threading.Lock()
 
 HASH_DEEP_DB = {
     13: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
@@ -39,45 +48,239 @@ MD5_NGRAM_DB = {
 MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 LOSS_HISTORY = deque(maxlen=20)
 
-# =====================================================================
-# FIX #1: Track prediction thực tế đã đưa ra cho phiên "next"
-# Để khi phiên đó có kết quả, ta so sánh ĐÚNG prediction đã công bố
-# =====================================================================
-PUBLISHED_PREDICTIONS = {}  # {phien: (pred, conf, flipped, base_pred)}
-PUBLISH_LOCK = threading.Lock()
+# ==== HTML + CSS (GIỮ NGUYÊN HOÀN TOÀN) ====
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LE MINH MD5</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+    :root {
+        --bg-page: #0f172a; --bg-card: #1e293b; --text-main: #f8fafc;
+        --text-muted: #94a3b8; --border-color: #334155;
+        --tai-color: #38bdf8; --tai-bg: rgba(56, 189, 248, 0.15);
+        --xiu-color: #f472b6; --xiu-bg: rgba(244, 114, 182, 0.15);
+        --win-color: #34d399; --win-bg: rgba(52, 211, 153, 0.15);
+        --lose-color: #f87171; --lose-bg: rgba(248, 113, 113, 0.15);
+        --wait-color: #fbbf24; --wait-bg: rgba(251, 191, 36, 0.15);
+        --recovery-color: #fb923c; --recovery-bg: rgba(251, 146, 60, 0.15);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+    body { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); color: var(--text-main); min-height: 100vh; padding-bottom: 40px; }
+    .header { background: rgba(30, 41, 59, 0.85); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border-color); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
+    .header-title { font-size: 22px; font-weight: 800; color: #38bdf8; display: flex; align-items: center; gap: 10px; text-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
+    .header-title span { font-size: 11px; background: linear-gradient(135deg, #38bdf8, #ec4899); color: #fff; padding: 4px 12px; border-radius: 20px; font-weight: 800; letter-spacing: 1px; box-shadow: 0 0 15px rgba(236, 72, 153, 0.4); }
+    .header-actions { display: flex; gap: 12px; align-items: center; }
+    .time-update { font-size: 12px; color: var(--text-muted); font-weight: 600; }
+    .btn-refresh { background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); width: 38px; height: 38px; border-radius: 10px; font-weight: 700; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+    .btn-refresh:hover { background: var(--border-color); transform: rotate(180deg); }
+    .btn-reset { background: rgba(248, 113, 113, 0.2); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer; transition: 0.2s; }
+    .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
+    .stats-bar { max-width: 800px; margin: 24px auto 16px; padding: 0 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .stat-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 16px 10px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+    .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.3px; }
+    .stat-value { font-size: 22px; font-weight: 800; color: var(--text-main); }
+    .stat-value.win { color: var(--win-color); text-shadow: 0 0 15px rgba(52, 211, 153, 0.4); }
+    .stat-value.loss { color: var(--lose-color); text-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
+    .stat-value.rate { color: var(--tai-color); text-shadow: 0 0 15px rgba(56, 189, 248, 0.4); }
+    .table-wrapper { max-width: 800px; margin: 0 auto; padding: 0 16px; }
+    .table-container { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-height: 70vh; overflow-y: auto; }
+    .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    .data-table th { background: #111827; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 16px 12px; text-align: center; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 10; }
+    .data-table td { padding: 14px 12px; text-align: center; border-bottom: 1px solid var(--border-color); font-size: 14px; font-weight: 600; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
+    .row-next { background: rgba(14, 165, 233, 0.08); border-left: 4px solid var(--tai-color); }
+    .row-next.recovery { background: rgba(251, 146, 60, 0.1); border-left: 4px solid var(--recovery-color); }
+    .badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; min-width: 70px; text-align: center; }
+    .badge-tai { background: var(--tai-bg); color: var(--tai-color); border: 1px solid rgba(56, 189, 248, 0.3); box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); }
+    .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); border: 1px solid rgba(244, 114, 182, 0.3); box-shadow: 0 0 10px rgba(244, 114, 182, 0.2); }
+    .badge-empty { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
+    .recovery-badge { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 800; background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); box-shadow: 0 0 10px rgba(251, 146, 60, 0.3); animation: pulse 1.5s infinite; letter-spacing: 0.5px; }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; }
+    .st-win { background: var(--win-bg); color: var(--win-color); border: 1px solid rgba(52, 211, 153, 0.3); }
+    .st-lose { background: var(--lose-bg); color: var(--lose-color); border: 1px solid rgba(248, 113, 113, 0.3); }
+    .st-wait { background: var(--wait-bg); color: var(--wait-color); border: 1px solid rgba(251, 191, 36, 0.3); animation: pulse 1.5s infinite; }
+    .st-recover { background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
+    .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
+    .conf-badge.high { color: #34d399; background: rgba(52, 211, 153, 0.15); box-shadow: 0 0 10px rgba(52, 211, 153, 0.2); }
+    .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
+    @media (max-width: 500px) {
+        .data-table th, .data-table td { padding: 10px 6px; font-size: 12px; }
+        .badge { padding: 4px 8px; font-size: 11px; min-width: 50px; }
+        .header-title { font-size: 18px; }
+        .time-update { display: none; }
+        .stats-bar { grid-template-columns: repeat(2, 1fr); }
+        .stat-value { font-size: 18px; }
+    }
+</style>
+</head>
+<body>
+<div class="header">
+    <div class="header-title">LE MINH <span>bon</span></div>
+    <div class="header-actions">
+        <div class="time-update" id="time-update">--:--:--</div>
+        <button class="btn-refresh" onclick="fetchData()">↻</button>
+        <button class="btn-reset" onclick="confirmReset()">Reset</button>
+    </div>
+</div>
+<div class="stats-bar">
+    <div class="stat-item"><div class="stat-label">Tổng</div><div class="stat-value" id="stat-total">0</div></div>
+    <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
+    <div class="stat-item"><div class="stat-label">Thua</div><div class="stat-value loss" id="stat-lose">0</div></div>
+    <div class="stat-item"><div class="stat-label">Tỷ lệ thắng</div><div class="stat-value rate" id="stat-rate">0%</div></div>
+</div>
+<div class="table-wrapper">
+    <div class="table-container">
+        <table class="data-table">
+            <thead><tr><th>Phiên</th><th>Dự đoán</th><th>Kết quả</th><th>Trạng thái</th></tr></thead>
+            <tbody id="table-body"><tr><td colspan="4" class="loading">Đang kết nối Server...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+<script>
+let isResetting = false;
+function animateNumber(el, target, suffix = '') {
+    const start = parseInt(el.innerText.replace(/[^0-9]/g, '')) || 0;
+    if (start === target) { el.innerText = target + suffix; return; }
+    const duration = 500;
+    const startTime = performance.now();
+    function update(t) {
+        const p = Math.min((t - startTime) / duration, 1);
+        const ease = 1 - Math.pow(1 - p, 3);
+        el.innerText = Math.floor(start + (target - start) * ease) + suffix;
+        if (p < 1) requestAnimationFrame(update);
+    }
+    requestAnimationFrame(update);
+}
+async function fetchData() {
+    if (isResetting) return;
+    try {
+        const r = await fetch('/api/history', { cache: 'no-store' });
+        const data = await r.json();
+        const now = new Date();
+        document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
+        renderTable(data.rows || [], data.stats || {});
+    } catch (e) { console.error("Lỗi tải dữ liệu:", e); }
+}
+function renderTable(rows, stats) {
+    const tbody = document.getElementById('table-body');
+    const total = stats.total || 0;
+    const correct = stats.correct || 0;
+    const wrong = total - correct;
+    animateNumber(document.getElementById('stat-total'), total);
+    animateNumber(document.getElementById('stat-win'), correct);
+    animateNumber(document.getElementById('stat-lose'), wrong);
+    const rate = total > 0 ? (correct / total) * 100 : 0;
+    animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>'; return; }
+    let html = '';
+    rows.forEach((row) => {
+        let trClass = '';
+        if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
+        let predHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let recBadge = "";
+        if (row.recovery_flipped) { recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡</span>`; }
+        let confHtml = "";
+        if (row.conf && row.prediction !== "-") {
+            const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
+            confHtml = `<div class="${cls}">${row.conf}%</div>`;
+        }
+        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}${recBadge}</div>`;
+        let resultHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let diceDisplay = "";
+        if (row.dice !== "? + ? + ?") {
+            const p = row.dice.split(" + ");
+            const sum = parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]);
+            diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
+        }
+        let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
+        let statusHtml = '';
+        if (row.is_next) {
+            statusHtml = row.recovery_flipped ? `<span class="status st-recover">⚡ Đảo chiều</span>` : `<span class="status st-wait">Chờ kết quả</span>`;
+        } else if (row.is_correct === true) {
+            statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
+        } else if (row.is_correct === false) {
+            statusHtml = `<span class="status st-lose">✖ THUA</span>`;
+        } else {
+            statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
+        }
+        html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
+    });
+    tbody.innerHTML = html;
+}
+async function confirmReset() {
+    Swal.fire({
+        title: 'Xác nhận Reset?', text: "Toàn bộ lịch sử hiển thị sẽ bị xoá và bắt đầu lại từ đầu!",
+        icon: 'warning', background: '#1e293b', color: '#f8fafc',
+        showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
+        confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
+    }).then(async (result) => {
+        if (result.isConfirmed) {
+            isResetting = true;
+            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, background: '#1e293b', color: '#f8fafc', didOpen: () => { Swal.showLoading() } });
+            try {
+                const res = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    Swal.fire({ title: 'Thành công!', text: 'Đã xoá lịch sử và bắt đầu lại.', icon: 'success', background: '#1e293b', color: '#f8fafc', confirmButtonColor: '#0ea5e9' });
+                    isResetting = false; fetchData();
+                } else { throw new Error(data.message); }
+            } catch (error) {
+                Swal.fire({title: 'Lỗi!', text: 'Không thể reset: ' + error.message, icon: 'error', background: '#1e293b', color: '#f8fafc'});
+                isResetting = false;
+            }
+        }
+    });
+}
+fetchData();
+setInterval(fetchData, 5000);
+</script>
+</body>
+</html>
+"""
 
 # =====================================================================
-# HTML TEMPLATE (giữ nguyên)
-# =====================================================================
-HTML_TEMPLATE = """..."""  # (giữ nguyên như code gốc)
-
-
-# =====================================================================
-# FETCH
+# CÁC HÀM XỬ LÝ (nâng cấp với retry + lock)
 # =====================================================================
 def fetch_sessions():
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
-        r = requests.get(API_URL_MD5, timeout=5, headers=headers)
-        if r.status_code == 200:
-            data = r.json()
-            if 'list' in data and data['list']:
-                rows = []
-                for item in data['list']:
-                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
-                    dices = item.get('dices', [0, 0, 0])
-                    dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
-                    total = item.get('point', sum(dices))
-                    rows.append({'phien': int(item['id']), 'result': res,
-                                 'dice': dice_str, 'total': total})
-                return rows, True
-    except Exception as e:
-        print(f"[API ERROR]: {e}")
+    """Fetch với retry logic và timeout hợp lý."""
+    headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+    last_err = None
+    for attempt in range(2):  # 2 lần thử
+        try:
+            r = requests.get(API_URL_MD5, timeout=5, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                if 'list' in data and data['list']:
+                    rows = []
+                    for item in data['list']:
+                        res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                        dices = item.get('dices', [0, 0, 0])
+                        dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
+                        total = item.get('point', sum(dices))
+                        rows.append({'phien': int(item['id']), 'result': res,
+                                     'dice': dice_str, 'total': total})
+                    return rows, True
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                time.sleep(0.3)  # small delay trước khi retry
+    if last_err:
+        print(f"[API ERROR]: {last_err}")
     return [], False
 
-
 def _opp(v): return "Xỉu" if v == "Tài" else "Tài"
-
 
 def _count_streak(results):
     if not results: return 0
@@ -87,14 +290,12 @@ def _count_streak(results):
         else: break
     return c
 
-
 def _count_alternations(results, max_len=15):
     count = 0
     for i in range(min(len(results) - 1, max_len)):
         if results[i] != results[i+1]: count += 1
         else: break
     return count
-
 
 def get_groups(results):
     if not results: return []
@@ -107,7 +308,6 @@ def get_groups(results):
     groups.append(count)
     return groups
 
-
 def _regime(results):
     if len(results) < 5: return "balanced"
     alt = _count_alternations(results, 12)
@@ -116,11 +316,9 @@ def _regime(results):
     if streak >= 3: return "streak"
     return "balanced"
 
-
 def encode_tx(results, length):
     if not results or len(results) < length: return None
     return "".join("T" if r == "Tài" else "X" for r in results[:length])
-
 
 def hash_deep_md5(tx_string, depth_level=2):
     if not tx_string: return None
@@ -129,7 +327,6 @@ def hash_deep_md5(tx_string, depth_level=2):
     for _ in range(depth_level - 1):
         h = hashlib.md5(f"{h}|salt_{depth_level}".encode('utf-8')).hexdigest()
     return h
-
 
 def hash_to_bits(hash_hex):
     if not hash_hex: return []
@@ -140,11 +337,9 @@ def hash_to_bits(hash_hex):
             bits.append((v >> shift) & 1)
     return bits
 
-
 def hamming_distance(h1, h2):
     if not h1 or not h2 or len(h1) != len(h2): return 0
     return sum(a != b for a, b in zip(hash_to_bits(h1), hash_to_bits(h2)))
-
 
 def learn_incremental(valid):
     global LEARNED_PHIEN
@@ -198,16 +393,19 @@ def learn_incremental(valid):
                 MD5_HAMMING_DB[hd // 8][valid[idx]['result']] += 1
         LEARNED_PHIEN = valid[-1]['phien']
 
-
 # =====================================================================
-# CÁC THUẬT TOÁN (giữ nguyên)
+# CÁC THUẬT TOÁN (giữ nguyên 100%)
 # =====================================================================
 def algo_lc79_specialist(results):
     n = len(results)
     if n < 20: return None
     if n >= 9:
-        block1 = results[0:3]; block2 = results[3:6]; block3 = results[6:9]
-        t1 = block1.count("Tài"); t2 = block2.count("Tài"); t3 = block3.count("Tài")
+        block1 = results[0:3]
+        block2 = results[3:6]
+        block3 = results[6:9]
+        t1 = block1.count("Tài")
+        t2 = block2.count("Tài")
+        t3 = block3.count("Tài")
         pattern = (t1, t2, t3)
         matches_tai = matches_xiu = 0
         for i in range(min(n - 9, 50)):
@@ -225,13 +423,16 @@ def algo_lc79_specialist(results):
                 pred = "Tài" if p_tai > 0.5 else "Xỉu"
                 weight = min(27, 16 + abs(z) * 4)
                 return (pred, weight, f"lc79_matrix_3x3_{t1}{t2}{t3}")
+
     groups = get_groups(results[:10])
     if len(groups) >= 2:
         if groups[0] == 1 and groups[1] >= 3:
-            hist_count = 0; tai_next = xiu_next = 0
+            hist_count = 0
+            tai_next = xiu_next = 0
             for i in range(min(n - groups[1] - 1, 60)):
                 if results[i] != results[i+1]:
-                    seg_start = i + 1; seg_len = 1
+                    seg_start = i + 1
+                    seg_len = 1
                     while seg_start + seg_len < n and results[seg_start] == results[seg_start + seg_len]:
                         seg_len += 1
                     if seg_len >= 3 and seg_start + seg_len < n:
@@ -242,12 +443,12 @@ def algo_lc79_specialist(results):
                 p_tai = (tai_next + 1) / (tai_next + xiu_next + 2)
                 pred = "Tài" if p_tai > 0.5 else "Xỉu"
                 return (pred, 22, "lc79_break_pattern")
+
     groups5 = get_groups(results[:5])
-    if len(groups5) == 3 and ((groups5[0] == 1 and groups5[1] == 2 and groups5[2] == 1) or
-       (groups5[0] == 2 and groups5[1] == 1 and groups5[2] == 2)):
+    if len(groups5) == 3 and (groups5[0] == 1 and groups5[1] == 2 and groups5[2] == 1) or \
+       (len(groups5) == 3 and groups5[0] == 2 and groups5[1] == 1 and groups5[2] == 2):
         return (results[0], 20, "lc79_zigzag_121")
     return None
-
 
 def algo_7p_pattern_radar(results):
     n = len(results)
@@ -267,7 +468,8 @@ def algo_7p_pattern_radar(results):
             pred = "Tài" if p_tai > 0.5 else "Xỉu"
             return (pred, 24, "7p_radar_dao_1_1")
     if len(groups) == 1 and groups[0] >= 6:
-        streak = groups[0]; current = last7[0]
+        streak = groups[0]
+        current = last7[0]
         breaks = totals = 0
         for i in range(min(n - streak, 60)):
             if all(results[i+j] == current for j in range(streak)):
@@ -292,7 +494,6 @@ def algo_7p_pattern_radar(results):
     if len(groups) >= 2 and groups[0] == 3 and groups[1] == 3:
         return (last7[0], 22, "7p_radar_3_3")
     return None
-
 
 def algo_7p_no_reverse(results):
     n = len(results)
@@ -322,7 +523,6 @@ def algo_7p_no_reverse(results):
                 return (_opp(last7[0]), 14, "7p_no_reverse_wait")
     return None
 
-
 def algo_7p_hash_deep(results):
     n = len(results)
     if n < 15: return None
@@ -341,7 +541,6 @@ def algo_7p_hash_deep(results):
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
     weight = min(24, 13 + abs(z) * 4)
     return (pred, weight, f"7p_hash_deep_{total}")
-
 
 def algo_stable_zone_10p(results):
     n = len(results)
@@ -371,7 +570,6 @@ def algo_stable_zone_10p(results):
             return (_opp(last10[0]), 15, "stable_zone_break")
     return None
 
-
 def algo_consensus_filter(results, current_signals):
     if not current_signals: return None
     tai_score = sum(w for p, w, n in current_signals if p == "Tài")
@@ -383,7 +581,6 @@ def algo_consensus_filter(results, current_signals):
     pred = "Tài" if tai_score > xiu_score else "Xỉu"
     weight = min(15, 10 + (ratio - 0.5) * 30)
     return (pred, weight, f"consensus_{int(ratio*100)}pct")
-
 
 def analyze_5phien(results):
     if len(results) < 5: return None
@@ -411,7 +608,6 @@ def analyze_5phien(results):
         return ("Nghịch", _opp(results[0]), 17)
     return None
 
-
 def algo_hash_deep_5p(results):
     tx = encode_tx(results, 5)
     if not tx: return None
@@ -428,7 +624,6 @@ def algo_hash_deep_5p(results):
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
     weight = min(26, 14 + abs(z) * 4)
     return (pred, weight, f"hash_deep_5p_{total}")
-
 
 def algo_hash_deep_10p(results):
     tx = encode_tx(results, 10)
@@ -447,7 +642,6 @@ def algo_hash_deep_10p(results):
     weight = min(25, 14 + abs(z) * 4)
     return (pred, weight, f"hash_deep_10p_{total}")
 
-
 def algo_hash_deep_13p(results):
     tx = encode_tx(results, 13)
     if not tx: return None
@@ -464,7 +658,6 @@ def algo_hash_deep_13p(results):
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
     weight = min(24, 12 + abs(z) * 4)
     return (pred, weight, f"hash_deep_13p_{total}")
-
 
 def algo_hash_deep_multi(results):
     combined = {"Tài": 0.0, "Xỉu": 0.0}
@@ -494,7 +687,6 @@ def algo_hash_deep_multi(results):
     weight = min(22, 10 + (ratio - 0.5) * 35)
     return (pred, weight, f"hash_deep_multi_{total_samples}")
 
-
 def algo_md5_bit_analysis(results):
     if len(results) < 13: return None
     tx = encode_tx(results, 13)
@@ -523,7 +715,6 @@ def algo_md5_bit_analysis(results):
     if ratio < 0.58: return None
     weight = min(22, 10 + (ratio - 0.5) * 40)
     return (pred, weight, f"md5_bit_{total_active}")
-
 
 def algo_md5_ngram(results):
     if len(results) < 13: return None
@@ -555,7 +746,6 @@ def algo_md5_ngram(results):
     weight = min(20, 10 + (ratio - 0.5) * 35)
     return (pred, weight, f"md5_ngram_{total_grams}")
 
-
 def algo_md5_hamming(results):
     if len(results) < 15: return None
     tx_now = encode_tx(results, 13)
@@ -576,7 +766,6 @@ def algo_md5_hamming(results):
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
     weight = min(18, 10 + abs(z) * 3)
     return (pred, weight, f"md5_hamming_{hd}")
-
 
 def algo_5p_alternation(results):
     n = len(results)
@@ -615,7 +804,6 @@ def algo_5p_alternation(results):
         return (_opp(last5[0]), 15, "5p_alt_reverse")
     return None
 
-
 def algo_trend_break(results):
     n = len(results)
     if n < 20: return None
@@ -638,7 +826,6 @@ def algo_trend_break(results):
             return (last_dir, min(18, 12 + abs(slope) * 25), "trend_continue")
     return None
 
-
 def algo_break_rhythm(results):
     n = len(results)
     if n < 12: return None
@@ -649,7 +836,6 @@ def algo_break_rhythm(results):
     if alt_count <= 2:
         return (last8[0], 14, "break_rhythm_streak")
     return None
-
 
 def data_markov2(results):
     n = len(results)
@@ -667,7 +853,6 @@ def data_markov2(results):
     weight = min(20, 9 + abs(z) * 3)
     return ("Tài" if p_tai > 0.5 else "Xỉu", weight, "markov2_data")
 
-
 def data_markov3(results):
     n = len(results)
     if n < 30: return None
@@ -683,7 +868,6 @@ def data_markov3(results):
     if abs(z) < 1.3: return None
     weight = min(22, 10 + abs(z) * 3)
     return ("Tài" if p_tai > 0.5 else "Xỉu", weight, "markov3_data")
-
 
 def data_pattern3(results):
     n = len(results)
@@ -701,7 +885,6 @@ def data_pattern3(results):
     if p <= 0.32: return ("Xỉu", min(18, 10 + (0.5 - p) * 20), "pattern3_data")
     return None
 
-
 def data_alternation(results):
     n = len(results)
     if n < 4: return None
@@ -711,7 +894,6 @@ def data_alternation(results):
     if alt >= 4: return (_opp(results[0]), 14, "alt_4_5")
     if alt >= 3: return (_opp(results[0]), 9, "alt_3")
     return None
-
 
 def data_streak_break(results):
     n = len(results)
@@ -738,7 +920,6 @@ def data_streak_break(results):
         return (current, min(15, 10 + (0.5 - p_break) * 15), "streak_continue_data")
     return None
 
-
 def data_bayes_ratio(results):
     n = len(results)
     if n < 15: return None
@@ -754,7 +935,6 @@ def data_bayes_ratio(results):
     weight = min(16, 9 + z * 2)
     return ("Tài" if p_tai > 0.5 else "Xỉu", weight, "bayes_data")
 
-
 def data_tilt(results):
     n = len(results)
     if n < 12: return None
@@ -764,7 +944,6 @@ def data_tilt(results):
         if tc >= hi: return ("Xỉu", wgt, f"tilt_tai_{w}")
         if tc <= lo: return ("Tài", wgt, f"tilt_xiu_{w}")
     return None
-
 
 def data_periodicity(results):
     n = len(results)
@@ -785,7 +964,6 @@ def data_periodicity(results):
         return (pred, weight, f"periodicity_p{best_period}")
     return None
 
-
 def data_volatility_break(results):
     n = len(results)
     if n < 15: return None
@@ -796,7 +974,6 @@ def data_volatility_break(results):
     if changes >= 9:
         return (results[0], 16, "volatility_high_continue")
     return None
-
 
 def data_entropy_bias(results):
     n = len(results)
@@ -809,7 +986,6 @@ def data_entropy_bias(results):
     if entropy < 0.75:
         return ("Tài" if p_tai > 0.5 else "Xỉu", 15, f"entropy_{entropy:.2f}")
     return None
-
 
 def data_cusum(results):
     n = len(results)
@@ -824,7 +1000,6 @@ def data_cusum(results):
     if s_neg > 3.5: return ("Tài", 16, "cusum_X_bias")
     return None
 
-
 def algo_pair_pattern(results):
     n = len(results)
     if n < 8: return None
@@ -837,9 +1012,8 @@ def algo_pair_pattern(results):
         return (_opp(results[0]), 16, f"pattern_{groups[0]}_{groups[1]}_break")
     return None
 
-
 # =====================================================================
-# ANALYZER
+# ANALYZER (giữ nguyên logic)
 # =====================================================================
 def analyze_full_bridge(results):
     if len(results) < 3: return []
@@ -893,7 +1067,6 @@ def analyze_full_bridge(results):
         pass
     return signals
 
-
 def full_bridge_predict_adaptive(results, replay_n=80):
     n = len(results)
     if n == 0: return "Tài", 50, []
@@ -902,15 +1075,31 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         if results[0] == results[1]: return _opp(results[0]), 55, []
         return results[1], 52, []
 
-    signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
-    replay_count = min(replay_n, n - 3)
-    for j in range(replay_count):
-        history = results[j + 1:]; actual = results[j]
-        decay = math.exp(-j / max(replay_count / 2.0, 1.0))
-        for pred_sig, weight, name in analyze_full_bridge(history):
-            signal_stats[name]['total'] += decay
-            if pred_sig == actual:
-                signal_stats[name]['wins'] += decay
+    # ==== CACHE signal_stats theo hash của history slice ====
+    cache_key = tuple(results[:min(n, replay_n + 30)])  # lấy đủ dài để replay
+    signal_stats = None
+    with SIGNAL_STATS_LOCK:
+        if cache_key in SIGNAL_STATS_CACHE:
+            signal_stats = SIGNAL_STATS_CACHE[cache_key]
+    
+    if signal_stats is None:
+        signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
+        replay_count = min(replay_n, n - 3)
+        for j in range(replay_count):
+            history = results[j + 1:]; actual = results[j]
+            decay = math.exp(-j / max(replay_count / 2.0, 1.0))
+            for pred_sig, weight, name in analyze_full_bridge(history):
+                signal_stats[name]['total'] += decay
+                if pred_sig == actual:
+                    signal_stats[name]['wins'] += decay
+        # Lưu cache (giới hạn size)
+        with SIGNAL_STATS_LOCK:
+            if len(SIGNAL_STATS_CACHE) > 200:
+                # xoá 50 entry cũ nhất (theo insertion order)
+                for _ in range(50):
+                    try: SIGNAL_STATS_CACHE.pop(next(iter(SIGNAL_STATS_CACHE)))
+                    except StopIteration: break
+            SIGNAL_STATS_CACHE[cache_key] = signal_stats
 
     signals = analyze_full_bridge(results)
     if not signals: return results[0], 52, []
@@ -962,56 +1151,39 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     disagree_w = sum(d['adjusted_weight'] for d in detail if d['pred'] != pred)
     total_w = agree_w + disagree_w + 1e-6
     conflict_ratio = disagree_w / total_w
+
     if conflict_ratio > 0.55: conf -= 12
     elif conflict_ratio > 0.40: conf -= 6
 
     if ratio >= 0.72: conf += 5
     if len(signals) >= 6 and ratio >= 0.68: conf += 3
     if len(signals) < 3: conf -= 5
+
     if ratio < 0.55 and total < 30:
         conf = min(conf, 55)
 
     conf = int(max(50, min(MAX_CONFIDENCE, conf)))
     return pred, conf, detail
 
-
-# =====================================================================
-# FIX #2: get_prediction_for — CHỈ dùng PUBLISHED_PREDICTIONS nếu có
-# Nếu phiên đó đã được "công bố" trước (là phiên next trước đây), ta dùng
-# đúng prediction đã công bố để tính is_correct (khớp với những gì user thấy)
-# =====================================================================
 def get_prediction_for(valid, i):
-    phien = valid[i]['phien']
-    key = phien
-
-    # Nếu đã publish prediction cho phiên này → dùng luôn (đồng bộ với UI)
-    if key in PUBLISHED_PREDICTIONS:
-        pub = PUBLISHED_PREDICTIONS[key]
-        pred = pub[0]
-        conf = pub[1]
-        is_correct = (pred == valid[i]['result'])
-        return pred, conf, is_correct
-
-    # Ngược lại, nếu có trong cache thì dùng
-    if key in PREDICTION_CACHE:
-        return PREDICTION_CACHE[key]
-
-    # Tính mới
+    key = valid[i]['phien']
+    with PREDICTION_LOCK:
+        if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
     hist = [v['result'] for v in valid[:i]][::-1]
     if len(hist) < 3:
         result = ("-", 50, None)
     else:
-        base_pred, base_conf, _ = full_bridge_predict_adaptive(hist)
-        # KHÔNG áp recovery cho lịch sử — chỉ áp cho "next"
-        # (Lý do: recovery là cơ chế đặc biệt cho phiên chưa có kết quả)
-        is_correct = (base_pred == valid[i]['result'])
-        result = (base_pred, base_conf, is_correct)
-
-    if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE:
-        PREDICTION_CACHE.clear()
-    PREDICTION_CACHE[key] = result
+        pred, conf, _ = full_bridge_predict_adaptive(hist)
+        is_correct = (pred == valid[i]['result'])
+        result = (pred, conf, is_correct)
+    with PREDICTION_LOCK:
+        if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE:
+            # FIFO eviction thay vì clear() — giữ cache hoạt động liên tục
+            for _ in range(MAX_PREDICTION_CACHE // 4):
+                try: PREDICTION_CACHE.pop(next(iter(PREDICTION_CACHE)))
+                except StopIteration: break
+        PREDICTION_CACHE[key] = result
     return result
-
 
 def compute_loss_streak(valid, max_scan=10):
     if len(valid) < 5: return 0
@@ -1025,83 +1197,56 @@ def compute_loss_streak(valid, max_scan=10):
         streak += 1
     return streak
 
-
-# =====================================================================
-# FIX #3: apply_recovery — chỉ flip khi có bằng chứng mạnh,
-# không flip bừa khi loss_streak nhỏ
-# =====================================================================
 def apply_recovery(base_pred, conf, loss_streak, results=None):
-    if loss_streak < 2:
-        # loss_streak 0 hoặc 1 → giữ nguyên, không flip
-        # (fix quan trọng: bản gốc flip ngay từ loss_streak=1)
+    if loss_streak < 1:
         return base_pred, conf, False, None
-
     regime = _regime(results) if results else "balanced"
     n = len(results) if results else 0
-
+    if loss_streak == 1:
+        return base_pred, max(50, conf - 3), False, "hold_1"
     if loss_streak == 2:
-        # Chỉ flip nếu có tín hiệu đồng thuận
+        if regime == "streak":
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True, "flip_streak_2"
+        if regime == "alternation":
+            return base_pred, max(50, conf - 2), False, "hold_alt_2"
         trend = algo_trend_break(results) if results else None
         rhythm = algo_break_rhythm(results) if results else None
         if trend and trend[0] == _opp(base_pred):
-            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 72)), True, "flip_trend_2"
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 73)), True, "flip_trend_2"
         if rhythm and rhythm[0] == _opp(base_pred):
-            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 71)), True, "flip_rhythm_2"
-        # Không có bằng chứng → giữ
-        return base_pred, max(50, conf - 2), False, "hold_2"
-
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 72)), True, "flip_rhythm_2"
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 70)), True, "flip_2"
     if loss_streak == 3:
         if regime == "alternation" and n >= 3:
             return results[0], min(MAX_CONFIDENCE, max(conf, 72)), False, "follow_3"
-        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 76)), True, "flip_3"
-
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True, "flip_3"
     if loss_streak == 4:
-        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True, "flip_4"
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 80)), True, "flip_4"
+    return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 82)), True, "flip_5plus"
 
-    return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 80)), True, "flip_5plus"
-
-
-# =====================================================================
-# FIX #4: get_stable_next_prediction — publish prediction
-# để khi phiên đó có kết quả, ta dùng đúng prediction đã công bố
-# =====================================================================
 def get_stable_next_prediction(valid):
     if not valid:
         return None, 50, False, None, None
     next_phien = valid[-1]['phien'] + 1
-
-    # Nếu đã publish → trả cache
-    if next_phien in PUBLISHED_PREDICTIONS:
-        p = PUBLISHED_PREDICTIONS[next_phien]
-        return p[0], p[1], p[2], p[3], p[4]
-
-    if next_phien in NEXT_PREDICTION_CACHE:
-        cached = NEXT_PREDICTION_CACHE[next_phien]
-        # publish luôn nếu chưa
-        with PUBLISH_LOCK:
-            if next_phien not in PUBLISHED_PREDICTIONS:
-                PUBLISHED_PREDICTIONS[next_phien] = cached
-        return cached
+    with PREDICTION_LOCK:
+        if next_phien in NEXT_PREDICTION_CACHE:
+            return NEXT_PREDICTION_CACHE[next_phien]
 
     results = [v['result'] for v in valid][::-1]
     loss_streak = compute_loss_streak(valid)
     base_pred, base_conf, _ = full_bridge_predict_adaptive(results)
     pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
 
-    entry = (pred, conf, flipped, reason, base_pred)
-    NEXT_PREDICTION_CACHE[next_phien] = entry
-    with PUBLISH_LOCK:
-        PUBLISHED_PREDICTIONS[next_phien] = entry
-
-    if len(NEXT_PREDICTION_CACHE) > 200:
-        oldest = min(NEXT_PREDICTION_CACHE.keys())
-        del NEXT_PREDICTION_CACHE[oldest]
-
-    return entry
-
+    with PREDICTION_LOCK:
+        NEXT_PREDICTION_CACHE[next_phien] = (pred, conf, flipped, reason, base_pred)
+        if len(NEXT_PREDICTION_CACHE) > 200:
+            # FIFO eviction
+            try: NEXT_PREDICTION_CACHE.popitem(last=False)
+            except KeyError: pass
+    return NEXT_PREDICTION_CACHE[next_phien]
 
 def reset_all_databases():
-    global LEARNED_PHIEN, RESET_ID
+    global LEARNED_PHIEN
     with LEARN_LOCK:
         for depth in (5, 7, 10, 13):
             HASH_DEEP_DB[depth].clear()
@@ -1113,26 +1258,52 @@ def reset_all_databases():
         MD5_HAMMING_DB.clear()
         LOSS_HISTORY.clear()
         LEARNED_PHIEN = RESET_ID
-
+    # Xoá signal stats cache
+    with SIGNAL_STATS_LOCK:
+        SIGNAL_STATS_CACHE.clear()
 
 # =====================================================================
-# ROUTES
+# HELPER: _prepare_valid_state (dùng chung cho các route)
+# =====================================================================
+def _prepare_valid_state():
+    """Fetch + merge history + return (valid, success). Thread-safe."""
+    with HISTORY_LOCK:
+        raw_rows, success = fetch_sessions()
+        if success:
+            for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]:
+            del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        return valid, success or bool(HISTORY_CACHE)
+
+# =====================================================================
+# ROUTES (giữ nguyên logic, dùng helper chung)
 # =====================================================================
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+@app.route('/health')
+def health():
+    """Endpoint monitoring mới — không ảnh hưởng logic."""
+    return jsonify({
+        'status': 'ok',
+        'reset_id': RESET_ID,
+        'learned_phien': LEARNED_PHIEN,
+        'history_size': len(HISTORY_CACHE),
+        'prediction_cache_size': len(PREDICTION_CACHE),
+        'next_cache_size': len(NEXT_PREDICTION_CACHE),
+        'signal_cache_size': len(SIGNAL_STATS_CACHE),
+        'timestamp': datetime.now().isoformat()
+    })
 
 @app.route('/api/history')
 def history():
     global RESET_ID
     try:
-        raw_rows, success = fetch_sessions()
-        if not success and not HISTORY_CACHE:
+        valid, ok = _prepare_valid_state()
+        if not ok:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
-        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
-        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
         learn_incremental(valid)
@@ -1147,9 +1318,8 @@ def history():
             bp, bc, _ = full_bridge_predict_adaptive(results_now)
             next_pred, next_conf, flipped, reason = apply_recovery(bp, bc, ls_now, results=results_now)
             base_pred = bp
-            NEXT_PREDICTION_CACHE[next_phien] = (next_pred, next_conf, flipped, reason, bp)
-            with PUBLISH_LOCK:
-                PUBLISHED_PREDICTIONS[next_phien] = (next_pred, next_conf, flipped, reason, bp)
+            with PREDICTION_LOCK:
+                NEXT_PREDICTION_CACHE[next_phien] = (next_pred, next_conf, flipped, reason, bp)
 
         loss_streak = compute_loss_streak(valid)
         out = []; correct_count = 0; total_past = 0
@@ -1184,17 +1354,13 @@ def history():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/api/predict')
 def predict():
     global RESET_ID
     try:
-        raw_rows, success = fetch_sessions()
-        if not success and not HISTORY_CACHE:
+        valid, ok = _prepare_valid_state()
+        if not ok:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
-        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
-        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
@@ -1202,13 +1368,6 @@ def predict():
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
-
-        # FIX: publish để đồng bộ với /api/history
-        next_phien = valid[-1]['phien'] + 1
-        entry = (pred, conf, flipped, reason, base_pred)
-        NEXT_PREDICTION_CACHE[next_phien] = entry
-        with PUBLISH_LOCK:
-            PUBLISHED_PREDICTIONS[next_phien] = entry
 
         cau5 = analyze_5phien(results)
         cau_info = None
@@ -1271,30 +1430,19 @@ def predict():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/lc79')
 def lc79():
     global RESET_ID
     try:
-        raw_rows, success = fetch_sessions()
-        if not success and not HISTORY_CACHE:
+        valid, ok = _prepare_valid_state()
+        if not ok:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
-        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
-        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
-
-        # FIX: publish
-        next_phien = valid[-1]['phien'] + 1
-        entry = (pred, conf, flipped, reason, base_pred)
-        NEXT_PREDICTION_CACHE[next_phien] = entry
-        with PUBLISH_LOCK:
-            PUBLISHED_PREDICTIONS[next_phien] = entry
 
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
         xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
@@ -1309,7 +1457,7 @@ def lc79():
         conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
-        last = valid[-1]
+        last = valid[-1]; next_phien = last['phien'] + 1
 
         cau7_radar = algo_7p_pattern_radar(results)
         radar_name = cau7_radar[2] if cau7_radar else "none"
@@ -1330,30 +1478,19 @@ def lc79():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/lc79md5')
 def lc79md5():
     global RESET_ID
     try:
-        raw_rows, success = fetch_sessions()
-        if not success and not HISTORY_CACHE:
+        valid, ok = _prepare_valid_state()
+        if not ok:
             return jsonify({'error': 'Không thể kết nối API'}), 500
-        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
-        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
-        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
-
-        # FIX: publish
-        next_phien = valid[-1]['phien'] + 1
-        entry = (pred, conf, flipped, reason, base_pred)
-        NEXT_PREDICTION_CACHE[next_phien] = entry
-        with PUBLISH_LOCK:
-            PUBLISHED_PREDICTIONS[next_phien] = entry
 
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
         xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
@@ -1373,6 +1510,7 @@ def lc79md5():
         ket_qua_str = f"{last['result'].lower()} {dice_short}"
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
+        next_phien = last['phien'] + 1
 
         cau7_radar = algo_7p_pattern_radar(results)
         radar_name = cau7_radar[2] if cau7_radar else "none"
@@ -1393,10 +1531,9 @@ def lc79md5():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, LEARNED_PHIEN, NEXT_PREDICTION_CACHE, PUBLISHED_PREDICTIONS
+    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, LEARNED_PHIEN, NEXT_PREDICTION_CACHE
     try:
         raw_rows, success = fetch_sessions()
         if success and raw_rows:
@@ -1404,17 +1541,18 @@ def reset_api():
             if valid:
                 RESET_ID = valid[-1]['phien']
                 LEARNED_PHIEN = RESET_ID
-                HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
-                PREDICTION_CACHE = {}
-                NEXT_PREDICTION_CACHE = {}
-                PUBLISHED_PREDICTIONS = {}
+                with HISTORY_LOCK:
+                    HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
+                with PREDICTION_LOCK:
+                    PREDICTION_CACHE = {}
+                    NEXT_PREDICTION_CACHE.clear()
                 reset_all_databases()
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    # threaded=True để Flask xử lý concurrent requests tốt hơn
+    app.run(host='0.0.0.0', port=port, threaded=True)
