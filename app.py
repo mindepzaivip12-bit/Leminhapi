@@ -378,25 +378,92 @@ def learn_incremental(valid):
         LEARNED_PHIEN = valid[-1]['phien']
 
 # =====================================================================
-# THUẬT TOÁN 7P PATTERN RADAR (ĐẢO/THUẬN/NGHỊCH/1-1/2-2/3-2/2-3)
+# THUẬT TOÁN LC79 CHUYÊN BIỆT
 # =====================================================================
-def algo_7p_pattern_radar(results):
+def algo_lc79_specialist(results):
     """
-    Quét 7 phiên gần nhất để nhận diện cầu:
-    - Đảo: 1-1-1-1 (Đảo liên tục)
-    - Thuận: 7-0 (7 Tài hoặc 7 Xỉu liên tiếp)
-    - Nghịch: Đang bệt dài, chuẩn bị đảo
-    - 1-1: Cầu 1-1 (T-X-T-X)
-    - 2-2: Cầu 2-2 (TT-XX-TT)
-    - 3-2 / 2-3: Cầu 3-2 hoặc 2-3
+    Chuyên phân tích cấu trúc cầu đặc thù của LC79:
+    1. Ma trận 3x3 (9 phiên)
+    2. Bắt nhịp bẻ cầu (Break Pattern)
+    3. Nhận diện cầu 1-2-1, 2-1-2 (Cầu so le)
     """
     n = len(results)
-    if n < 15: return None
+    if n < 20: return None
     
+    # --- 1. PHÂN TÍCH MA TRẬN 3x3 ---
+    if n >= 9:
+        block1 = results[0:3]
+        block2 = results[3:6]
+        block3 = results[6:9]
+        
+        t1 = block1.count("Tài")
+        t2 = block2.count("Tài")
+        t3 = block3.count("Tài")
+        
+        pattern = (t1, t2, t3)
+        
+        # Tìm pattern tương tự trong lịch sử
+        matches_tai = matches_xiu = 0
+        for i in range(min(n - 9, 50)):
+            b1 = results[i:i+3].count("Tài")
+            b2 = results[i+3:i+6].count("Tài")
+            b3 = results[i+6:i+9].count("Tài")
+            if (b1, b2, b3) == pattern:
+                if results[i+9] == "Tài": matches_tai += 1
+                else: matches_xiu += 1
+        
+        total_match = matches_tai + matches_xiu
+        if total_match >= 3:
+            p_tai = (matches_tai + 1) / (total_match + 2)
+            z = (p_tai - 0.5) / math.sqrt(0.25 / (total_match + 2))
+            if abs(z) >= 1.2:
+                pred = "Tài" if p_tai > 0.5 else "Xỉu"
+                weight = min(27, 16 + abs(z) * 4)
+                return (pred, weight, f"lc79_matrix_3x3_{t1}{t2}{t3}")
+
+    # --- 2. BẮT NHỊP BẺ CẦU (BREAK PATTERN) ---
+    groups = get_groups(results[:10])
+    if len(groups) >= 2:
+        # Cầu đang chạy bệt 3-4 phiên, tự nhiên gãy 1 phiên -> bẻ tiếp
+        if groups[0] == 1 and groups[1] >= 3:
+            # Kiểm tra lịch sử: khi có nhịp gãy này, phiên tiếp thường thế nào?
+            hist_count = 0
+            tai_next = xiu_next = 0
+            for i in range(min(n - groups[1] - 1, 60)):
+                if results[i] != results[i+1]:
+                    # Tìm điểm gãy
+                    seg_start = i + 1
+                    seg_len = 1
+                    while seg_start + seg_len < n and results[seg_start] == results[seg_start + seg_len]:
+                        seg_len += 1
+                    if seg_len >= 3 and seg_start + seg_len < n:
+                        hist_count += 1
+                        if results[seg_start + seg_len] == "Tài": tai_next += 1
+                        else: xiu_next += 1
+            
+            if hist_count >= 3:
+                p_tai = (tai_next + 1) / (tai_next + xiu_next + 2)
+                pred = "Tài" if p_tai > 0.5 else "Xỉu"
+                return (pred, 22, "lc79_break_pattern")
+
+    # --- 3. CẦU SO LE 1-2-1 / 2-1-2 ---
+    groups5 = get_groups(results[:5])
+    if len(groups5) == 3 and (groups5[0] == 1 and groups5[1] == 2 and groups5[2] == 1) or \
+       (len(groups5) == 3 and groups5[0] == 2 and groups5[1] == 1 and groups5[2] == 2):
+        # Đang trong cầu so le
+        return (results[0], 20, "lc79_zigzag_121")
+
+    return None
+
+# =====================================================================
+# THUẬT TOÁN 7P PATTERN RADAR
+# =====================================================================
+def algo_7p_pattern_radar(results):
+    n = len(results)
+    if n < 15: return None
     last7 = results[:7]
     groups = get_groups(last7)
     
-    # 1. CẦU ĐẢO (1-1 liên tục)
     alt = sum(1 for i in range(6) if last7[i] != last7[i+1])
     if alt >= 5:
         key7 = tuple(last7)
@@ -410,9 +477,7 @@ def algo_7p_pattern_radar(results):
             pred = "Tài" if p_tai > 0.5 else "Xỉu"
             return (pred, 24, "7p_radar_dao_1_1")
 
-    # 2. CẦU THUẬN (Bệt 6-7 phiên)
     if len(groups) == 1 and groups[0] >= 6:
-        # Kiểm tra lịch sử: bệt dài thì thường gãy hay tiếp?
         streak = groups[0]
         current = last7[0]
         breaks = totals = 0
@@ -428,31 +493,23 @@ def algo_7p_pattern_radar(results):
             else:
                 return (current, 20, f"7p_radar_thuan_{streak}")
 
-    # 3. CẦU NGHỊCH (Vừa gãy bệt, đi ngược)
     if len(groups) >= 2 and groups[0] == 1 and groups[1] >= 3:
         return (last7[0], 22, "7p_radar_nghich")
 
-    # 4. CẦU 2-2
     if len(groups) >= 3 and groups[0] == 2 and groups[1] == 2 and groups[2] == 2:
         return (last7[0], 23, "7p_radar_2_2")
     if len(groups) >= 3 and groups[0] == 2 and groups[1] == 2:
-        # Đang ở nhịp 2-2
         if groups[2] >= 1:
             return (last7[0], 18, "7p_radar_2_2_extend")
 
-    # 5. CẦU 3-2 hoặc 2-3
     if len(groups) >= 3 and ((groups[0] == 3 and groups[1] == 2) or (groups[0] == 2 and groups[1] == 3)):
         return (last7[0], 21, "7p_radar_3_2")
     
-    # 6. CẦU 3-3
     if len(groups) >= 2 and groups[0] == 3 and groups[1] == 3:
         return (last7[0], 22, "7p_radar_3_3")
         
     return None
 
-# =====================================================================
-# THUẬT TOÁN 7P KHÁC
-# =====================================================================
 def algo_7p_no_reverse(results):
     n = len(results)
     if n < 15: return None
@@ -977,9 +1034,9 @@ def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
     
-    # Danh sách thuật toán (Đã chèn Radar 7P)
     for fn in (
-        algo_7p_pattern_radar,  # <-- MỚI: Radar cầu 7 phiên (Đảo/Thuận/Nghịch/1-1/2-2/3-2/2-3)
+        algo_lc79_specialist,   # <-- MỚI: Chuyên gia LC79
+        algo_7p_pattern_radar,
         algo_stable_zone_10p,
         algo_7p_no_reverse,
         algo_7p_hash_deep,
@@ -1060,7 +1117,8 @@ def full_bridge_predict_adaptive(results, replay_n=80):
             acc = 0.5
         accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
         
-        # Ưu tiên cực cao cho Radar 7P và các thuật toán ổn định
+        # Ưu tiên cực cao cho LC79 và Radar 7P
+        if "lc79_" in name: accuracy_mult *= 1.45
         if "7p_pattern_radar" in name: accuracy_mult *= 1.40
         if "stable_zone" in name: accuracy_mult *= 1.30
         if "consensus" in name: accuracy_mult *= 1.20
@@ -1295,6 +1353,11 @@ def predict():
         if cau7_radar:
             cau7_info = {'name': cau7_radar[2], 'pred': cau7_radar[0], 'weight': cau7_radar[1]}
 
+        cau_lc79 = algo_lc79_specialist(results)
+        cau_lc79_info = None
+        if cau_lc79:
+            cau_lc79_info = {'name': cau_lc79[2], 'pred': cau_lc79[0], 'weight': cau_lc79[1]}
+
         p5_signal = algo_5p_alternation(results)
         hash5_signal = algo_hash_deep_5p(results)
         hash10_signal = algo_hash_deep_10p(results)
@@ -1318,6 +1381,7 @@ def predict():
             'loss_streak': loss_streak, 'total_sessions': len(valid),
             'cau_5phien': cau_info,
             'cau_7phien_radar': cau7_info,
+            'cau_lc79': cau_lc79_info,
             'last5_pattern': last5_tx, 'last5_hash_deep': last5_hash,
             'last13_hash': last13_hash,
             'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
@@ -1374,11 +1438,15 @@ def lc79():
         cau7_radar = algo_7p_pattern_radar(results)
         radar_name = cau7_radar[2] if cau7_radar else "none"
         
+        cau_lc79 = algo_lc79_specialist(results)
+        lc79_name = cau_lc79[2] if cau_lc79 else "none"
+        
         return jsonify({
-            'Id': 'le minh md5 deep v5 radar', 'Phien': str(next_phien),
+            'Id': 'le minh md5 deep v6 lc79-special', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
             'Cau_7p_Radar': radar_name,
+            'Cau_LC79': lc79_name,
             'Base_du_doan': base_pred if flipped else None,
             'Auto_flip': flipped, 'Chuoi_thua': loss_streak,
         })
@@ -1426,11 +1494,15 @@ def lc79md5():
         cau7_radar = algo_7p_pattern_radar(results)
         radar_name = cau7_radar[2] if cau7_radar else "none"
         
+        cau_lc79 = algo_lc79_specialist(results)
+        lc79_name = cau_lc79[2] if cau_lc79 else "none"
+        
         return jsonify({
             'id': '@cskhleminh', 'phien': str(next_phien),
             'ket_qua': ket_qua_str, 'du_doan': pred,
             'do_tin_cay': conf_str, 'lich_su': lich_su,
             'cau_7p_radar': radar_name,
+            'cau_lc79': lc79_name,
             'base_du_doan': base_pred if flipped else None,
             'auto_flip': flipped, 'chuoi_thua': loss_streak,
         })
