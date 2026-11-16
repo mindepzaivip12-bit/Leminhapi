@@ -3,11 +3,10 @@ import math
 import hashlib
 import traceback
 import threading
-import time
 from datetime import datetime
-from collections import defaultdict, deque, OrderedDict
+from collections import defaultdict, deque
 import requests
-from flask import Flask, jsonify, request, Response
+from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -17,22 +16,13 @@ API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=we
 
 HISTORY_CACHE = {}
 PREDICTION_CACHE = {}
-NEXT_PREDICTION_CACHE = OrderedDict()
+NEXT_PREDICTION_CACHE = {}
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 MAX_CONFIDENCE = 90
 
 LEARNED_PHIEN = 0
 LEARN_LOCK = threading.Lock()
-
-FETCH_LOCK = threading.Lock()
-PREDICTION_LOCK = threading.Lock()
-HISTORY_LOCK = threading.Lock()
-SIGNAL_STATS_CACHE = {}
-SIGNAL_STATS_LOCK = threading.Lock()
-
-LEARNED_SIGNAL_VERSION = 0
-SIGNAL_VERSION_LOCK = threading.Lock()
 
 HASH_DEEP_DB = {
     13: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
@@ -49,8 +39,9 @@ MD5_NGRAM_DB = {
 MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 LOSS_HISTORY = deque(maxlen=20)
 
-# ==== HTML + CSS ====
-HTML_TEMPLATE = """<!DOCTYPE html>
+# ==== HTML + CSS (GIỮ NGUYÊN) ====
+HTML_TEMPLATE = """
+<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
@@ -123,10 +114,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span>bon</span></div>
+    <div class="header-title">LE MINH <span>MD5</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
-        <button class="btn-refresh" onclick="fetchData()">&#8635;</button>
+        <button class="btn-refresh" onclick="fetchData()">↻</button>
         <button class="btn-reset" onclick="confirmReset()">Reset</button>
     </div>
 </div>
@@ -146,8 +137,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 <script>
 let isResetting = false;
-function animateNumber(el, target, suffix) {
-    suffix = suffix || '';
+function animateNumber(el, target, suffix = '') {
     const start = parseInt(el.innerText.replace(/[^0-9]/g, '')) || 0;
     if (start === target) { el.innerText = target + suffix; return; }
     const duration = 500;
@@ -165,7 +155,6 @@ async function fetchData() {
     try {
         const r = await fetch('/api/history', { cache: 'no-store' });
         const data = await r.json();
-        if (data.error) { console.error('API error:', data.error); return; }
         const now = new Date();
         document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
         renderTable(data.rows || [], data.stats || {});
@@ -183,41 +172,41 @@ function renderTable(rows, stats) {
     animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
     if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>'; return; }
     let html = '';
-    rows.forEach(function(row) {
+    rows.forEach((row) => {
         let trClass = '';
         if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
-        let predHtml = '<span class="badge badge-empty">-</span>';
-        if (row.prediction === "Tài") predHtml = '<span class="badge badge-tai">TÀI</span>';
-        if (row.prediction === "Xỉu") predHtml = '<span class="badge badge-xiu">XỈU</span>';
+        let predHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
         let recBadge = "";
-        if (row.recovery_flipped) { recBadge = '<span class="recovery-badge" title="Auto-flip do thua ' + (row.loss_streak || 0) + ' lần">⚡</span>'; }
+        if (row.recovery_flipped) { recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡</span>`; }
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
             const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
-            confHtml = '<div class="' + cls + '">' + row.conf + '%</div>';
+            confHtml = `<div class="${cls}">${row.conf}%</div>`;
         }
-        let predFull = '<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">' + predHtml + confHtml + recBadge + '</div>';
-        let resultHtml = '<span class="badge badge-empty">-</span>';
-        if (row.result === "Tài") resultHtml = '<span class="badge badge-tai">TÀI</span>';
-        if (row.result === "Xỉu") resultHtml = '<span class="badge badge-xiu">XỈU</span>';
+        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}${recBadge}</div>`;
+        let resultHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
         let diceDisplay = "";
         if (row.dice !== "? + ? + ?") {
             const p = row.dice.split(" + ");
             const sum = parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]);
-            diceDisplay = '<span class="dice-text">' + row.dice + ' (' + sum + ')</span>';
+            diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
         }
-        let resultFull = '<div style="display:flex; flex-direction:column; align-items:center;">' + resultHtml + diceDisplay + '</div>';
+        let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = row.recovery_flipped ? '<span class="status st-recover">⚡ Đảo chiều</span>' : '<span class="status st-wait">Chờ kết quả</span>';
+            statusHtml = row.recovery_flipped ? `<span class="status st-recover">⚡ Đảo chiều</span>` : `<span class="status st-wait">Chờ kết quả</span>`;
         } else if (row.is_correct === true) {
-            statusHtml = '<span class="status st-win">✔ THẮNG</span>';
+            statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
-            statusHtml = '<span class="status st-lose">✖ THUA</span>';
+            statusHtml = `<span class="status st-lose">✖ THUA</span>`;
         } else {
-            statusHtml = '<span class="status" style="color:var(--text-muted)">-</span>';
+            statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
         }
-        html += '<tr ' + trClass + '><td>#' + row.phien + '</td><td>' + predFull + '</td><td>' + resultFull + '</td><td>' + statusHtml + '</td></tr>';
+        html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
     });
     tbody.innerHTML = html;
 }
@@ -227,10 +216,10 @@ async function confirmReset() {
         icon: 'warning', background: '#1e293b', color: '#f8fafc',
         showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
         confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
-    }).then(async function(result) {
+    }).then(async (result) => {
         if (result.isConfirmed) {
             isResetting = true;
-            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, background: '#1e293b', color: '#f8fafc', didOpen: function() { Swal.showLoading(); } });
+            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, background: '#1e293b', color: '#f8fafc', didOpen: () => { Swal.showLoading() } });
             try {
                 const res = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
                 const data = await res.json();
@@ -253,32 +242,26 @@ setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# FETCH
+# CÁC HÀM XỬ LÝ 
 # =====================================================================
 def fetch_sessions():
-    headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
-    last_err = None
-    for attempt in range(2):
-        try:
-            r = requests.get(API_URL_MD5, timeout=5, headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                if 'list' in data and data['list']:
-                    rows = []
-                    for item in data['list']:
-                        res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
-                        dices = item.get('dices', [0, 0, 0])
-                        dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
-                        total = item.get('point', sum(dices))
-                        rows.append({'phien': int(item['id']), 'result': res,
-                                     'dice': dice_str, 'total': total})
-                    return rows, True
-        except Exception as e:
-            last_err = e
-            if attempt == 0:
-                time.sleep(0.3)
-    if last_err:
-        print(f"[API ERROR]: {last_err}")
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+        r = requests.get(API_URL_MD5, timeout=5, headers=headers)
+        if r.status_code == 200:
+            data = r.json()
+            if 'list' in data and data['list']:
+                rows = []
+                for item in data['list']:
+                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                    dices = item.get('dices', [0, 0, 0])
+                    dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
+                    total = item.get('point', sum(dices))
+                    rows.append({'phien': int(item['id']), 'result': res,
+                                 'dice': dice_str, 'total': total})
+                return rows, True
+    except Exception as e:
+        print(f"[API ERROR]: {e}")
     return [], False
 
 def _opp(v): return "Xỉu" if v == "Tài" else "Tài"
@@ -342,13 +325,9 @@ def hamming_distance(h1, h2):
     if not h1 or not h2 or len(h1) != len(h2): return 0
     return sum(a != b for a, b in zip(hash_to_bits(h1), hash_to_bits(h2)))
 
-# =====================================================================
-# LEARN INCREMENTAL
-# =====================================================================
 def learn_incremental(valid):
-    global LEARNED_PHIEN, LEARNED_SIGNAL_VERSION
+    global LEARNED_PHIEN
     if not valid: return
-    db_changed = False
     with LEARN_LOCK:
         new_indices = [idx for idx, v in enumerate(valid) if v['phien'] > LEARNED_PHIEN]
         if not new_indices: return
@@ -364,7 +343,6 @@ def learn_incremental(valid):
                 h = hash_deep_md5(tx, depth_level=2)
                 if not h: continue
                 db[h][valid[idx]['result']] += 1
-                db_changed = True
         if n >= 14:
             hash_cache = {}
             for idx in new_indices:
@@ -383,7 +361,6 @@ def learn_incremental(valid):
                     for start in range(0, len(h) - ng_size + 1):
                         gram = h[start:start + ng_size]
                         MD5_NGRAM_DB[ng_size][gram][valid[idx]['result']] += 1
-                db_changed = True
             for idx in new_indices:
                 if idx < 14 or idx not in hash_cache: continue
                 prev_idx = idx - 1
@@ -399,12 +376,9 @@ def learn_incremental(valid):
                 hd = hamming_distance(hash_cache[idx], h_prev)
                 MD5_HAMMING_DB[hd // 8][valid[idx]['result']] += 1
         LEARNED_PHIEN = valid[-1]['phien']
-    if db_changed:
-        with SIGNAL_VERSION_LOCK:
-            LEARNED_SIGNAL_VERSION += 1
 
 # =====================================================================
-# CÁC THUẬT TOÁN
+# THUẬT TOÁN LC79 CHUYÊN BIỆT
 # =====================================================================
 def algo_lc79_specialist(results):
     n = len(results)
@@ -429,6 +403,7 @@ def algo_lc79_specialist(results):
                 pred = "Tài" if p_tai > 0.5 else "Xỉu"
                 weight = min(27, 16 + abs(z) * 4)
                 return (pred, weight, f"lc79_matrix_3x3_{t1}{t2}{t3}")
+
     groups = get_groups(results[:10])
     if len(groups) >= 2:
         if groups[0] == 1 and groups[1] >= 3:
@@ -446,6 +421,7 @@ def algo_lc79_specialist(results):
                 p_tai = (tai_next + 1) / (tai_next + xiu_next + 2)
                 pred = "Tài" if p_tai > 0.5 else "Xỉu"
                 return (pred, 22, "lc79_break_pattern")
+
     groups5 = get_groups(results[:5])
     if len(groups5) == 3 and (groups5[0] == 1 and groups5[1] == 2 and groups5[2] == 1) or \
        (len(groups5) == 3 and groups5[0] == 2 and groups5[1] == 1 and groups5[2] == 2):
@@ -455,8 +431,7 @@ def algo_lc79_specialist(results):
 def algo_7p_pattern_radar(results):
     n = len(results)
     if n < 15: return None
-    last7 = results[:7]
-    groups = get_groups(last7)
+    last7 = results[:7]; groups = get_groups(last7)
     alt = sum(1 for i in range(6) if last7[i] != last7[i+1])
     if alt >= 5:
         key7 = tuple(last7); tai_next = xiu_next = 0
@@ -473,25 +448,18 @@ def algo_7p_pattern_radar(results):
         for i in range(min(n - streak, 60)):
             if all(results[i+j] == current for j in range(streak)):
                 totals += 1
-                if i + streak < n and results[i+streak] != current:
-                    breaks += 1
+                if i + streak < n and results[i+streak] != current: breaks += 1
         if totals >= 3:
             p_break = (breaks + 1) / (totals + 2)
-            if p_break >= 0.60:
-                return (_opp(current), 25, f"7p_radar_thuan_break_{streak}")
-            else:
-                return (current, 20, f"7p_radar_thuan_{streak}")
-    if len(groups) >= 2 and groups[0] == 1 and groups[1] >= 3:
-        return (last7[0], 22, "7p_radar_nghich")
-    if len(groups) >= 3 and groups[0] == 2 and groups[1] == 2 and groups[2] == 2:
-        return (last7[0], 23, "7p_radar_2_2")
+            if p_break >= 0.60: return (_opp(current), 25, f"7p_radar_thuan_break_{streak}")
+            else: return (current, 20, f"7p_radar_thuan_{streak}")
+    if len(groups) >= 2 and groups[0] == 1 and groups[1] >= 3: return (last7[0], 22, "7p_radar_nghich")
+    if len(groups) >= 3 and groups[0] == 2 and groups[1] == 2 and groups[2] == 2: return (last7[0], 23, "7p_radar_2_2")
     if len(groups) >= 3 and groups[0] == 2 and groups[1] == 2:
-        if groups[2] >= 1:
-            return (last7[0], 18, "7p_radar_2_2_extend")
+        if groups[2] >= 1: return (last7[0], 18, "7p_radar_2_2_extend")
     if len(groups) >= 3 and ((groups[0] == 3 and groups[1] == 2) or (groups[0] == 2 and groups[1] == 3)):
         return (last7[0], 21, "7p_radar_3_2")
-    if len(groups) >= 2 and groups[0] == 3 and groups[1] == 3:
-        return (last7[0], 22, "7p_radar_3_3")
+    if len(groups) >= 2 and groups[0] == 3 and groups[1] == 3: return (last7[0], 22, "7p_radar_3_3")
     return None
 
 def algo_7p_no_reverse(results):
@@ -511,14 +479,11 @@ def algo_7p_no_reverse(results):
             z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
             if abs(z) >= 1.0:
                 pred = "Tài" if p_tai > 0.5 else "Xỉu"
-                weight = min(25, 14 + abs(z) * 4)
-                return (pred, weight, f"7p_no_reverse_{alternations}alt")
+                return (pred, min(25, 14 + abs(z) * 4), f"7p_no_reverse_{alternations}alt")
         groups = get_groups(results[:7])
         if len(groups) >= 2:
-            if groups[0] < groups[1]:
-                return (last7[0], 16, "7p_no_reverse_extend")
-            else:
-                return (_opp(last7[0]), 14, "7p_no_reverse_wait")
+            if groups[0] < groups[1]: return (last7[0], 16, "7p_no_reverse_extend")
+            else: return (_opp(last7[0]), 14, "7p_no_reverse_wait")
     return None
 
 def algo_7p_hash_deep(results):
@@ -527,17 +492,14 @@ def algo_7p_hash_deep(results):
     tx = encode_tx(results, 7)
     if not tx: return None
     h = hash_deep_md5(tx, depth_level=3)
-    if not h: return None
-    db = HASH_DEEP_DB[7]
-    if h not in db: return None
-    counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
+    if not h or h not in HASH_DEEP_DB[7]: return None
+    counts = HASH_DEEP_DB[7][h]; total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
     p_tai = (counts["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
     if abs(z) < 1.1: return None
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
-    weight = min(24, 13 + abs(z) * 4)
-    return (pred, weight, f"7p_hash_deep_{total}")
+    return (pred, min(24, 13 + abs(z) * 4), f"7p_hash_deep_{total}")
 
 def algo_stable_zone_10p(results):
     n = len(results)
@@ -556,14 +518,11 @@ def algo_stable_zone_10p(results):
         z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
         if abs(z) >= 0.9:
             pred = "Tài" if p_tai > 0.5 else "Xỉu"
-            weight = min(26, 15 + abs(z) * 4)
-            return (pred, weight, f"stable_zone_10p")
+            return (pred, min(26, 15 + abs(z) * 4), "stable_zone_10p")
     groups = get_groups(last10)
     if len(groups) >= 2:
-        if groups[0] < groups[1]:
-            return (last10[0], 16, "stable_zone_extend")
-        else:
-            return (_opp(last10[0]), 15, "stable_zone_break")
+        if groups[0] < groups[1]: return (last10[0], 16, "stable_zone_extend")
+        else: return (_opp(last10[0]), 15, "stable_zone_break")
     return None
 
 def algo_consensus_filter(results, current_signals):
@@ -575,8 +534,7 @@ def algo_consensus_filter(results, current_signals):
     ratio = max(tai_score, xiu_score) / total
     if ratio < 0.55: return None
     pred = "Tài" if tai_score > xiu_score else "Xỉu"
-    weight = min(15, 10 + (ratio - 0.5) * 30)
-    return (pred, weight, f"consensus_{int(ratio*100)}pct")
+    return (pred, min(15, 10 + (ratio - 0.5) * 30), f"consensus_{int(ratio*100)}pct")
 
 def analyze_5phien(results):
     if len(results) < 5: return None
@@ -584,8 +542,7 @@ def analyze_5phien(results):
     alt = sum(1 for i in range(4) if last5[i] != last5[i+1])
     if alt == 4: return ("Đảo", _opp(last5[0]), 20)
     if alt == 0:
-        n = len(results)
-        same_streak_cont = same_streak_break = 0
+        n = len(results); same_streak_cont = same_streak_break = 0
         for i in range(min(n - 5, 40)):
             if results[i:i+5] == last5:
                 if results[i+5] == last5[0]: same_streak_cont += 1
@@ -608,49 +565,40 @@ def algo_hash_deep_5p(results):
     tx = encode_tx(results, 5)
     if not tx: return None
     h = hash_deep_md5(tx, depth_level=3)
-    if not h: return None
-    db = HASH_DEEP_DB[5]
-    if h not in db: return None
-    counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
+    if not h or h not in HASH_DEEP_DB[5]: return None
+    counts = HASH_DEEP_DB[5][h]; total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
     p_tai = (counts["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
     if abs(z) < 0.9: return None
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
-    weight = min(26, 14 + abs(z) * 4)
-    return (pred, weight, f"hash_deep_5p_{total}")
+    return (pred, min(26, 14 + abs(z) * 4), f"hash_deep_5p_{total}")
 
 def algo_hash_deep_10p(results):
     tx = encode_tx(results, 10)
     if not tx: return None
     h = hash_deep_md5(tx, depth_level=3)
-    if not h: return None
-    db = HASH_DEEP_DB[10]
-    if h not in db: return None
-    counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
+    if not h or h not in HASH_DEEP_DB[10]: return None
+    counts = HASH_DEEP_DB[10][h]; total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
     p_tai = (counts["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
     if abs(z) < 1.0: return None
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
-    weight = min(25, 14 + abs(z) * 4)
-    return (pred, weight, f"hash_deep_10p_{total}")
+    return (pred, min(25, 14 + abs(z) * 4), f"hash_deep_10p_{total}")
 
 def algo_hash_deep_13p(results):
     tx = encode_tx(results, 13)
     if not tx: return None
     h = hash_deep_md5(tx, depth_level=2)
-    if not h: return None
-    db = HASH_DEEP_DB[13]
-    if h not in db: return None
-    counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
+    if not h or h not in HASH_DEEP_DB[13]: return None
+    counts = HASH_DEEP_DB[13][h]; total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
     p_tai = (counts["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
     if abs(z) < 1.0: return None
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
-    weight = min(24, 12 + abs(z) * 4)
-    return (pred, weight, f"hash_deep_13p_{total}")
+    return (pred, min(24, 12 + abs(z) * 4), f"hash_deep_13p_{total}")
 
 def algo_hash_deep_multi(results):
     combined = {"Tài": 0.0, "Xỉu": 0.0}; total_samples = 0
@@ -658,25 +606,20 @@ def algo_hash_deep_multi(results):
         tx = encode_tx(results, depth)
         if not tx: continue
         h = hash_deep_md5(tx, depth_level=2 if depth >= 7 else 3)
-        if not h: continue
-        db = HASH_DEEP_DB[depth]
-        if h not in db: continue
-        counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
+        if not h or h not in HASH_DEEP_DB[depth]: continue
+        counts = HASH_DEEP_DB[depth][h]; total = counts["Tài"] + counts["Xỉu"]
         if total < 2: continue
         p_tai = (counts["Tài"] + 1) / (total + 2)
         z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
         pred = "Tài" if p_tai > 0.5 else "Xỉu"
-        weight = min(20, 9 + abs(z) * 3.5) * wf
-        combined[pred] += weight
-        total_samples += total
+        combined[pred] += min(20, 9 + abs(z) * 3.5) * wf; total_samples += total
     if total_samples < 4: return None
     st, sx = combined["Tài"], combined["Xỉu"]
     if st == sx: return None
     pred = "Tài" if st > sx else "Xỉu"
     ratio = max(st, sx) / (st + sx)
     if ratio < 0.56: return None
-    weight = min(22, 10 + (ratio - 0.5) * 35)
-    return (pred, weight, f"hash_deep_multi_{total_samples}")
+    return (pred, min(22, 10 + (ratio - 0.5) * 35), f"hash_deep_multi_{total_samples}")
 
 def algo_md5_bit_analysis(results):
     if len(results) < 13: return None
@@ -689,8 +632,7 @@ def algo_md5_bit_analysis(results):
     st = sx = 0.0; total_active = 0
     for bit_idx in range(128):
         if bits[bit_idx] != 1: continue
-        cnt = MD5_BIT_DB[bit_idx]
-        total = cnt["Tài"] + cnt["Xỉu"]
+        cnt = MD5_BIT_DB[bit_idx]; total = cnt["Tài"] + cnt["Xỉu"]
         if total < 5: continue
         p_tai = (cnt["Tài"] + 1) / (total + 2)
         z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
@@ -699,13 +641,11 @@ def algo_md5_bit_analysis(results):
         if p_tai > 0.5: st += w
         else: sx += w
         total_active += 1
-    if total_active < 5: return None
-    if st == sx: return None
+    if total_active < 5 or st == sx: return None
     pred = "Tài" if st > sx else "Xỉu"
     ratio = max(st, sx) / (st + sx)
     if ratio < 0.58: return None
-    weight = min(22, 10 + (ratio - 0.5) * 40)
-    return (pred, weight, f"md5_bit_{total_active}")
+    return (pred, min(22, 10 + (ratio - 0.5) * 40), f"md5_bit_{total_active}")
 
 def algo_md5_ngram(results):
     if len(results) < 13: return None
@@ -719,8 +659,7 @@ def algo_md5_ngram(results):
         for start in range(0, len(h) - ng_size + 1):
             gram = h[start:start + ng_size]
             if gram not in db: continue
-            cnt = db[gram]
-            total = cnt["Tài"] + cnt["Xỉu"]
+            cnt = db[gram]; total = cnt["Tài"] + cnt["Xỉu"]
             if total < 3: continue
             p_tai = (cnt["Tài"] + 1) / (total + 2)
             z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
@@ -729,13 +668,11 @@ def algo_md5_ngram(results):
             if p_tai > 0.5: st += w
             else: sx += w
             total_grams += 1
-    if total_grams < 8: return None
-    if st == sx: return None
+    if total_grams < 8 or st == sx: return None
     pred = "Tài" if st > sx else "Xỉu"
     ratio = max(st, sx) / (st + sx)
     if ratio < 0.58: return None
-    weight = min(20, 10 + (ratio - 0.5) * 35)
-    return (pred, weight, f"md5_ngram_{total_grams}")
+    return (pred, min(20, 10 + (ratio - 0.5) * 35), f"md5_ngram_{total_grams}")
 
 def algo_md5_hamming(results):
     if len(results) < 15: return None
@@ -745,18 +682,15 @@ def algo_md5_hamming(results):
     h_now = hash_deep_md5(tx_now, depth_level=2)
     h_prev = hash_deep_md5(tx_prev, depth_level=2)
     if not h_now or not h_prev: return None
-    hd = hamming_distance(h_now, h_prev)
-    bin_key = hd // 8
+    hd = hamming_distance(h_now, h_prev); bin_key = hd // 8
     if bin_key not in MD5_HAMMING_DB: return None
-    cnt = MD5_HAMMING_DB[bin_key]
-    total = cnt["Tài"] + cnt["Xỉu"]
+    cnt = MD5_HAMMING_DB[bin_key]; total = cnt["Tài"] + cnt["Xỉu"]
     if total < 4: return None
     p_tai = (cnt["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
     if abs(z) < 1.2: return None
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
-    weight = min(18, 10 + abs(z) * 3)
-    return (pred, weight, f"md5_hamming_{hd}")
+    return (pred, min(18, 10 + abs(z) * 3), f"md5_hamming_{hd}")
 
 def algo_5p_alternation(results):
     n = len(results)
@@ -764,8 +698,7 @@ def algo_5p_alternation(results):
     last5 = results[:5]
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
     if alt_count == 4:
-        tai_next = xiu_next = 0
-        key5 = tuple(last5)
+        tai_next = xiu_next = 0; key5 = tuple(last5)
         for i in range(min(n - 5, 50)):
             if tuple(results[i:i+5]) == key5:
                 if results[i+5] == "Tài": tai_next += 1
@@ -773,14 +706,11 @@ def algo_5p_alternation(results):
         total_seen = tai_next + xiu_next
         if total_seen >= 3:
             p_tai = (tai_next + 1) / (total_seen + 2)
-            if p_tai >= 0.62:
-                return ("Tài", min(24, 13 + (p_tai - 0.5) * 25), "5p_alt_data_T")
-            elif p_tai <= 0.38:
-                return ("Xỉu", min(24, 13 + (0.5 - p_tai) * 25), "5p_alt_data_X")
+            if p_tai >= 0.62: return ("Tài", min(24, 13 + (p_tai - 0.5) * 25), "5p_alt_data_T")
+            elif p_tai <= 0.38: return ("Xỉu", min(24, 13 + (0.5 - p_tai) * 25), "5p_alt_data_X")
         return (_opp(last5[0]), 18, "5p_alt_continue")
     if alt_count == 3:
-        tai_next = xiu_next = 0
-        key5 = tuple(last5)
+        tai_next = xiu_next = 0; key5 = tuple(last5)
         for i in range(min(n - 5, 50)):
             if tuple(results[i:i+5]) == key5:
                 if results[i+5] == "Tài": tai_next += 1
@@ -788,10 +718,8 @@ def algo_5p_alternation(results):
         total_seen = tai_next + xiu_next
         if total_seen >= 3:
             p_tai = (tai_next + 1) / (total_seen + 2)
-            if p_tai >= 0.62:
-                return ("Tài", min(22, 12 + (p_tai - 0.5) * 22), "5p_alt_reverse_data_T")
-            elif p_tai <= 0.38:
-                return ("Xỉu", min(22, 12 + (0.5 - p_tai) * 22), "5p_alt_reverse_data_X")
+            if p_tai >= 0.62: return ("Tài", min(22, 12 + (p_tai - 0.5) * 22), "5p_alt_reverse_data_T")
+            elif p_tai <= 0.38: return ("Xỉu", min(22, 12 + (0.5 - p_tai) * 22), "5p_alt_reverse_data_X")
         return (_opp(last5[0]), 15, "5p_alt_reverse")
     return None
 
@@ -803,14 +731,11 @@ def algo_trend_break(results):
     x_mean = 9.5; y_mean = sum(b) / 20
     num = sum((i - x_mean) * (b[i] - y_mean) for i in range(20))
     den = sum((i - x_mean) ** 2 for i in range(20))
-    slope = num / den if den else 0
-    last3 = b[-3:]
+    slope = num / den if den else 0; last3 = b[-3:]
     if slope > 0.04:
-        if sum(last3) <= 1:
-            return ("Tài", min(20, 12 + abs(slope) * 30), "trend_bounce_T")
+        if sum(last3) <= 1: return ("Tài", min(20, 12 + abs(slope) * 30), "trend_bounce_T")
     elif slope < -0.04:
-        if sum(last3) >= 2:
-            return ("Xỉu", min(20, 12 + abs(slope) * 30), "trend_bounce_X")
+        if sum(last3) >= 2: return ("Xỉu", min(20, 12 + abs(slope) * 30), "trend_bounce_X")
     if abs(slope) > 0.08:
         last_dir = "Tài" if sum(last3) >= 2 else "Xỉu"
         if (slope > 0 and last_dir == "Tài") or (slope < 0 and last_dir == "Xỉu"):
@@ -822,49 +747,40 @@ def algo_break_rhythm(results):
     if n < 12: return None
     last8 = results[:8]
     alt_count = sum(1 for i in range(7) if last8[i] != last8[i+1])
-    if 5 <= alt_count <= 6:
-        return (_opp(last8[0]), 16, "break_rhythm_alt")
-    if alt_count <= 2:
-        return (last8[0], 14, "break_rhythm_streak")
+    if 5 <= alt_count <= 6: return (_opp(last8[0]), 16, "break_rhythm_alt")
+    if alt_count <= 2: return (last8[0], 14, "break_rhythm_streak")
     return None
 
 def data_markov2(results):
     n = len(results)
     if n < 20: return None
-    key = (results[1], results[0])
-    counts = {"Tài": 1, "Xỉu": 1}
+    key = (results[1], results[0]); counts = {"Tài": 1, "Xỉu": 1}
     for i in range(min(n - 2, 60)):
-        if (results[i+2], results[i+1]) == key:
-            counts[results[i]] += 1
+        if (results[i+2], results[i+1]) == key: counts[results[i]] += 1
     total = counts["Tài"] + counts["Xỉu"]
     if total < 6: return None
     p_tai = counts["Tài"] / total
     z = (p_tai - 0.5) / math.sqrt(0.25 / total)
     if abs(z) < 1.2: return None
-    weight = min(20, 9 + abs(z) * 3)
-    return ("Tài" if p_tai > 0.5 else "Xỉu", weight, "markov2_data")
+    return ("Tài" if p_tai > 0.5 else "Xỉu", min(20, 9 + abs(z) * 3), "markov2_data")
 
 def data_markov3(results):
     n = len(results)
     if n < 30: return None
-    key = (results[2], results[1], results[0])
-    counts = {"Tài": 1, "Xỉu": 1}
+    key = (results[2], results[1], results[0]); counts = {"Tài": 1, "Xỉu": 1}
     for i in range(min(n - 3, 80)):
-        if (results[i+3], results[i+2], results[i+1]) == key:
-            counts[results[i]] += 1
+        if (results[i+3], results[i+2], results[i+1]) == key: counts[results[i]] += 1
     total = counts["Tài"] + counts["Xỉu"]
     if total < 5: return None
     p_tai = counts["Tài"] / total
     z = (p_tai - 0.5) / math.sqrt(0.25 / total)
     if abs(z) < 1.3: return None
-    weight = min(22, 10 + abs(z) * 3)
-    return ("Tài" if p_tai > 0.5 else "Xỉu", weight, "markov3_data")
+    return ("Tài" if p_tai > 0.5 else "Xỉu", min(22, 10 + abs(z) * 3), "markov3_data")
 
 def data_pattern3(results):
     n = len(results)
     if n < 25: return None
-    key = tuple(results[:3])
-    tai_next = xiu_next = 0
+    key = tuple(results[:3]); tai_next = xiu_next = 0
     for i in range(min(n - 3, 60)):
         if tuple(results[i:i+3]) == key:
             if results[i+3] == "Tài": tai_next += 1
@@ -891,23 +807,18 @@ def data_streak_break(results):
     if n < 25: return None
     streak = _count_streak(results)
     if streak < 3: return None
-    current = results[0]; breaks = totals = 0
-    i = 0
+    current = results[0]; breaks = totals = 0; i = 0
     while i < n - 1:
         j = i; cnt = 1
-        while j + 1 < n and results[j] == results[j+1]:
-            cnt += 1; j += 1
+        while j + 1 < n and results[j] == results[j+1]: cnt += 1; j += 1
         if cnt >= streak and results[i] == current:
             totals += 1
-            if j + 1 < n and results[j+1] != current:
-                breaks += 1
+            if j + 1 < n and results[j+1] != current: breaks += 1
         i = j + 1
     if totals < 4: return None
     p_break = (breaks + 1) / (totals + 2)
-    if p_break >= 0.65:
-        return (_opp(current), min(18, 10 + (p_break - 0.5) * 20), "streak_break_data")
-    if p_break <= 0.35:
-        return (current, min(15, 10 + (0.5 - p_break) * 15), "streak_continue_data")
+    if p_break >= 0.65: return (_opp(current), min(18, 10 + (p_break - 0.5) * 20), "streak_break_data")
+    if p_break <= 0.35: return (current, min(15, 10 + (0.5 - p_break) * 15), "streak_continue_data")
     return None
 
 def data_bayes_ratio(results):
@@ -921,8 +832,7 @@ def data_bayes_ratio(results):
     std = math.sqrt(var) if var > 0 else 0
     z = abs((p_tai - 0.5) / std) if std else 0
     if z < 1.5: return None
-    weight = min(16, 9 + z * 2)
-    return ("Tài" if p_tai > 0.5 else "Xỉu", weight, "bayes_data")
+    return ("Tài" if p_tai > 0.5 else "Xỉu", min(16, 9 + z * 2), "bayes_data")
 
 def data_tilt(results):
     n = len(results)
@@ -945,12 +855,10 @@ def data_periodicity(results):
             if results[i] == results[i - period]: matches += 1
         if total >= 10:
             score = matches / total
-            if score > best_score:
-                best_score, best_period = score, period
+            if score > best_score: best_score, best_period = score, period
     if best_period and best_score >= 0.72:
         pred = results[best_period - 1]
-        weight = min(22, 13 + (best_score - 0.5) * 22)
-        return (pred, weight, f"periodicity_p{best_period}")
+        return (pred, min(22, 13 + (best_score - 0.5) * 22), f"periodicity_p{best_period}")
     return None
 
 def data_volatility_break(results):
@@ -958,29 +866,24 @@ def data_volatility_break(results):
     if n < 15: return None
     window = results[:12]
     changes = sum(1 for i in range(11) if window[i] != window[i+1])
-    if changes <= 2:
-        return (_opp(results[0]), 18, "volatility_low_break")
-    if changes >= 9:
-        return (results[0], 16, "volatility_high_continue")
+    if changes <= 2: return (_opp(results[0]), 18, "volatility_low_break")
+    if changes >= 9: return (results[0], 16, "volatility_high_continue")
     return None
 
 def data_entropy_bias(results):
     n = len(results)
     if n < 15: return None
     window = results[:20]
-    p_tai = (window.count("Tài") + 1) / (len(window) + 2)
-    p_xiu = 1 - p_tai
+    p_tai = (window.count("Tài") + 1) / (len(window) + 2); p_xiu = 1 - p_tai
     if p_tai <= 0 or p_xiu <= 0: return None
     entropy = -(p_tai * math.log2(p_tai) + p_xiu * math.log2(p_xiu))
-    if entropy < 0.75:
-        return ("Tài" if p_tai > 0.5 else "Xỉu", 15, f"entropy_{entropy:.2f}")
+    if entropy < 0.75: return ("Tài" if p_tai > 0.5 else "Xỉu", 15, f"entropy_{entropy:.2f}")
     return None
 
 def data_cusum(results):
     n = len(results)
     if n < 20: return None
-    window = list(reversed(results[:20]))
-    s_pos = s_neg = 0.0; target = 0.5
+    window = list(reversed(results[:20])); s_pos = s_neg = 0.0; target = 0.5
     for r in window:
         x = 1 if r == "Tài" else 0
         s_pos = max(0, s_pos + (x - target))
@@ -1002,26 +905,143 @@ def algo_pair_pattern(results):
     return None
 
 # =====================================================================
-# ANALYZER
+# META-PREDICTOR: DỰ ĐOÁN CỦA CÁC DỰ ĐOÁN
+# =====================================================================
+def algo_regime_predictor(results):
+    """
+    Dự đoán chế độ cầu của phiên tới: streak / alternation / balanced
+    dựa vào sự chuyển đổi chế độ trong lịch sử.
+    """
+    n = len(results)
+    if n < 30: return None
+    
+    # Xác định chuỗi regime hiện tại
+    regime_seq = []
+    for i in range(min(n - 10, 50)):
+        window = results[i:i+10]
+        alt = sum(1 for j in range(9) if window[j] != window[j+1])
+        streak = _count_streak(window)
+        if alt >= 5: regime_seq.append("alt")
+        elif streak >= 3: regime_seq.append("streak")
+        else: regime_seq.append("balanced")
+    
+    if len(regime_seq) < 10: return None
+    
+    # Xem regime hiện tại
+    current_regime = regime_seq[0]
+    
+    # Đếm chuyển đổi từ current_regime -> next_regime
+    transitions = defaultdict(int)
+    for i in range(len(regime_seq) - 1):
+        if regime_seq[i] == current_regime:
+            transitions[regime_seq[i+1]] += 1
+    
+    if not transitions: return None
+    
+    total = sum(transitions.values())
+    most_likely_next = max(transitions, key=transitions.get)
+    prob = transitions[most_likely_next] / total
+    
+    if prob < 0.55: return None  # Không đủ tin cậy
+    
+    # Dựa vào regime dự đoán, đưa ra prediction
+    if most_likely_next == "streak":
+        # Phiên tới có khả năng streak → đánh theo hướng hiện tại
+        return (results[0], min(22, 12 + prob * 15), f"regime_pred_streak_{prob:.2f}")
+    elif most_likely_next == "alt":
+        # Phiên tới có khả năng đảo → đánh ngược
+        return (_opp(results[0]), min(22, 12 + prob * 15), f"regime_pred_alt_{prob:.2f}")
+    return None
+
+def meta_predictor(all_signals, signal_stats):
+    """
+    Dự đoán của các dự đoán: dùng streak + momentum của từng signal
+    để điều chỉnh weight động.
+    """
+    adjusted_signals = []
+    for pred, weight, name in all_signals:
+        stats = signal_stats.get(name, {})
+        recent_hits = stats.get('recent_hits', [])
+        
+        # Streak: bao nhiêu lần đúng/gần đây liên tiếp
+        win_streak = 0
+        loss_streak = 0
+        for hit in recent_hits[:5]:
+            if hit: win_streak += 1
+            else: break
+        for hit in recent_hits[:5]:
+            if not hit: loss_streak += 1
+            else: break
+        
+        # Momentum: trung bình có trọng số của 5 lần gần nhất
+        momentum = 0.0
+        if recent_hits:
+            for i, hit in enumerate(recent_hits[:5]):
+                momentum += (1.0 if hit else 0.0) * (0.9 ** i)
+            momentum /= sum(0.9 ** i for i in range(min(5, len(recent_hits))))
+        
+        # Điều chỉnh weight dựa trên streak + momentum
+        streak_bonus = 1.0
+        if win_streak >= 3:
+            streak_bonus = 1.30  # Đang rất "hot" → tăng mạnh
+        elif win_streak == 2:
+            streak_bonus = 1.15
+        elif loss_streak >= 3:
+            streak_bonus = 0.50  # Đang "lệch sóng" → giảm mạnh
+        elif loss_streak == 2:
+            streak_bonus = 0.75
+        
+        # Momentum adjustment
+        momentum_mult = 0.6 + momentum * 0.8  # 0.6 đến 1.4
+        
+        final_weight = weight * streak_bonus * momentum_mult
+        adjusted_signals.append((pred, final_weight, name, win_streak, loss_streak, momentum))
+    
+    return adjusted_signals
+
+# =====================================================================
+# ANALYZER CHÍNH
 # =====================================================================
 def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
+    
     for fn in (
-        algo_lc79_specialist, algo_7p_pattern_radar, algo_stable_zone_10p,
-        algo_7p_no_reverse, algo_7p_hash_deep, algo_hash_deep_5p,
-        algo_hash_deep_10p, algo_hash_deep_13p, algo_hash_deep_multi,
-        algo_md5_bit_analysis, algo_md5_ngram, algo_md5_hamming,
-        algo_5p_alternation, algo_trend_break, algo_break_rhythm,
-        data_markov2, data_markov3, data_pattern3, data_alternation,
-        data_streak_break, data_bayes_ratio, data_tilt, data_periodicity,
-        data_volatility_break, data_entropy_bias, data_cusum, algo_pair_pattern,
+        algo_lc79_specialist,
+        algo_7p_pattern_radar,
+        algo_stable_zone_10p,
+        algo_7p_no_reverse,
+        algo_7p_hash_deep,
+        algo_hash_deep_5p,
+        algo_hash_deep_10p,
+        algo_hash_deep_13p,
+        algo_hash_deep_multi,
+        algo_md5_bit_analysis,
+        algo_md5_ngram,
+        algo_md5_hamming,
+        algo_5p_alternation,
+        algo_trend_break,
+        algo_break_rhythm,
+        data_markov2,
+        data_markov3,
+        data_pattern3,
+        data_alternation,
+        data_streak_break,
+        data_bayes_ratio,
+        data_tilt,
+        data_periodicity,
+        data_volatility_break,
+        data_entropy_bias,
+        data_cusum,
+        algo_pair_pattern,
+        algo_regime_predictor,
     ):
         try:
             s = fn(results)
             if s: signals.append(s)
         except Exception:
             pass
+    
     try:
         cau = analyze_5phien(results)
         if cau:
@@ -1029,12 +1049,14 @@ def analyze_full_bridge(results):
             signals.append((pred, w, f"cau_{cau[0]}"))
     except Exception:
         pass
+    
     try:
         consensus = algo_consensus_filter(results, signals)
         if consensus:
             signals.append(consensus)
     except Exception:
         pass
+
     return signals
 
 def full_bridge_predict_adaptive(results, replay_n=80):
@@ -1045,43 +1067,47 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         if results[0] == results[1]: return _opp(results[0]), 55, []
         return results[1], 52, []
 
-    with SIGNAL_VERSION_LOCK:
-        version = LEARNED_SIGNAL_VERSION
-    cache_key = (version, tuple(results[:min(n, replay_n + 30)]))
-    signal_stats = None
-    with SIGNAL_STATS_LOCK:
-        if cache_key in SIGNAL_STATS_CACHE:
-            signal_stats = SIGNAL_STATS_CACHE[cache_key]
-
-    if signal_stats is None:
-        signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
-        replay_count = min(replay_n, n - 3)
-        for j in range(replay_count):
-            history = results[j + 1:]; actual = results[j]
-            decay = math.exp(-j / max(replay_count / 2.0, 1.0))
-            for pred_sig, weight, name in analyze_full_bridge(history):
-                signal_stats[name]['total'] += decay
-                if pred_sig == actual:
-                    signal_stats[name]['wins'] += decay
-        with SIGNAL_STATS_LOCK:
-            if len(SIGNAL_STATS_CACHE) > 200:
-                for _ in range(50):
-                    try: SIGNAL_STATS_CACHE.pop(next(iter(SIGNAL_STATS_CACHE)))
-                    except StopIteration: break
-            SIGNAL_STATS_CACHE[cache_key] = signal_stats
+    # Replay để thu thập recent_hits và stats cho từng signal
+    signal_stats = defaultdict(lambda: {
+        'wins': 0.0, 
+        'total': 0.0, 
+        'recent_hits': []
+    })
+    
+    replay_count = min(replay_n, n - 3)
+    for j in range(replay_count):
+        history = results[j + 1:]
+        actual = results[j]
+        decay = math.exp(-j / max(replay_count / 2.0, 1.0))
+        for pred_sig, weight, name in analyze_full_bridge(history):
+            signal_stats[name]['total'] += decay
+            hit = (pred_sig == actual)
+            if hit:
+                signal_stats[name]['wins'] += decay
+            # Lưu 5 hits gần nhất (chỉ j < 5 để tránh trùng)
+            if j < 5:
+                signal_stats[name]['recent_hits'].append(hit)
 
     signals = analyze_full_bridge(results)
     if not signals: return results[0], 52, []
 
+    # Áp dụng meta_predictor để điều chỉnh động
+    meta_adjusted = meta_predictor(signals, signal_stats)
+
     regime = _regime(results)
     st = sx = 0.0; detail = []
-    for pred_sig, weight, name in signals:
+    
+    for pred_sig, weight, name, ws, ls, momentum in meta_adjusted:
         s = signal_stats[name]
         if s['total'] >= 3:
             acc = (s['wins'] + 1.0) / (s['total'] + 2.0)
         else:
             acc = 0.5
+        
+        # Accuracy multiplier (dài hạn)
         accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
+        
+        # Ưu tiên thuật toán đặc biệt
         if "lc79_" in name: accuracy_mult *= 1.45
         if "7p_pattern_radar" in name: accuracy_mult *= 1.40
         if "stable_zone" in name: accuracy_mult *= 1.30
@@ -1089,24 +1115,32 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         if "7p_no_reverse" in name: accuracy_mult *= 1.25
         if "7p_hash_deep" in name: accuracy_mult *= 1.15
         if "hash_deep_10p" in name: accuracy_mult *= 1.18
+        if "regime_pred" in name: accuracy_mult *= 1.22
+        
         if regime == "streak" and "break" in name: accuracy_mult *= 1.10
         elif regime == "alternation" and ("alt" in name or "5p" in name): accuracy_mult *= 1.15
+        
         if "trend_" in name or "rhythm_" in name: accuracy_mult *= 1.12
         if "hash_deep_5p" in name: accuracy_mult *= 1.20
         if "hash_deep_13p" in name: accuracy_mult *= 1.10
         if "md5_bit_" in name or "md5_ngram_" in name: accuracy_mult *= 1.08
+        
         adjusted = weight * accuracy_mult
         if pred_sig == "Tài": st += adjusted
         else: sx += adjusted
-        detail.append({'name': name, 'pred': pred_sig, 'base_weight': weight,
-                       'accuracy': round(acc, 3), 'adjusted_weight': round(adjusted, 2)})
+        detail.append({
+            'name': name, 'pred': pred_sig, 'base_weight': weight,
+            'accuracy': round(acc, 3), 'adjusted_weight': round(adjusted, 2),
+            'win_streak': ws, 'loss_streak': ls, 'momentum': round(momentum, 2)
+        })
 
     total = st + sx
     if total == 0: return results[0], 50, detail
 
-    lean = max(st, sx) / total
-    if lean > 0.85 and len(signals) <= 2:
-        return _opp(results[0]) if st > sx else results[0], 51, detail
+    if total > 0:
+        lean = max(st, sx) / total
+        if lean > 0.85 and len(signals) <= 2:
+            return _opp(results[0]) if st > sx else results[0], 51, detail
 
     if st > sx: pred, ratio = "Tài", st / total
     elif sx > st: pred, ratio = "Xỉu", sx / total
@@ -1119,7 +1153,7 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     disagree_w = sum(d['adjusted_weight'] for d in detail if d['pred'] != pred)
     total_w = agree_w + disagree_w + 1e-6
     conflict_ratio = disagree_w / total_w
-
+    
     if conflict_ratio > 0.55: conf -= 12
     elif conflict_ratio > 0.40: conf -= 6
 
@@ -1133,22 +1167,21 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     conf = int(max(50, min(MAX_CONFIDENCE, conf)))
     return pred, conf, detail
 
+# =====================================================================
+# CÁC HÀM PHỤ TRỢ
+# =====================================================================
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
-    with PREDICTION_LOCK:
-        if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
+    if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
     hist = [v['result'] for v in valid[:i]][::-1]
     if len(hist) < 3:
         result = ("-", 50, None)
     else:
         pred, conf, _ = full_bridge_predict_adaptive(hist)
-        result = (pred, conf, pred == valid[i]['result'])
-    with PREDICTION_LOCK:
-        if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE:
-            for _ in range(MAX_PREDICTION_CACHE // 4):
-                try: PREDICTION_CACHE.pop(next(iter(PREDICTION_CACHE)))
-                except StopIteration: break
-        PREDICTION_CACHE[key] = result
+        is_correct = (pred == valid[i]['result'])
+        result = (pred, conf, is_correct)
+    if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE: PREDICTION_CACHE.clear()
+    PREDICTION_CACHE[key] = result
     return result
 
 def compute_loss_streak(valid, max_scan=10):
@@ -1194,20 +1227,18 @@ def get_stable_next_prediction(valid):
     if not valid:
         return None, 50, False, None, None
     next_phien = valid[-1]['phien'] + 1
-    with PREDICTION_LOCK:
-        if next_phien in NEXT_PREDICTION_CACHE:
-            return NEXT_PREDICTION_CACHE[next_phien]
+    if next_phien in NEXT_PREDICTION_CACHE:
+        return NEXT_PREDICTION_CACHE[next_phien]
 
     results = [v['result'] for v in valid][::-1]
     loss_streak = compute_loss_streak(valid)
     base_pred, base_conf, _ = full_bridge_predict_adaptive(results)
     pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
 
-    with PREDICTION_LOCK:
-        NEXT_PREDICTION_CACHE[next_phien] = (pred, conf, flipped, reason, base_pred)
-        if len(NEXT_PREDICTION_CACHE) > 200:
-            try: NEXT_PREDICTION_CACHE.popitem(last=False)
-            except KeyError: pass
+    NEXT_PREDICTION_CACHE[next_phien] = (pred, conf, flipped, reason, base_pred)
+    if len(NEXT_PREDICTION_CACHE) > 200:
+        oldest = min(NEXT_PREDICTION_CACHE.keys())
+        del NEXT_PREDICTION_CACHE[oldest]
     return NEXT_PREDICTION_CACHE[next_phien]
 
 def reset_all_databases():
@@ -1223,55 +1254,27 @@ def reset_all_databases():
         MD5_HAMMING_DB.clear()
         LOSS_HISTORY.clear()
         LEARNED_PHIEN = RESET_ID
-    with SIGNAL_STATS_LOCK:
-        SIGNAL_STATS_CACHE.clear()
-
-def _prepare_valid_state():
-    with HISTORY_LOCK:
-        raw_rows, success = fetch_sessions()
-        if success:
-            for row in raw_rows:
-                HISTORY_CACHE[row['phien']] = row
-        for k in [k for k in HISTORY_CACHE if k < RESET_ID]:
-            del HISTORY_CACHE[k]
-        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
-        ok = success or bool(HISTORY_CACHE)
-    if ok and valid:
-        learn_incremental(valid)
-    return valid, ok
 
 # =====================================================================
 # ROUTES
 # =====================================================================
 @app.route('/')
 def index():
-    return Response(HTML_TEMPLATE, mimetype='text/html')
-
-@app.route('/health')
-def health():
-    with SIGNAL_VERSION_LOCK:
-        version = LEARNED_SIGNAL_VERSION
-    return jsonify({
-        'status': 'ok',
-        'reset_id': RESET_ID,
-        'learned_phien': LEARNED_PHIEN,
-        'signal_version': version,
-        'history_size': len(HISTORY_CACHE),
-        'prediction_cache_size': len(PREDICTION_CACHE),
-        'next_cache_size': len(NEXT_PREDICTION_CACHE),
-        'signal_cache_size': len(SIGNAL_STATS_CACHE),
-        'timestamp': datetime.now().isoformat()
-    })
+    return render_template_string(HTML_TEMPLATE)
 
 @app.route('/api/history')
 def history():
     global RESET_ID
     try:
-        valid, ok = _prepare_valid_state()
-        if not ok:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
+        learn_incremental(valid)
 
         next_phien = valid[-1]['phien'] + 1
         cached_next = get_stable_next_prediction(valid)
@@ -1283,8 +1286,7 @@ def history():
             bp, bc, _ = full_bridge_predict_adaptive(results_now)
             next_pred, next_conf, flipped, reason = apply_recovery(bp, bc, ls_now, results=results_now)
             base_pred = bp
-            with PREDICTION_LOCK:
-                NEXT_PREDICTION_CACHE[next_phien] = (next_pred, next_conf, flipped, reason, bp)
+            NEXT_PREDICTION_CACHE[next_phien] = (next_pred, next_conf, flipped, reason, bp)
 
         loss_streak = compute_loss_streak(valid)
         out = []; correct_count = 0; total_past = 0
@@ -1321,49 +1323,35 @@ def history():
 
 @app.route('/api/predict')
 def predict():
+    global RESET_ID
     try:
-        valid, ok = _prepare_valid_state()
-        if not ok:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
-
+        learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
+
         loss_streak = compute_loss_streak(valid)
-
-        cached = get_stable_next_prediction(valid)
-        if cached and cached[0] is not None:
-            pred, conf, flipped, reason, base_pred = cached
-            _, base_conf, detail = full_bridge_predict_adaptive(results)
-        else:
-            base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
-            pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
-
-        if request.args.get('compact') == '1':
-            return jsonify({
-                'next_phien': valid[-1]['phien'] + 1,
-                'prediction': pred, 'confidence': conf,
-                'base_prediction': base_pred, 'base_confidence': base_conf,
-                'recovery_flipped': flipped, 'recovery_reason': reason,
-                'loss_streak': loss_streak,
-                'last_result': valid[-1]['result'],
-                'last_dice': valid[-1]['dice'],
-            })
+        base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
+        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
 
         cau5 = analyze_5phien(results)
         cau_info = None
         if cau5:
-            cau_name, cau_pred, cau_w = cau5
-            cau_info = {'name': cau_name, 'pred': cau_pred, 'weight': cau_w}
-
+            cau_info = {'name': cau5[0], 'pred': cau5[1], 'weight': cau5[2]}
+            
         cau7_radar = algo_7p_pattern_radar(results)
-        cau7_info = None
-        if cau7_radar:
-            cau7_info = {'name': cau7_radar[2], 'pred': cau7_radar[0], 'weight': cau7_radar[1]}
+        cau7_info = {'name': cau7_radar[2], 'pred': cau7_radar[0], 'weight': cau7_radar[1]} if cau7_radar else None
 
         cau_lc79 = algo_lc79_specialist(results)
-        cau_lc79_info = None
-        if cau_lc79:
-            cau_lc79_info = {'name': cau_lc79[2], 'pred': cau_lc79[0], 'weight': cau_lc79[1]}
+        cau_lc79_info = {'name': cau_lc79[2], 'pred': cau_lc79[0], 'weight': cau_lc79[1]} if cau_lc79 else None
+        
+        regime_pred = algo_regime_predictor(results)
+        regime_info = {'name': regime_pred[2], 'pred': regime_pred[0], 'weight': regime_pred[1]} if regime_pred else None
 
         p5_signal = algo_5p_alternation(results)
         hash5_signal = algo_hash_deep_5p(results)
@@ -1389,6 +1377,11 @@ def predict():
             'cau_5phien': cau_info,
             'cau_7phien_radar': cau7_info,
             'cau_lc79': cau_lc79_info,
+            'regime_prediction': regime_info,
+            'meta_confidence': conf,
+            'prediction_breakdown': {'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
+                                      'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
+                                      'signal_count': len(detail)},
             'last5_pattern': last5_tx, 'last5_hash_deep': last5_hash,
             'last13_hash': last13_hash,
             'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
@@ -1412,11 +1405,16 @@ def predict():
 
 @app.route('/lc79')
 def lc79():
+    global RESET_ID
     try:
-        valid, ok = _prepare_valid_state()
-        if not ok:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
+        learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
@@ -1436,19 +1434,21 @@ def lc79():
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         last = valid[-1]; next_phien = last['phien'] + 1
-
+        
         cau7_radar = algo_7p_pattern_radar(results)
         radar_name = cau7_radar[2] if cau7_radar else "none"
-
         cau_lc79 = algo_lc79_specialist(results)
         lc79_name = cau_lc79[2] if cau_lc79 else "none"
-
+        regime_pred = algo_regime_predictor(results)
+        regime_name = regime_pred[2] if regime_pred else "none"
+        
         return jsonify({
-            'Id': 'le minh md5 deep v6 lc79-special', 'Phien': str(next_phien),
+            'Id': 'le minh md5 deep v7 meta-predictor', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
             'Cau_7p_Radar': radar_name,
             'Cau_LC79': lc79_name,
+            'Regime_Predict': regime_name,
             'Base_du_doan': base_pred if flipped else None,
             'Auto_flip': flipped, 'Chuoi_thua': loss_streak,
         })
@@ -1458,11 +1458,16 @@ def lc79():
 
 @app.route('/lc79md5')
 def lc79md5():
+    global RESET_ID
     try:
-        valid, ok = _prepare_valid_state()
-        if not ok:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
+        learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
@@ -1487,19 +1492,21 @@ def lc79md5():
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         next_phien = last['phien'] + 1
-
+        
         cau7_radar = algo_7p_pattern_radar(results)
         radar_name = cau7_radar[2] if cau7_radar else "none"
-
         cau_lc79 = algo_lc79_specialist(results)
         lc79_name = cau_lc79[2] if cau_lc79 else "none"
-
+        regime_pred = algo_regime_predictor(results)
+        regime_name = regime_pred[2] if regime_pred else "none"
+        
         return jsonify({
             'id': '@cskhleminh', 'phien': str(next_phien),
             'ket_qua': ket_qua_str, 'du_doan': pred,
             'do_tin_cay': conf_str, 'lich_su': lich_su,
             'cau_7p_radar': radar_name,
             'cau_lc79': lc79_name,
+            'regime_predict': regime_name,
             'base_du_doan': base_pred if flipped else None,
             'auto_flip': flipped, 'chuoi_thua': loss_streak,
         })
@@ -1509,26 +1516,18 @@ def lc79md5():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, LEARNED_PHIEN, NEXT_PREDICTION_CACHE, LEARNED_SIGNAL_VERSION
+    global RESET_ID, HISTORY_CACHE, PREDICTION_CACHE, LEARNED_PHIEN, NEXT_PREDICTION_CACHE
     try:
         raw_rows, success = fetch_sessions()
         if success and raw_rows:
             valid = sorted(raw_rows, key=lambda x: x['phien'])
             if valid:
-                new_reset_id = valid[-1]['phien']
-                with LEARN_LOCK:
-                    with HISTORY_LOCK:
-                        with PREDICTION_LOCK:
-                            RESET_ID = new_reset_id
-                            LEARNED_PHIEN = new_reset_id
-                            HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
-                            PREDICTION_CACHE.clear()
-                            NEXT_PREDICTION_CACHE.clear()
-                            reset_all_databases()
-                with SIGNAL_STATS_LOCK:
-                    SIGNAL_STATS_CACHE.clear()
-                with SIGNAL_VERSION_LOCK:
-                    LEARNED_SIGNAL_VERSION += 1
+                RESET_ID = valid[-1]['phien']
+                LEARNED_PHIEN = RESET_ID
+                HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
+                PREDICTION_CACHE = {}
+                NEXT_PREDICTION_CACHE = {}
+                reset_all_databases()
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
     except Exception as e:
@@ -1536,4 +1535,4 @@ def reset_api():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, threaded=True)
+    app.run(host='0.0.0.0', port=port)
