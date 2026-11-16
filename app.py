@@ -378,31 +378,93 @@ def learn_incremental(valid):
         LEARNED_PHIEN = valid[-1]['phien']
 
 # =====================================================================
-# THUẬT TOÁN MỚI: 2 CẦU KHÔNG ĐẢO NGHỊCH LIÊN TỤC (7 PHIÊN)
+# THUẬT TOÁN ỔN ĐỊNH MỚI (STABLE ZONE & NOISE FILTER)
 # =====================================================================
-def algo_7p_no_reverse(results):
+
+def algo_stable_zone_10p(results):
     """
-    Phân tích 7 phiên gần nhất. Nếu cầu đi theo dạng không đảo nghịch liên tục
-    (Ví dụ: 3T-2X-2T đang giữ nhịp), đánh tiếp hướng đang chạy.
+    Tìm vùng ổn định của 10 phiên.
+    Nếu nhịp độ lặp lại (VD: T-T-X-T-T-X) thì đánh theo nhịp.
     """
     n = len(results)
+    if n < 20: return None
+    
+    # Lấy 10 phiên
+    last10 = results[:10]
+    
+    # Đếm xem có bao nhiêu cặp đảo chiều trong 10 phiên (độ nhiễu)
+    noise = sum(1 for i in range(9) if last10[i] != last10[i+1])
+    
+    # Nếu nhiễu quá cao (>6) hoặc quá thấp (<2), không phải vùng ổn định
+    if noise < 2 or noise > 6: return None
+    
+    # Tìm chu kỳ lặp của 10 phiên này trong 80 phiên lịch sử
+    key10 = tuple(last10)
+    tai_next = xiu_next = 0
+    for i in range(min(n - 10, 80)):
+        if tuple(results[i:i+10]) == key10:
+            if results[i+10] == "Tài": tai_next += 1
+            else: xiu_next += 1
+            
+    total_seen = tai_next + xiu_next
+    if total_seen >= 2:
+        p_tai = (tai_next + 1) / (total_seen + 2)
+        z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
+        if abs(z) >= 0.9:
+            pred = "Tài" if p_tai > 0.5 else "Xỉu"
+            weight = min(26, 15 + abs(z) * 4)
+            return (pred, weight, f"stable_zone_10p")
+    
+    # Nếu không tìm thấy chu kỳ, dựa vào group cuối
+    groups = get_groups(last10)
+    if len(groups) >= 2:
+        if groups[0] < groups[1]:
+            # Nhóm đang ngắn, dự đoán tiếp tục
+            return (last10[0], 16, "stable_zone_extend")
+        else:
+            # Nhóm đang dài, dự đoán sắp gãy
+            return (_opp(last10[0]), 15, "stable_zone_break")
+    return None
+
+def algo_consensus_filter(results, current_signals):
+    """
+    Bộ lọc Nhiễu (Noise Filter) và Đồng thuận (Consensus).
+    Nếu các tín hiệu quá xung đột, tự động hạ nhiệt (không dự đoán).
+    Trả về (pred, weight, name) hoặc None
+    """
+    if not current_signals: return None
+    
+    tai_score = sum(w for p, w, n in current_signals if p == "Tài")
+    xiu_score = sum(w for p, w, n in current_signals if p == "Xỉu")
+    total = tai_score + xiu_score
+    
+    if total == 0: return None
+    
+    # Nếu không có sự đồng thuận (chênh lệch < 15%)
+    ratio = max(tai_score, xiu_score) / total
+    if ratio < 0.55:
+        return None # Không đánh, nhiễu quá
+        
+    # Nếu có đồng thuận cao, đưa ra tín hiệu chốt
+    pred = "Tài" if tai_score > xiu_score else "Xỉu"
+    weight = min(15, 10 + (ratio - 0.5) * 30)
+    return (pred, weight, f"consensus_{int(ratio*100)}pct")
+
+# =====================================================================
+# CÁC THUẬT TOÁN CŨ 
+# =====================================================================
+def algo_7p_no_reverse(results):
+    n = len(results)
     if n < 15: return None
-    
     last7 = results[:7]
-    # Đếm số lần đổi chiều trong 7 phiên
     alternations = sum(1 for i in range(6) if last7[i] != last7[i+1])
-    
-    # Cầu không đảo nghịch liên tục: Số lần đảo <= 3 (tức là có ít nhất 1 cặp hoặc bộ 3 giống nhau)
     if alternations <= 3:
         key7 = tuple(last7)
         tai_next = xiu_next = 0
-        
-        # Tìm trong lịch sử xem chuỗi 7 phiên này từng xuất hiện chưa
         for i in range(min(n - 7, 60)):
             if tuple(results[i:i+7]) == key7:
                 if results[i+7] == "Tài": tai_next += 1
                 else: xiu_next += 1
-                
         total_seen = tai_next + xiu_next
         if total_seen >= 3:
             p_tai = (tai_next + 1) / (total_seen + 2)
@@ -411,23 +473,15 @@ def algo_7p_no_reverse(results):
                 pred = "Tài" if p_tai > 0.5 else "Xỉu"
                 weight = min(25, 14 + abs(z) * 4)
                 return (pred, weight, f"7p_no_reverse_{alternations}alt")
-        
-        # Nếu lịch sử chưa đủ, dựa vào Nhóm (Groups) hiện tại
         groups = get_groups(results[:7])
         if len(groups) >= 2:
             if groups[0] < groups[1]:
-                # Đang ở nhóm ngắn hơn, dự đoán nối dài (không đảo)
                 return (last7[0], 16, "7p_no_reverse_extend")
             else:
-                # Đang ở nhóm dài hơn, dự đoán sắp đảo nhưng đợi thêm 1 nhịp
                 return (_opp(last7[0]), 14, "7p_no_reverse_wait")
-
     return None
 
 def algo_7p_hash_deep(results):
-    """
-    Hash-Deep 7 phiên (depth 3) để tìm quy luật.
-    """
     n = len(results)
     if n < 15: return None
     tx = encode_tx(results, 7)
@@ -436,22 +490,16 @@ def algo_7p_hash_deep(results):
     if not h: return None
     db = HASH_DEEP_DB[7]
     if h not in db: return None
-    
     counts = db[h]
     total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
-    
     p_tai = (counts["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
     if abs(z) < 1.1: return None
-    
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
     weight = min(24, 13 + abs(z) * 4)
     return (pred, weight, f"7p_hash_deep_{total}")
 
-# =====================================================================
-# CÁC THUẬT TOÁN CŨ (GIỮ NGUYÊN)
-# =====================================================================
 def analyze_5phien(results):
     if len(results) < 5: return None
     last5 = results[:5]
@@ -494,6 +542,24 @@ def algo_hash_deep_5p(results):
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
     weight = min(26, 14 + abs(z) * 4)
     return (pred, weight, f"hash_deep_5p_{total}")
+
+def algo_hash_deep_10p(results):
+    """Hash-Deep 10 phiên (trọng tâm ổn định)"""
+    tx = encode_tx(results, 10)
+    if not tx: return None
+    h = hash_deep_md5(tx, depth_level=3)
+    if not h: return None
+    db = HASH_DEEP_DB[10]
+    if h not in db: return None
+    counts = db[h]
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 3: return None
+    p_tai = (counts["Tài"] + 1) / (total + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+    if abs(z) < 1.0: return None
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    weight = min(25, 14 + abs(z) * 4)
+    return (pred, weight, f"hash_deep_10p_{total}")
 
 def algo_hash_deep_13p(results):
     tx = encode_tx(results, 13)
@@ -871,11 +937,14 @@ def algo_pair_pattern(results):
 def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
-    # CHÈN 2 THUẬT TOÁN 7P MỚI VÀO ĐÂY
+    
+    # Danh sách thuật toán (Đã thêm 3 thuật toán mới)
     for fn in (
-        algo_7p_no_reverse,   # <-- MỚI: Cầu 7 phiên không đảo nghịch
-        algo_7p_hash_deep,    # <-- MỚI: Hash-deep 7 phiên
+        algo_stable_zone_10p, # <-- MỚI: Cầu ổn định 10p
+        algo_7p_no_reverse,
+        algo_7p_hash_deep,
         algo_hash_deep_5p,
+        algo_hash_deep_10p,   # <-- MỚI: Hash 10p
         algo_hash_deep_13p,
         algo_hash_deep_multi,
         algo_md5_bit_analysis,
@@ -902,6 +971,7 @@ def analyze_full_bridge(results):
             if s: signals.append(s)
         except Exception:
             pass
+            
     try:
         cau = analyze_5phien(results)
         if cau:
@@ -909,6 +979,15 @@ def analyze_full_bridge(results):
             signals.append((pred, w, f"cau_{cau[0]}"))
     except Exception:
         pass
+    
+    # <-- MỚI: Lọc nhiễu và đồng thuận
+    try:
+        consensus = algo_consensus_filter(results, signals)
+        if consensus:
+            signals.append(consensus)
+    except Exception:
+        pass
+
     return signals
 
 def full_bridge_predict_adaptive(results, replay_n=80):
@@ -941,17 +1020,22 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         else:
             acc = 0.5
         accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
-        if regime == "streak" and "break" in name: accuracy_mult *= 1.10
-        elif regime == "alternation" and ("alt" in name or "5p" in name): accuracy_mult *= 1.15
         
-        # Tăng ưu tiên cho thuật toán mới 7P nếu nó đúng
+        # Gia tăng ưu tiên cho các thuật toán ổn định
+        if "stable_zone" in name: accuracy_mult *= 1.30
+        if "consensus" in name: accuracy_mult *= 1.20
         if "7p_no_reverse" in name: accuracy_mult *= 1.25
         if "7p_hash_deep" in name: accuracy_mult *= 1.15
+        if "hash_deep_10p" in name: accuracy_mult *= 1.18
+        
+        if regime == "streak" and "break" in name: accuracy_mult *= 1.10
+        elif regime == "alternation" and ("alt" in name or "5p" in name): accuracy_mult *= 1.15
         
         if "trend_" in name or "rhythm_" in name: accuracy_mult *= 1.12
         if "hash_deep_5p" in name: accuracy_mult *= 1.20
         if "hash_deep_13p" in name: accuracy_mult *= 1.10
         if "md5_bit_" in name or "md5_ngram_" in name: accuracy_mult *= 1.08
+        
         adjusted = weight * accuracy_mult
         if pred_sig == "Tài": st += adjusted
         else: sx += adjusted
@@ -963,6 +1047,7 @@ def full_bridge_predict_adaptive(results, replay_n=80):
 
     if total > 0:
         lean = max(st, sx) / total
+        # Nếu nghiêng > 85% mà chỉ có 2 tín hiệu, không tin
         if lean > 0.85 and len(signals) <= 2:
             return _opp(results[0]) if st > sx else results[0], 51, detail
 
@@ -977,12 +1062,18 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     disagree_w = sum(d['adjusted_weight'] for d in detail if d['pred'] != pred)
     total_w = agree_w + disagree_w + 1e-6
     conflict_ratio = disagree_w / total_w
-    if conflict_ratio > 0.55: conf -= 8
-    elif conflict_ratio > 0.40: conf -= 4
+    
+    # Hạ nhiệt nếu có xung đột mạnh
+    if conflict_ratio > 0.55: conf -= 12
+    elif conflict_ratio > 0.40: conf -= 6
 
     if ratio >= 0.72: conf += 5
     if len(signals) >= 6 and ratio >= 0.68: conf += 3
     if len(signals) < 3: conf -= 5
+
+    # NẾU NHIỄU QUÁ CAO (ít tín hiệu đồng thuận), hạ độ tin cậy
+    if ratio < 0.55 and total < 30:
+        conf = min(conf, 55)
 
     conf = int(max(50, min(MAX_CONFIDENCE, conf)))
     return pred, conf, detail
@@ -1164,6 +1255,7 @@ def predict():
 
         p5_signal = algo_5p_alternation(results)
         hash5_signal = algo_hash_deep_5p(results)
+        hash10_signal = algo_hash_deep_10p(results)
         hash13_signal = algo_hash_deep_13p(results)
         bit_signal = algo_md5_bit_analysis(results)
         ngram_signal = algo_md5_ngram(results)
@@ -1187,6 +1279,7 @@ def predict():
             'last13_hash': last13_hash,
             'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
             'hash_deep_5p': {'pred': hash5_signal[0], 'name': hash5_signal[2]} if hash5_signal else None,
+            'hash_deep_10p': {'pred': hash10_signal[0], 'name': hash10_signal[2]} if hash10_signal else None,
             'hash_deep_13p': {'pred': hash13_signal[0], 'name': hash13_signal[2]} if hash13_signal else None,
             'md5_bit': {'pred': bit_signal[0], 'name': bit_signal[2]} if bit_signal else None,
             'md5_ngram': {'pred': ngram_signal[0], 'name': ngram_signal[2]} if ngram_signal else None,
