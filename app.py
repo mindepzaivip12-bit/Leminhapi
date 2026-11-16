@@ -39,7 +39,7 @@ MD5_NGRAM_DB = {
 MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 LOSS_HISTORY = deque(maxlen=20)
 
-# ==== HTML + CSS ĐÃ GỘP VÀO ĐÂY ====
+# ==== HTML + CSS (GIỮ NGUYÊN) ====
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -113,7 +113,6 @@ HTML_TEMPLATE = """
 </style>
 </head>
 <body>
-
 <div class="header">
     <div class="header-title">LE MINH <span>MD5</span></div>
     <div class="header-actions">
@@ -122,35 +121,22 @@ HTML_TEMPLATE = """
         <button class="btn-reset" onclick="confirmReset()">Reset</button>
     </div>
 </div>
-
 <div class="stats-bar">
     <div class="stat-item"><div class="stat-label">Tổng</div><div class="stat-value" id="stat-total">0</div></div>
     <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
     <div class="stat-item"><div class="stat-label">Thua</div><div class="stat-value loss" id="stat-lose">0</div></div>
     <div class="stat-item"><div class="stat-label">Tỷ lệ thắng</div><div class="stat-value rate" id="stat-rate">0%</div></div>
 </div>
-
 <div class="table-wrapper">
     <div class="table-container">
         <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Phiên</th>
-                    <th>Dự đoán</th>
-                    <th>Kết quả</th>
-                    <th>Trạng thái</th>
-                </tr>
-            </thead>
-            <tbody id="table-body">
-                <tr><td colspan="4" class="loading">Đang kết nối Server...</td></tr>
-            </tbody>
+            <thead><tr><th>Phiên</th><th>Dự đoán</th><th>Kết quả</th><th>Trạng thái</th></tr></thead>
+            <tbody id="table-body"><tr><td colspan="4" class="loading">Đang kết nối Server...</td></tr></tbody>
         </table>
     </div>
 </div>
-
 <script>
 let isResetting = false;
-
 function animateNumber(el, target, suffix = '') {
     const start = parseInt(el.innerText.replace(/[^0-9]/g, '')) || 0;
     if (start === target) { el.innerText = target + suffix; return; }
@@ -164,7 +150,6 @@ function animateNumber(el, target, suffix = '') {
     }
     requestAnimationFrame(update);
 }
-
 async function fetchData() {
     if (isResetting) return;
     try {
@@ -175,7 +160,6 @@ async function fetchData() {
         renderTable(data.rows || [], data.stats || {});
     } catch (e) { console.error("Lỗi tải dữ liệu:", e); }
 }
-
 function renderTable(rows, stats) {
     const tbody = document.getElementById('table-body');
     const total = stats.total || 0;
@@ -186,11 +170,7 @@ function renderTable(rows, stats) {
     animateNumber(document.getElementById('stat-lose'), wrong);
     const rate = total > 0 ? (correct / total) * 100 : 0;
     animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
-
-    if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>';
-        return;
-    }
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>'; return; }
     let html = '';
     rows.forEach((row) => {
         let trClass = '';
@@ -199,9 +179,7 @@ function renderTable(rows, stats) {
         if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
         let recBadge = "";
-        if (row.recovery_flipped) {
-            recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡</span>`;
-        }
+        if (row.recovery_flipped) { recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡</span>`; }
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
             const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
@@ -220,9 +198,7 @@ function renderTable(rows, stats) {
         let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = row.recovery_flipped
-                ? `<span class="status st-recover">⚡ Đảo chiều</span>`
-                : `<span class="status st-wait">Chờ kết quả</span>`;
+            statusHtml = row.recovery_flipped ? `<span class="status st-recover">⚡ Đảo chiều</span>` : `<span class="status st-wait">Chờ kết quả</span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -234,7 +210,6 @@ function renderTable(rows, stats) {
     });
     tbody.innerHTML = html;
 }
-
 async function confirmReset() {
     Swal.fire({
         title: 'Xác nhận Reset?', text: "Toàn bộ lịch sử hiển thị sẽ bị xoá và bắt đầu lại từ đầu!",
@@ -259,7 +234,6 @@ async function confirmReset() {
         }
     });
 }
-
 fetchData();
 setInterval(fetchData, 5000);
 </script>
@@ -268,7 +242,7 @@ setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# CÁC HÀM XỬ LÝ (GIỮ NGUYÊN)
+# CÁC HÀM XỬ LÝ 
 # =====================================================================
 def fetch_sessions():
     try:
@@ -403,12 +377,86 @@ def learn_incremental(valid):
                 MD5_HAMMING_DB[hd // 8][valid[idx]['result']] += 1
         LEARNED_PHIEN = valid[-1]['phien']
 
+# =====================================================================
+# THUẬT TOÁN MỚI: 2 CẦU KHÔNG ĐẢO NGHỊCH LIÊN TỤC (7 PHIÊN)
+# =====================================================================
+def algo_7p_no_reverse(results):
+    """
+    Phân tích 7 phiên gần nhất. Nếu cầu đi theo dạng không đảo nghịch liên tục
+    (Ví dụ: 3T-2X-2T đang giữ nhịp), đánh tiếp hướng đang chạy.
+    """
+    n = len(results)
+    if n < 15: return None
+    
+    last7 = results[:7]
+    # Đếm số lần đổi chiều trong 7 phiên
+    alternations = sum(1 for i in range(6) if last7[i] != last7[i+1])
+    
+    # Cầu không đảo nghịch liên tục: Số lần đảo <= 3 (tức là có ít nhất 1 cặp hoặc bộ 3 giống nhau)
+    if alternations <= 3:
+        key7 = tuple(last7)
+        tai_next = xiu_next = 0
+        
+        # Tìm trong lịch sử xem chuỗi 7 phiên này từng xuất hiện chưa
+        for i in range(min(n - 7, 60)):
+            if tuple(results[i:i+7]) == key7:
+                if results[i+7] == "Tài": tai_next += 1
+                else: xiu_next += 1
+                
+        total_seen = tai_next + xiu_next
+        if total_seen >= 3:
+            p_tai = (tai_next + 1) / (total_seen + 2)
+            z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
+            if abs(z) >= 1.0:
+                pred = "Tài" if p_tai > 0.5 else "Xỉu"
+                weight = min(25, 14 + abs(z) * 4)
+                return (pred, weight, f"7p_no_reverse_{alternations}alt")
+        
+        # Nếu lịch sử chưa đủ, dựa vào Nhóm (Groups) hiện tại
+        groups = get_groups(results[:7])
+        if len(groups) >= 2:
+            if groups[0] < groups[1]:
+                # Đang ở nhóm ngắn hơn, dự đoán nối dài (không đảo)
+                return (last7[0], 16, "7p_no_reverse_extend")
+            else:
+                # Đang ở nhóm dài hơn, dự đoán sắp đảo nhưng đợi thêm 1 nhịp
+                return (_opp(last7[0]), 14, "7p_no_reverse_wait")
+
+    return None
+
+def algo_7p_hash_deep(results):
+    """
+    Hash-Deep 7 phiên (depth 3) để tìm quy luật.
+    """
+    n = len(results)
+    if n < 15: return None
+    tx = encode_tx(results, 7)
+    if not tx: return None
+    h = hash_deep_md5(tx, depth_level=3)
+    if not h: return None
+    db = HASH_DEEP_DB[7]
+    if h not in db: return None
+    
+    counts = db[h]
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 3: return None
+    
+    p_tai = (counts["Tài"] + 1) / (total + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+    if abs(z) < 1.1: return None
+    
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    weight = min(24, 13 + abs(z) * 4)
+    return (pred, weight, f"7p_hash_deep_{total}")
+
+# =====================================================================
+# CÁC THUẬT TOÁN CŨ (GIỮ NGUYÊN)
+# =====================================================================
 def analyze_5phien(results):
     if len(results) < 5: return None
     last5 = results[:5]
     alt = sum(1 for i in range(4) if last5[i] != last5[i+1])
-    if alt == 4:
-        return ("Đảo", _opp(last5[0]), 20)
+    if alt == 4: return ("Đảo", _opp(last5[0]), 20)
     if alt == 0:
         n = len(results)
         same_streak_cont = same_streak_break = 0
@@ -419,15 +467,12 @@ def analyze_5phien(results):
         total = same_streak_cont + same_streak_break
         if total >= 3:
             p_cont = (same_streak_cont + 1) / (total + 2)
-            if p_cont >= 0.55:
-                return ("Thuận", last5[0], 17)
-            else:
-                return ("Thuận_break", _opp(last5[0]), 16)
+            if p_cont >= 0.55: return ("Thuận", last5[0], 17)
+            else: return ("Thuận_break", _opp(last5[0]), 16)
         return ("Thuận", last5[0], 15)
     last4 = results[:4]
     alt4 = sum(1 for i in range(3) if last4[i] != last4[i+1])
-    if alt4 == 3:
-        return ("1-1", _opp(last4[0]), 18)
+    if alt4 == 3: return ("1-1", _opp(last4[0]), 18)
     streak = _count_streak(results)
     if streak >= 3 and streak <= 4 and len(results) > streak:
         return ("Nghịch", _opp(results[0]), 17)
@@ -820,10 +865,16 @@ def algo_pair_pattern(results):
         return (_opp(results[0]), 16, f"pattern_{groups[0]}_{groups[1]}_break")
     return None
 
+# =====================================================================
+# ANALYZER
+# =====================================================================
 def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
+    # CHÈN 2 THUẬT TOÁN 7P MỚI VÀO ĐÂY
     for fn in (
+        algo_7p_no_reverse,   # <-- MỚI: Cầu 7 phiên không đảo nghịch
+        algo_7p_hash_deep,    # <-- MỚI: Hash-deep 7 phiên
         algo_hash_deep_5p,
         algo_hash_deep_13p,
         algo_hash_deep_multi,
@@ -892,6 +943,11 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
         if regime == "streak" and "break" in name: accuracy_mult *= 1.10
         elif regime == "alternation" and ("alt" in name or "5p" in name): accuracy_mult *= 1.15
+        
+        # Tăng ưu tiên cho thuật toán mới 7P nếu nó đúng
+        if "7p_no_reverse" in name: accuracy_mult *= 1.25
+        if "7p_hash_deep" in name: accuracy_mult *= 1.15
+        
         if "trend_" in name or "rhythm_" in name: accuracy_mult *= 1.12
         if "hash_deep_5p" in name: accuracy_mult *= 1.20
         if "hash_deep_13p" in name: accuracy_mult *= 1.10
@@ -1016,6 +1072,9 @@ def reset_all_databases():
         LOSS_HISTORY.clear()
         LEARNED_PHIEN = RESET_ID
 
+# =====================================================================
+# ROUTES
+# =====================================================================
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
