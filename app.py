@@ -6,9 +6,8 @@ import threading
 import time
 from datetime import datetime
 from collections import defaultdict, deque, OrderedDict
-from functools import lru_cache
 import requests
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -18,7 +17,7 @@ API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=we
 
 HISTORY_CACHE = {}
 PREDICTION_CACHE = {}
-NEXT_PREDICTION_CACHE = OrderedDict()  # FIFO eviction
+NEXT_PREDICTION_CACHE = OrderedDict()
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
 MAX_CONFIDENCE = 90
@@ -26,14 +25,12 @@ MAX_CONFIDENCE = 90
 LEARNED_PHIEN = 0
 LEARN_LOCK = threading.Lock()
 
-# ==== LOCKS ====
 FETCH_LOCK = threading.Lock()
 PREDICTION_LOCK = threading.Lock()
 HISTORY_LOCK = threading.Lock()
-SIGNAL_STATS_CACHE = {}  # Cache signal stats theo (version, history_tuple)
+SIGNAL_STATS_CACHE = {}
 SIGNAL_STATS_LOCK = threading.Lock()
 
-# ✅ Signal version tracking để invalidate cache khi DB thay đổi
 LEARNED_SIGNAL_VERSION = 0
 SIGNAL_VERSION_LOCK = threading.Lock()
 
@@ -52,9 +49,8 @@ MD5_NGRAM_DB = {
 MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 LOSS_HISTORY = deque(maxlen=20)
 
-# ==== HTML + CSS (GIỮ NGUYÊN HOÀN TOÀN) ====
-HTML_TEMPLATE = """
-<!DOCTYPE html>
+# ==== HTML + CSS ====
+HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
@@ -130,7 +126,7 @@ HTML_TEMPLATE = """
     <div class="header-title">LE MINH <span>bon</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
-        <button class="btn-refresh" onclick="fetchData()">↻</button>
+        <button class="btn-refresh" onclick="fetchData()">&#8635;</button>
         <button class="btn-reset" onclick="confirmReset()">Reset</button>
     </div>
 </div>
@@ -150,7 +146,8 @@ HTML_TEMPLATE = """
 </div>
 <script>
 let isResetting = false;
-function animateNumber(el, target, suffix = '') {
+function animateNumber(el, target, suffix) {
+    suffix = suffix || '';
     const start = parseInt(el.innerText.replace(/[^0-9]/g, '')) || 0;
     if (start === target) { el.innerText = target + suffix; return; }
     const duration = 500;
@@ -168,6 +165,7 @@ async function fetchData() {
     try {
         const r = await fetch('/api/history', { cache: 'no-store' });
         const data = await r.json();
+        if (data.error) { console.error('API error:', data.error); return; }
         const now = new Date();
         document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
         renderTable(data.rows || [], data.stats || {});
@@ -185,41 +183,41 @@ function renderTable(rows, stats) {
     animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
     if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>'; return; }
     let html = '';
-    rows.forEach((row) => {
+    rows.forEach(function(row) {
         let trClass = '';
         if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
-        let predHtml = `<span class="badge badge-empty">-</span>`;
-        if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
-        if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let predHtml = '<span class="badge badge-empty">-</span>';
+        if (row.prediction === "Tài") predHtml = '<span class="badge badge-tai">TÀI</span>';
+        if (row.prediction === "Xỉu") predHtml = '<span class="badge badge-xiu">XỈU</span>';
         let recBadge = "";
-        if (row.recovery_flipped) { recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡</span>`; }
+        if (row.recovery_flipped) { recBadge = '<span class="recovery-badge" title="Auto-flip do thua ' + (row.loss_streak || 0) + ' lần">⚡</span>'; }
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
             const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
-            confHtml = `<div class="${cls}">${row.conf}%</div>`;
+            confHtml = '<div class="' + cls + '">' + row.conf + '%</div>';
         }
-        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}${recBadge}</div>`;
-        let resultHtml = `<span class="badge badge-empty">-</span>`;
-        if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
-        if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let predFull = '<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">' + predHtml + confHtml + recBadge + '</div>';
+        let resultHtml = '<span class="badge badge-empty">-</span>';
+        if (row.result === "Tài") resultHtml = '<span class="badge badge-tai">TÀI</span>';
+        if (row.result === "Xỉu") resultHtml = '<span class="badge badge-xiu">XỈU</span>';
         let diceDisplay = "";
         if (row.dice !== "? + ? + ?") {
             const p = row.dice.split(" + ");
             const sum = parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]);
-            diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
+            diceDisplay = '<span class="dice-text">' + row.dice + ' (' + sum + ')</span>';
         }
-        let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
+        let resultFull = '<div style="display:flex; flex-direction:column; align-items:center;">' + resultHtml + diceDisplay + '</div>';
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = row.recovery_flipped ? `<span class="status st-recover">⚡ Đảo chiều</span>` : `<span class="status st-wait">Chờ kết quả</span>`;
+            statusHtml = row.recovery_flipped ? '<span class="status st-recover">⚡ Đảo chiều</span>' : '<span class="status st-wait">Chờ kết quả</span>';
         } else if (row.is_correct === true) {
-            statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
+            statusHtml = '<span class="status st-win">✔ THẮNG</span>';
         } else if (row.is_correct === false) {
-            statusHtml = `<span class="status st-lose">✖ THUA</span>`;
+            statusHtml = '<span class="status st-lose">✖ THUA</span>';
         } else {
-            statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
+            statusHtml = '<span class="status" style="color:var(--text-muted)">-</span>';
         }
-        html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
+        html += '<tr ' + trClass + '><td>#' + row.phien + '</td><td>' + predFull + '</td><td>' + resultFull + '</td><td>' + statusHtml + '</td></tr>';
     });
     tbody.innerHTML = html;
 }
@@ -229,10 +227,10 @@ async function confirmReset() {
         icon: 'warning', background: '#1e293b', color: '#f8fafc',
         showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
         confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
-    }).then(async (result) => {
+    }).then(async function(result) {
         if (result.isConfirmed) {
             isResetting = true;
-            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, background: '#1e293b', color: '#f8fafc', didOpen: () => { Swal.showLoading() } });
+            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, background: '#1e293b', color: '#f8fafc', didOpen: function() { Swal.showLoading(); } });
             try {
                 const res = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
                 const data = await res.json();
@@ -258,7 +256,6 @@ setInterval(fetchData, 5000);
 # FETCH
 # =====================================================================
 def fetch_sessions():
-    """Fetch với retry logic và timeout hợp lý."""
     headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
     last_err = None
     for attempt in range(2):
@@ -346,7 +343,7 @@ def hamming_distance(h1, h2):
     return sum(a != b for a, b in zip(hash_to_bits(h1), hash_to_bits(h2)))
 
 # =====================================================================
-# LEARN INCREMENTAL (đã thêm version invalidation)
+# LEARN INCREMENTAL
 # =====================================================================
 def learn_incremental(valid):
     global LEARNED_PHIEN, LEARNED_SIGNAL_VERSION
@@ -402,7 +399,6 @@ def learn_incremental(valid):
                 hd = hamming_distance(hash_cache[idx], h_prev)
                 MD5_HAMMING_DB[hd // 8][valid[idx]['result']] += 1
         LEARNED_PHIEN = valid[-1]['phien']
-    # ✅ Invalidate signal stats cache vì DB đã thay đổi
     if db_changed:
         with SIGNAL_VERSION_LOCK:
             LEARNED_SIGNAL_VERSION += 1
@@ -414,12 +410,8 @@ def algo_lc79_specialist(results):
     n = len(results)
     if n < 20: return None
     if n >= 9:
-        block1 = results[0:3]
-        block2 = results[3:6]
-        block3 = results[6:9]
-        t1 = block1.count("Tài")
-        t2 = block2.count("Tài")
-        t3 = block3.count("Tài")
+        block1 = results[0:3]; block2 = results[3:6]; block3 = results[6:9]
+        t1 = block1.count("Tài"); t2 = block2.count("Tài"); t3 = block3.count("Tài")
         pattern = (t1, t2, t3)
         matches_tai = matches_xiu = 0
         for i in range(min(n - 9, 50)):
@@ -437,16 +429,13 @@ def algo_lc79_specialist(results):
                 pred = "Tài" if p_tai > 0.5 else "Xỉu"
                 weight = min(27, 16 + abs(z) * 4)
                 return (pred, weight, f"lc79_matrix_3x3_{t1}{t2}{t3}")
-
     groups = get_groups(results[:10])
     if len(groups) >= 2:
         if groups[0] == 1 and groups[1] >= 3:
-            hist_count = 0
-            tai_next = xiu_next = 0
+            hist_count = 0; tai_next = xiu_next = 0
             for i in range(min(n - groups[1] - 1, 60)):
                 if results[i] != results[i+1]:
-                    seg_start = i + 1
-                    seg_len = 1
+                    seg_start = i + 1; seg_len = 1
                     while seg_start + seg_len < n and results[seg_start] == results[seg_start + seg_len]:
                         seg_len += 1
                     if seg_len >= 3 and seg_start + seg_len < n:
@@ -457,7 +446,6 @@ def algo_lc79_specialist(results):
                 p_tai = (tai_next + 1) / (tai_next + xiu_next + 2)
                 pred = "Tài" if p_tai > 0.5 else "Xỉu"
                 return (pred, 22, "lc79_break_pattern")
-
     groups5 = get_groups(results[:5])
     if len(groups5) == 3 and (groups5[0] == 1 and groups5[1] == 2 and groups5[2] == 1) or \
        (len(groups5) == 3 and groups5[0] == 2 and groups5[1] == 1 and groups5[2] == 2):
@@ -471,8 +459,7 @@ def algo_7p_pattern_radar(results):
     groups = get_groups(last7)
     alt = sum(1 for i in range(6) if last7[i] != last7[i+1])
     if alt >= 5:
-        key7 = tuple(last7)
-        tai_next = xiu_next = 0
+        key7 = tuple(last7); tai_next = xiu_next = 0
         for i in range(min(n - 7, 60)):
             if tuple(results[i:i+7]) == key7:
                 if results[i+7] == "Tài": tai_next += 1
@@ -482,9 +469,7 @@ def algo_7p_pattern_radar(results):
             pred = "Tài" if p_tai > 0.5 else "Xỉu"
             return (pred, 24, "7p_radar_dao_1_1")
     if len(groups) == 1 and groups[0] >= 6:
-        streak = groups[0]
-        current = last7[0]
-        breaks = totals = 0
+        streak = groups[0]; current = last7[0]; breaks = totals = 0
         for i in range(min(n - streak, 60)):
             if all(results[i+j] == current for j in range(streak)):
                 totals += 1
@@ -515,8 +500,7 @@ def algo_7p_no_reverse(results):
     last7 = results[:7]
     alternations = sum(1 for i in range(6) if last7[i] != last7[i+1])
     if alternations <= 3:
-        key7 = tuple(last7)
-        tai_next = xiu_next = 0
+        key7 = tuple(last7); tai_next = xiu_next = 0
         for i in range(min(n - 7, 60)):
             if tuple(results[i:i+7]) == key7:
                 if results[i+7] == "Tài": tai_next += 1
@@ -546,8 +530,7 @@ def algo_7p_hash_deep(results):
     if not h: return None
     db = HASH_DEEP_DB[7]
     if h not in db: return None
-    counts = db[h]
-    total = counts["Tài"] + counts["Xỉu"]
+    counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
     p_tai = (counts["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
@@ -562,8 +545,7 @@ def algo_stable_zone_10p(results):
     last10 = results[:10]
     noise = sum(1 for i in range(9) if last10[i] != last10[i+1])
     if noise < 2 or noise > 6: return None
-    key10 = tuple(last10)
-    tai_next = xiu_next = 0
+    key10 = tuple(last10); tai_next = xiu_next = 0
     for i in range(min(n - 10, 80)):
         if tuple(results[i:i+10]) == key10:
             if results[i+10] == "Tài": tai_next += 1
@@ -629,8 +611,7 @@ def algo_hash_deep_5p(results):
     if not h: return None
     db = HASH_DEEP_DB[5]
     if h not in db: return None
-    counts = db[h]
-    total = counts["Tài"] + counts["Xỉu"]
+    counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
     p_tai = (counts["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
@@ -646,8 +627,7 @@ def algo_hash_deep_10p(results):
     if not h: return None
     db = HASH_DEEP_DB[10]
     if h not in db: return None
-    counts = db[h]
-    total = counts["Tài"] + counts["Xỉu"]
+    counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
     p_tai = (counts["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
@@ -663,8 +643,7 @@ def algo_hash_deep_13p(results):
     if not h: return None
     db = HASH_DEEP_DB[13]
     if h not in db: return None
-    counts = db[h]
-    total = counts["Tài"] + counts["Xỉu"]
+    counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
     p_tai = (counts["Tài"] + 1) / (total + 2)
     z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
@@ -674,8 +653,7 @@ def algo_hash_deep_13p(results):
     return (pred, weight, f"hash_deep_13p_{total}")
 
 def algo_hash_deep_multi(results):
-    combined = {"Tài": 0.0, "Xỉu": 0.0}
-    total_samples = 0
+    combined = {"Tài": 0.0, "Xỉu": 0.0}; total_samples = 0
     for depth, wf in ((13, 1.0), (10, 0.75), (7, 0.55), (5, 0.9)):
         tx = encode_tx(results, depth)
         if not tx: continue
@@ -683,8 +661,7 @@ def algo_hash_deep_multi(results):
         if not h: continue
         db = HASH_DEEP_DB[depth]
         if h not in db: continue
-        counts = db[h]
-        total = counts["Tài"] + counts["Xỉu"]
+        counts = db[h]; total = counts["Tài"] + counts["Xỉu"]
         if total < 2: continue
         p_tai = (counts["Tài"] + 1) / (total + 2)
         z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
@@ -914,8 +891,7 @@ def data_streak_break(results):
     if n < 25: return None
     streak = _count_streak(results)
     if streak < 3: return None
-    current = results[0]
-    breaks = totals = 0
+    current = results[0]; breaks = totals = 0
     i = 0
     while i < n - 1:
         j = i; cnt = 1
@@ -938,8 +914,7 @@ def data_bayes_ratio(results):
     n = len(results)
     if n < 15: return None
     window = results[:min(30, n)]
-    tai = window.count("Tài")
-    xiu = len(window) - tai
+    tai = window.count("Tài"); xiu = len(window) - tai
     alpha = 10 + tai; beta = 10 + xiu
     p_tai = alpha / (alpha + beta)
     var = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
@@ -1033,33 +1008,14 @@ def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
     for fn in (
-        algo_lc79_specialist,
-        algo_7p_pattern_radar,
-        algo_stable_zone_10p,
-        algo_7p_no_reverse,
-        algo_7p_hash_deep,
-        algo_hash_deep_5p,
-        algo_hash_deep_10p,
-        algo_hash_deep_13p,
-        algo_hash_deep_multi,
-        algo_md5_bit_analysis,
-        algo_md5_ngram,
-        algo_md5_hamming,
-        algo_5p_alternation,
-        algo_trend_break,
-        algo_break_rhythm,
-        data_markov2,
-        data_markov3,
-        data_pattern3,
-        data_alternation,
-        data_streak_break,
-        data_bayes_ratio,
-        data_tilt,
-        data_periodicity,
-        data_volatility_break,
-        data_entropy_bias,
-        data_cusum,
-        algo_pair_pattern,
+        algo_lc79_specialist, algo_7p_pattern_radar, algo_stable_zone_10p,
+        algo_7p_no_reverse, algo_7p_hash_deep, algo_hash_deep_5p,
+        algo_hash_deep_10p, algo_hash_deep_13p, algo_hash_deep_multi,
+        algo_md5_bit_analysis, algo_md5_ngram, algo_md5_hamming,
+        algo_5p_alternation, algo_trend_break, algo_break_rhythm,
+        data_markov2, data_markov3, data_pattern3, data_alternation,
+        data_streak_break, data_bayes_ratio, data_tilt, data_periodicity,
+        data_volatility_break, data_entropy_bias, data_cusum, algo_pair_pattern,
     ):
         try:
             s = fn(results)
@@ -1081,9 +1037,6 @@ def analyze_full_bridge(results):
         pass
     return signals
 
-# =====================================================================
-# ✅ FULL BRIDGE PREDICT - cache key có version invalidation
-# =====================================================================
 def full_bridge_predict_adaptive(results, replay_n=80):
     n = len(results)
     if n == 0: return "Tài", 50, []
@@ -1092,7 +1045,6 @@ def full_bridge_predict_adaptive(results, replay_n=80):
         if results[0] == results[1]: return _opp(results[0]), 55, []
         return results[1], 52, []
 
-    # ✅ Cache key gồm version → tự invalidate khi DB thay đổi
     with SIGNAL_VERSION_LOCK:
         version = LEARNED_SIGNAL_VERSION
     cache_key = (version, tuple(results[:min(n, replay_n + 30)]))
@@ -1152,10 +1104,9 @@ def full_bridge_predict_adaptive(results, replay_n=80):
     total = st + sx
     if total == 0: return results[0], 50, detail
 
-    if total > 0:
-        lean = max(st, sx) / total
-        if lean > 0.85 and len(signals) <= 2:
-            return _opp(results[0]) if st > sx else results[0], 51, detail
+    lean = max(st, sx) / total
+    if lean > 0.85 and len(signals) <= 2:
+        return _opp(results[0]) if st > sx else results[0], 51, detail
 
     if st > sx: pred, ratio = "Tài", st / total
     elif sx > st: pred, ratio = "Xỉu", sx / total
@@ -1188,7 +1139,6 @@ def get_prediction_for(valid, i):
         if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
     hist = [v['result'] for v in valid[:i]][::-1]
     if len(hist) < 3:
-        # ✅ Vẫn cache để tránh lặp lại
         result = ("-", 50, None)
     else:
         pred, conf, _ = full_bridge_predict_adaptive(hist)
@@ -1276,11 +1226,7 @@ def reset_all_databases():
     with SIGNAL_STATS_LOCK:
         SIGNAL_STATS_CACHE.clear()
 
-# =====================================================================
-# HELPER: _prepare_valid_state (đã tối ưu)
-# =====================================================================
 def _prepare_valid_state():
-    """Fetch + merge + learn + return (valid, success). Thread-safe."""
     with HISTORY_LOCK:
         raw_rows, success = fetch_sessions()
         if success:
@@ -1290,7 +1236,6 @@ def _prepare_valid_state():
             del HISTORY_CACHE[k]
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         ok = success or bool(HISTORY_CACHE)
-    # ✅ Learn ngoài HISTORY_LOCK
     if ok and valid:
         learn_incremental(valid)
     return valid, ok
@@ -1300,7 +1245,7 @@ def _prepare_valid_state():
 # =====================================================================
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    return Response(HTML_TEMPLATE, mimetype='text/html')
 
 @app.route('/health')
 def health():
@@ -1385,7 +1330,6 @@ def predict():
         results = [v['result'] for v in valid][::-1]
         loss_streak = compute_loss_streak(valid)
 
-        # ✅ Tận dụng cache từ get_stable_next_prediction
         cached = get_stable_next_prediction(valid)
         if cached and cached[0] is not None:
             pred, conf, flipped, reason, base_pred = cached
@@ -1394,7 +1338,6 @@ def predict():
             base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
             pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
 
-        # Compact mode cho app mobile
         if request.args.get('compact') == '1':
             return jsonify({
                 'next_phien': valid[-1]['phien'] + 1,
@@ -1573,7 +1516,6 @@ def reset_api():
             valid = sorted(raw_rows, key=lambda x: x['phien'])
             if valid:
                 new_reset_id = valid[-1]['phien']
-                # ✅ Lock lồng nhau đảm bảo atomic
                 with LEARN_LOCK:
                     with HISTORY_LOCK:
                         with PREDICTION_LOCK:
