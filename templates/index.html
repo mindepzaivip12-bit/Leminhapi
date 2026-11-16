@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LE MINH MD5</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-title">LE MINH <span>MD5</span></div>
+    <div class="header-actions">
+        <div class="time-update" id="time-update">--:--:--</div>
+        <button class="btn-refresh" onclick="fetchData()">↻</button>
+        <button class="btn-reset" onclick="confirmReset()">Reset</button>
+    </div>
+</div>
+
+<div class="stats-bar">
+    <div class="stat-item">
+        <div class="stat-label">Tổng</div>
+        <div class="stat-value" id="stat-total">0</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-label">Thắng</div>
+        <div class="stat-value win" id="stat-win">0</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-label">Thua</div>
+        <div class="stat-value loss" id="stat-lose">0</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-label">Tỷ lệ thắng</div>
+        <div class="stat-value rate" id="stat-rate">0%</div>
+    </div>
+</div>
+
+<div class="table-wrapper">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Phiên</th>
+                    <th>Dự đoán</th>
+                    <th>Kết quả</th>
+                    <th>Trạng thái</th>
+                </tr>
+            </thead>
+            <tbody id="table-body">
+                <tr><td colspan="4" class="loading">Đang kết nối Server...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+let isResetting = false;
+
+function animateNumber(el, target, suffix = '') {
+    const start = parseInt(el.innerText.replace(/[^0-9]/g, '')) || 0;
+    if (start === target) { el.innerText = target + suffix; return; }
+    const duration = 500;
+    const startTime = performance.now();
+    function update(t) {
+        const p = Math.min((t - startTime) / duration, 1);
+        const ease = 1 - Math.pow(1 - p, 3);
+        el.innerText = Math.floor(start + (target - start) * ease) + suffix;
+        if (p < 1) requestAnimationFrame(update);
+    }
+    requestAnimationFrame(update);
+}
+
+async function fetchData() {
+    if (isResetting) return;
+    try {
+        const r = await fetch('/api/history', { cache: 'no-store' });
+        const data = await r.json();
+        const now = new Date();
+        document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
+        renderTable(data.rows || [], data.stats || {});
+    } catch (e) { console.error("Lỗi tải dữ liệu:", e); }
+}
+
+function renderTable(rows, stats) {
+    const tbody = document.getElementById('table-body');
+    const total = stats.total || 0;
+    const correct = stats.correct || 0;
+    const wrong = total - correct;
+    animateNumber(document.getElementById('stat-total'), total);
+    animateNumber(document.getElementById('stat-win'), correct);
+    animateNumber(document.getElementById('stat-lose'), wrong);
+    const rate = total > 0 ? (correct / total) * 100 : 0;
+    animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
+
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>';
+        return;
+    }
+    let html = '';
+    rows.forEach((row) => {
+        let trClass = '';
+        if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
+        let predHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let recBadge = "";
+        if (row.recovery_flipped) {
+            recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡</span>`;
+        }
+        let confHtml = "";
+        if (row.conf && row.prediction !== "-") {
+            const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
+            confHtml = `<div class="${cls}">${row.conf}%</div>`;
+        }
+        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}${recBadge}</div>`;
+        let resultHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let diceDisplay = "";
+        if (row.dice !== "? + ? + ?") {
+            const p = row.dice.split(" + ");
+            const sum = parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]);
+            diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
+        }
+        let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
+        let statusHtml = '';
+        if (row.is_next) {
+            statusHtml = row.recovery_flipped
+                ? `<span class="status st-recover">⚡ Đảo chiều</span>`
+                : `<span class="status st-wait">Chờ kết quả</span>`;
+        } else if (row.is_correct === true) {
+            statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
+        } else if (row.is_correct === false) {
+            statusHtml = `<span class="status st-lose">✖ THUA</span>`;
+        } else {
+            statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
+        }
+        html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
+    });
+    tbody.innerHTML = html;
+}
+
+async function confirmReset() {
+    Swal.fire({
+        title: 'Xác nhận Reset?',
+        text: "Toàn bộ lịch sử hiển thị sẽ bị xoá và bắt đầu lại từ đầu!",
+        icon: 'warning', background: '#1e293b', color: '#f8fafc',
+        showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
+        confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
+    }).then(async (result) => {
+        if (result.isConfirmed) {
+            isResetting = true;
+            Swal.fire({
+                title: 'Đang Reset...', allowOutsideClick: false,
+                background: '#1e293b', color: '#f8fafc',
+                didOpen: () => { Swal.showLoading(); }
+            });
+            try {
+                const res = await fetch('/api/reset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    Swal.fire({
+                        title: 'Thành công!', text: 'Đã xoá lịch sử và bắt đầu lại.',
+                        icon: 'success', background: '#1e293b', color: '#f8fafc',
+                        confirmButtonColor: '#0ea5e9'
+                    });
+                    isResetting = false; fetchData();
+                } else {
+                    throw new Error(data.message);
+                }
+            } catch (error) {
+                Swal.fire({
+                    title: 'Lỗi!', text: 'Không thể reset: ' + error.message,
+                    icon: 'error', background: '#1e293b', color: '#f8fafc'
+                });
+                isResetting = false;
+            }
+        }
+    });
+}
+
+fetchData();
+setInterval(fetchData, 5000);
+</script>
+</body>
+</html>
