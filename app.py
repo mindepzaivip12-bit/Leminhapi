@@ -34,7 +34,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 V13</title>
+<title>LE MINH MD5 V14</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -96,7 +96,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span>V13</span></div>
+    <div class="header-title">LE MINH <span>V14</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -284,10 +284,9 @@ def learn_incremental(valid):
         LEARNED_PHIEN = valid[-1]['phien']
 
 # =====================================================================
-# ★★★ V13 CORE: 5P PATTERN ENGINE (NÂNG CAO) ★★★
+# ★★★ V14: PATTERN ENGINE + STABILITY LAYER ★★★
 # =====================================================================
 def classify_5p_pattern(last5):
-    """Phân loại 5 phiên: ĐẢO / THUẬN / NGHỊCH / 1-1 / KHÁC."""
     if len(last5) < 5:
         return None
     groups = get_groups(last5)
@@ -352,7 +351,6 @@ def lookup_hash_deep_5p(results):
 
 
 def _count_streak_break_stats(results, current, streak_len, max_scan=80):
-    """Đếm tiếp diễn vs bẻ gãy cho chuỗi streak_len cùng loại."""
     n = len(results)
     cont = brk = 0
     for i in range(min(n - streak_len, max_scan)):
@@ -363,31 +361,87 @@ def _count_streak_break_stats(results, current, streak_len, max_scan=80):
     return cont, brk
 
 
+def compute_stability_score(results, pred, total_pat, z_pat, hash_info, cau_type):
+    """
+    ★ STABILITY LAYER V14 ★
+    Tính điểm ổn định 0-100 dựa trên:
+    - Data density (số mẫu pattern)
+    - Z-score strength
+    - Hash agreement
+    - Cau type confidence
+    """
+    score = 50.0
+
+    # 1. Data density (0-25 điểm)
+    if total_pat >= 20: score += 25
+    elif total_pat >= 15: score += 20
+    elif total_pat >= 10: score += 15
+    elif total_pat >= 7: score += 10
+    elif total_pat >= 5: score += 5
+
+    # 2. Z-score strength (0-20 điểm)
+    abs_z = abs(z_pat)
+    if abs_z >= 2.0: score += 20
+    elif abs_z >= 1.5: score += 15
+    elif abs_z >= 1.0: score += 10
+    elif abs_z >= 0.8: score += 5
+
+    # 3. Hash agreement (0-20 điểm)
+    if hash_info:
+        h_pred = hash_info.get('pred')
+        h_z = abs(hash_info.get('z', 0))
+        h_total = hash_info.get('total', 0)
+        if h_pred == pred:
+            if h_total >= 10 and h_z >= 1.5: score += 20
+            elif h_total >= 7 and h_z >= 1.0: score += 15
+            elif h_total >= 5: score += 10
+            else: score += 5
+        else:
+            score -= 15  # xung đột
+    else:
+        score -= 10  # không có hash
+
+    # 4. Cau type stability (0-5 điểm)
+    stable_cau = {'ĐẢO': 5, 'THUẬN': 4, 'NGHỊCH': 3, '1-1': 3, 'KHÁC': 0}
+    score += stable_cau.get(cau_type, 0)
+
+    return max(0, min(100, round(score, 1)))
+
+
+def _recommendation_from_stability(stability, conf):
+    """Trả về mức khuyến nghị dựa trên stability + conf."""
+    if stability >= 75 and conf >= 70:
+        return "STRONG"
+    if stability >= 60 and conf >= 62:
+        return "NORMAL"
+    if stability >= 45:
+        return "CAUTION"
+    return "SKIP"
+
+
 def predict_5p_pattern(results):
     """
-    ★ THUẬT TOÁN V13 — NÂNG CAO ★
+    ★ THUẬT TOÁN V14 — ỔN ĐỊNH ★
     - 5P pattern classification
-    - Pattern stats + Hash-deep 5P cross-check
-    - Confidence calibration chặt
-    - Không nghiêng 1 phiên
-    - Không flip
+    - Adaptive threshold theo data density
+    - Stability score + recommendation
     """
     n = len(results)
     if n < 5:
-        if n == 0: return "Tài", 50, "KHÁC", {}
-        if n == 1: return _opp(results[0]), 52, "KHÁC", {}
+        if n == 0: return "Tài", 50, "KHÁC", _empty_detail(50)
+        if n == 1: return _opp(results[0]), 52, "KHÁC", _empty_detail(52)
         if n == 2:
-            if results[0] == results[1]: return _opp(results[0]), 54, "KHÁC", {}
-            return results[1], 52, "KHÁC", {}
+            if results[0] == results[1]: return _opp(results[0]), 54, "KHÁC", _empty_detail(54)
+            return results[1], 52, "KHÁC", _empty_detail(52)
         if n == 3:
             if results[0] == results[1] == results[2]:
-                return _opp(results[0]), 55, "KHÁC", {}
-            return results[0], 52, "KHÁC", {}
+                return _opp(results[0]), 55, "KHÁC", _empty_detail(55)
+            return results[0], 52, "KHÁC", _empty_detail(52)
         if n == 4:
             g = get_groups(results)
-            if len(g) == 1: return _opp(results[0]), 56, "KHÁC", {}
-            if len(g) == 4: return _opp(results[0]), 55, "KHÁC", {}
-            return results[0], 52, "KHÁC", {}
+            if len(g) == 1: return _opp(results[0]), 56, "KHÁC", _empty_detail(56)
+            if len(g) == 4: return _opp(results[0]), 55, "KHÁC", _empty_detail(55)
+            return results[0], 52, "KHÁC", _empty_detail(52)
 
     last5 = results[:5]
     pattern = classify_5p_pattern(last5)
@@ -399,6 +453,16 @@ def predict_5p_pattern(results):
     p_tai_pat, total_pat, z_pat = lookup_pattern_stats(results, 5, key_tuple)
     hash_result = lookup_hash_deep_5p(results)
 
+    # ★ ADAPTIVE THRESHOLD theo data density
+    if total_pat >= 15:
+        z_threshold = 0.7
+    elif total_pat >= 10:
+        z_threshold = 0.85
+    elif total_pat >= 6:
+        z_threshold = 1.0
+    else:
+        z_threshold = 1.3
+
     pred = None
     conf = 50
     reason = ""
@@ -407,7 +471,7 @@ def predict_5p_pattern(results):
     # ====== ĐẢO ======
     if cau_type == 'ĐẢO':
         theory_pred = _opp(last5[0])
-        if total_pat >= 5 and abs(z_pat) >= 0.8:
+        if total_pat >= 5 and abs(z_pat) >= z_threshold:
             data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
             if data_pred == theory_pred:
                 pred = data_pred
@@ -432,7 +496,7 @@ def predict_5p_pattern(results):
             if total_streak >= 5:
                 p_cont = (cont + 1) / (total_streak + 2)
                 z_cont = (p_cont - 0.5) / math.sqrt(0.25 / (total_streak + 2))
-                if abs(z_cont) >= 0.8:
+                if abs(z_cont) >= z_threshold:
                     if p_cont >= 0.55:
                         pred = current; conf = 58 + min(18, abs(z_cont) * 8)
                         reason = f"thuan_cont_{total_streak}"
@@ -454,7 +518,7 @@ def predict_5p_pattern(results):
     # ====== NGHỊCH ======
     elif cau_type == 'NGHỊCH':
         theory_pred = _opp(last5[0])
-        if total_pat >= 5 and abs(z_pat) >= 0.8:
+        if total_pat >= 5 and abs(z_pat) >= z_threshold:
             data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
             if data_pred == theory_pred:
                 pred = data_pred
@@ -471,7 +535,7 @@ def predict_5p_pattern(results):
     # ====== 1-1 ======
     elif cau_type == '1-1':
         theory_pred = _opp(last5[0])
-        if total_pat >= 5 and abs(z_pat) >= 0.8:
+        if total_pat >= 5 and abs(z_pat) >= z_threshold:
             data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
             if data_pred == theory_pred:
                 pred = data_pred
@@ -487,7 +551,7 @@ def predict_5p_pattern(results):
 
     # ====== KHÁC ======
     else:
-        if total_pat >= 5 and abs(z_pat) >= 1.0:
+        if total_pat >= 5 and abs(z_pat) >= z_threshold:
             pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
             conf = 55 + min(15, abs(z_pat) * 8)
             reason = f"khac_data_{total_pat}"
@@ -497,13 +561,12 @@ def predict_5p_pattern(results):
             else:
                 pred = results[0]; conf = 51; reason = "khac_fallback_follow"
 
-    # ====== HASH-DEEP 5P XÁC NHẬN ======
+    # ====== HASH XÁC NHẬN ======
     hash_info = {}
     if hash_result:
         h_pred, h_total, h_z, h_p_tai = hash_result
         hash_info = {'pred': h_pred, 'total': h_total,
                      'z': round(h_z, 2), 'p_tai': round(h_p_tai, 3)}
-
         if h_total >= 5 and abs(h_z) >= 1.0:
             if h_pred == pred:
                 conf += min(8, abs(h_z) * 3)
@@ -512,7 +575,7 @@ def predict_5p_pattern(results):
                 conf -= min(10, abs(h_z) * 4)
                 reason += "+hash_conflict"
 
-    # ====== GUARD CHỐNG NGHIÊNG ======
+    # ====== GUARD ======
     if hash_result and hash_info.get('pred') != pred:
         conf = min(conf, 58)
     elif not hash_result:
@@ -525,22 +588,39 @@ def predict_5p_pattern(results):
 
     conf = int(max(50, min(MAX_CONFIDENCE, round(conf))))
 
+    # ====== STABILITY ======
+    stability = compute_stability_score(results, pred, total_pat, z_pat, hash_info, cau_type)
+    recommendation = _recommendation_from_stability(stability, conf)
+
     detail = {
         'cau_type': cau_type,
         'groups': groups,
         'pattern_total': total_pat,
         'pattern_p_tai': round(p_tai_pat, 3),
         'pattern_z': round(z_pat, 2),
+        'z_threshold_used': round(z_threshold, 2),
         'hash_info': hash_info,
         'reason': reason,
         'extra': extra,
+        'stability_score': stability,
+        'recommendation': recommendation,
     }
 
     return pred, conf, cau_type, detail
 
 
+def _empty_detail(conf):
+    return {
+        'cau_type': 'KHÁC', 'groups': [], 'pattern_total': 0,
+        'pattern_p_tai': 0.5, 'pattern_z': 0.0, 'z_threshold_used': 1.3,
+        'hash_info': {}, 'reason': 'insufficient_data', 'extra': {},
+        'stability_score': 40.0,
+        'recommendation': _recommendation_from_stability(40.0, conf),
+    }
+
+
 # =====================================================================
-# PREDICTION CACHE (KHÔNG FLIP)
+# CACHE
 # =====================================================================
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
@@ -658,6 +738,14 @@ def predict():
             'prediction': pred,
             'confidence': conf,
             'cau_type': cau_type,
+            'stability_score': detail.get('stability_score', 50),
+            'recommendation': detail.get('recommendation', 'CAUTION'),
+            'pattern_health': {
+                'total_matches': detail.get('pattern_total', 0),
+                'z_score': detail.get('pattern_z', 0),
+                'threshold_used': detail.get('z_threshold_used', 1.3),
+                'hash_agreement': detail.get('hash_info', {}).get('pred') == pred if detail.get('hash_info') else None,
+            },
             'total_sessions': len(valid),
             'detail': detail,
             'timestamp': datetime.now().isoformat()
@@ -687,7 +775,7 @@ def lc79():
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
 
         return jsonify({
-            'Id': 'le minh md5 v13',
+            'Id': 'le minh md5 v14',
             'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(),
             'Lich_su': lich_su,
@@ -697,6 +785,8 @@ def lc79():
             'Cau_5P_Detail': detail.get('reason', ''),
             'Pattern_Total': detail.get('pattern_total', 0),
             'Hash_Info': detail.get('hash_info', {}),
+            'Stability': detail.get('stability_score', 50),
+            'Recommendation': detail.get('recommendation', 'CAUTION'),
         })
     except Exception as e:
         traceback.print_exc()
@@ -726,7 +816,7 @@ def lc79md5():
         next_phien = last['phien'] + 1
 
         return jsonify({
-            'id': '@cskhleminh v13',
+            'id': '@cskhleminh v14',
             'phien': str(next_phien),
             'ket_qua': f"{last['result'].lower()} {dice_short}",
             'du_doan': pred,
@@ -736,10 +826,115 @@ def lc79md5():
             'cau_5p_detail': detail.get('reason', ''),
             'pattern_total': detail.get('pattern_total', 0),
             'hash_info': detail.get('hash_info', {}),
+            'stability': detail.get('stability_score', 50),
+            'recommendation': detail.get('recommendation', 'CAUTION'),
         })
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+# =====================================================================
+# ★★★ V14: SIKIBID API ★★★
+# =====================================================================
+@app.route('/sikibid')
+def sikibid():
+    """
+    API Sikibidi chuẩn — format gọn, ổn định cho bot Sikibidi.
+    """
+    global RESET_ID
+    try:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid:
+            return jsonify({'error': 'Chưa có dữ liệu'}), 400
+        learn_incremental(valid)
+        results = [v['result'] for v in valid][::-1]
+        pred, conf, cau_type, detail = predict_5p_pattern(results)
+
+        last = valid[-1]
+        next_phien = last['phien'] + 1
+        stability = detail.get('stability_score', 50)
+        recommendation = detail.get('recommendation', 'CAUTION')
+
+        # Sikibidi format: TAI/XIU + độ tin cậy số
+        sikibidi_pred = "TAI" if pred == "Tài" else "XIU"
+        # Sikibidi thường dùng % dạng 0-100
+        sikibidi_conf = int(conf)
+
+        return jsonify({
+            'status': 'success',
+            'phien': next_phien,
+            'du_doan': sikibidi_pred,
+            'do_tin_cay': sikibidi_conf,
+            'stability': stability,
+            'recommendation': recommendation,
+            'last_result': last['result'],
+            'last_dice': last['dice'],
+            'timestamp': datetime.now().isoformat(),
+            'signature': 'leminh_v14',
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+
+@app.route('/sikibidmd5')
+def sikibidmd5():
+    """
+    API Sikibidi MD5 — format đầy đủ cho bot nâng cao.
+    """
+    global RESET_ID
+    try:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
+            return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid:
+            return jsonify({'error': 'Chưa có dữ liệu'}), 400
+        learn_incremental(valid)
+        results = [v['result'] for v in valid][::-1]
+        pred, conf, cau_type, detail = predict_5p_pattern(results)
+
+        last = valid[-1]
+        next_phien = last['phien'] + 1
+        dice_parts = last['dice'].split(" + ")
+        dice_short = "-".join(dice_parts) if len(dice_parts) == 3 else last['dice']
+        groups = get_groups(results)
+        lich_su = "-" + "-".join(str(g) for g in groups[:4])
+
+        stability = detail.get('stability_score', 50)
+        recommendation = detail.get('recommendation', 'CAUTION')
+        sikibidi_pred = "TAI" if pred == "Tài" else "XIU"
+
+        return jsonify({
+            'status': 'success',
+            'phien': next_phien,
+            'du_doan': sikibidi_pred,
+            'do_tin_cay': int(conf),
+            'stability': stability,
+            'recommendation': recommendation,
+            'last_result': last['result'],
+            'last_dice': dice_short,
+            'lich_su': lich_su,
+            'cau_5p': cau_type,
+            'cau_5p_detail': detail.get('reason', ''),
+            'pattern_total': detail.get('pattern_total', 0),
+            'pattern_z': detail.get('pattern_z', 0),
+            'hash_info': detail.get('hash_info', {}),
+            'total_sessions': len(valid),
+            'timestamp': datetime.now().isoformat(),
+            'signature': 'leminh_v14_sikibid_md5',
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
 @app.route('/api/reset', methods=['POST'])
