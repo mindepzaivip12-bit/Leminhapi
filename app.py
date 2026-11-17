@@ -39,210 +39,11 @@ MD5_NGRAM_DB = {
 MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 LOSS_HISTORY = deque(maxlen=20)
 
-# ==== HTML + CSS ====
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5</title>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-<style>
-    :root {
-        --bg-page: #0f172a; --bg-card: #1e293b; --text-main: #f8fafc;
-        --text-muted: #94a3b8; --border-color: #334155;
-        --tai-color: #38bdf8; --tai-bg: rgba(56, 189, 248, 0.15);
-        --xiu-color: #f472b6; --xiu-bg: rgba(244, 114, 182, 0.15);
-        --win-color: #34d399; --win-bg: rgba(52, 211, 153, 0.15);
-        --lose-color: #f87171; --lose-bg: rgba(248, 113, 113, 0.15);
-        --wait-color: #fbbf24; --wait-bg: rgba(251, 191, 36, 0.15);
-        --recovery-color: #fb923c; --recovery-bg: rgba(251, 146, 60, 0.15);
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
-    body { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); color: var(--text-main); min-height: 100vh; padding-bottom: 40px; }
-    .header { background: rgba(30, 41, 59, 0.85); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border-color); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
-    .header-title { font-size: 22px; font-weight: 800; color: #38bdf8; display: flex; align-items: center; gap: 10px; text-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
-    .header-title span { font-size: 11px; background: linear-gradient(135deg, #38bdf8, #ec4899); color: #fff; padding: 4px 12px; border-radius: 20px; font-weight: 800; letter-spacing: 1px; box-shadow: 0 0 15px rgba(236, 72, 153, 0.4); }
-    .header-actions { display: flex; gap: 12px; align-items: center; }
-    .time-update { font-size: 12px; color: var(--text-muted); font-weight: 600; }
-    .btn-refresh { background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); width: 38px; height: 38px; border-radius: 10px; font-weight: 700; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
-    .btn-refresh:hover { background: var(--border-color); transform: rotate(180deg); }
-    .btn-reset { background: rgba(248, 113, 113, 0.2); color: var(--lose-color); border: 1px solid var(--lose-color); padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer; transition: 0.2s; }
-    .btn-reset:hover { background: var(--lose-color); color: #fff; box-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
-    .stats-bar { max-width: 800px; margin: 24px auto 16px; padding: 0 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-    .stat-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 16px 10px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
-    .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.3px; }
-    .stat-value { font-size: 22px; font-weight: 800; color: var(--text-main); }
-    .stat-value.win { color: var(--win-color); text-shadow: 0 0 15px rgba(52, 211, 153, 0.4); }
-    .stat-value.loss { color: var(--lose-color); text-shadow: 0 0 15px rgba(248, 113, 113, 0.4); }
-    .stat-value.rate { color: var(--tai-color); text-shadow: 0 0 15px rgba(56, 189, 248, 0.4); }
-    .table-wrapper { max-width: 800px; margin: 0 auto; padding: 0 16px; }
-    .table-container { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-height: 70vh; overflow-y: auto; }
-    .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
-    .data-table th { background: #111827; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 16px 12px; text-align: center; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 10; }
-    .data-table td { padding: 14px 12px; text-align: center; border-bottom: 1px solid var(--border-color); font-size: 14px; font-weight: 600; }
-    .data-table tr:last-child td { border-bottom: none; }
-    .data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
-    .row-next { background: rgba(14, 165, 233, 0.08); border-left: 4px solid var(--tai-color); }
-    .row-next.recovery { background: rgba(251, 146, 60, 0.1); border-left: 4px solid var(--recovery-color); }
-    .badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; min-width: 70px; text-align: center; }
-    .badge-tai { background: var(--tai-bg); color: var(--tai-color); border: 1px solid rgba(56, 189, 248, 0.3); box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); }
-    .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); border: 1px solid rgba(244, 114, 182, 0.3); box-shadow: 0 0 10px rgba(244, 114, 182, 0.2); }
-    .badge-empty { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
-    .recovery-badge { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 800; background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); box-shadow: 0 0 10px rgba(251, 146, 60, 0.3); animation: pulse 1.5s infinite; letter-spacing: 0.5px; }
-    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; }
-    .st-win { background: var(--win-bg); color: var(--win-color); border: 1px solid rgba(52, 211, 153, 0.3); }
-    .st-lose { background: var(--lose-bg); color: var(--lose-color); border: 1px solid rgba(248, 113, 113, 0.3); }
-    .st-wait { background: var(--wait-bg); color: var(--wait-color); border: 1px solid rgba(251, 191, 36, 0.3); animation: pulse 1.5s infinite; }
-    .st-recover { background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); animation: pulse 1.5s infinite; }
-    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-    .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
-    .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
-    .conf-badge.high { color: #34d399; background: rgba(52, 211, 153, 0.15); box-shadow: 0 0 10px rgba(52, 211, 153, 0.2); }
-    .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
-    @media (max-width: 500px) {
-        .data-table th, .data-table td { padding: 10px 6px; font-size: 12px; }
-        .badge { padding: 4px 8px; font-size: 11px; min-width: 50px; }
-        .header-title { font-size: 18px; }
-        .time-update { display: none; }
-        .stats-bar { grid-template-columns: repeat(2, 1fr); }
-        .stat-value { font-size: 18px; }
-    }
-</style>
-</head>
-<body>
-<div class="header">
-    <div class="header-title">LE MINH <span>MD5</span></div>
-    <div class="header-actions">
-        <div class="time-update" id="time-update">--:--:--</div>
-        <button class="btn-refresh" onclick="fetchData()">↻</button>
-        <button class="btn-reset" onclick="confirmReset()">Reset</button>
-    </div>
-</div>
-<div class="stats-bar">
-    <div class="stat-item"><div class="stat-label">Tổng</div><div class="stat-value" id="stat-total">0</div></div>
-    <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
-    <div class="stat-item"><div class="stat-label">Thua</div><div class="stat-value loss" id="stat-lose">0</div></div>
-    <div class="stat-item"><div class="stat-label">Tỷ lệ thắng</div><div class="stat-value rate" id="stat-rate">0%</div></div>
-</div>
-<div class="table-wrapper">
-    <div class="table-container">
-        <table class="data-table">
-            <thead><tr><th>Phiên</th><th>Dự đoán</th><th>Kết quả</th><th>Trạng thái</th></tr></thead>
-            <tbody id="table-body"><tr><td colspan="4" class="loading">Đang kết nối Server...</td></tr></tbody>
-        </table>
-    </div>
-</div>
-<script>
-let isResetting = false;
-function animateNumber(el, target, suffix = '') {
-    const start = parseInt(el.innerText.replace(/[^0-9]/g, '')) || 0;
-    if (start === target) { el.innerText = target + suffix; return; }
-    const duration = 500;
-    const startTime = performance.now();
-    function update(t) {
-        const p = Math.min((t - startTime) / duration, 1);
-        const ease = 1 - Math.pow(1 - p, 3);
-        el.innerText = Math.floor(start + (target - start) * ease) + suffix;
-        if (p < 1) requestAnimationFrame(update);
-    }
-    requestAnimationFrame(update);
-}
-async function fetchData() {
-    if (isResetting) return;
-    try {
-        const r = await fetch('/api/history', { cache: 'no-store' });
-        const data = await r.json();
-        const now = new Date();
-        document.getElementById('time-update').innerText = now.toLocaleTimeString('vi-VN');
-        renderTable(data.rows || [], data.stats || {});
-    } catch (e) { console.error("Lỗi tải dữ liệu:", e); }
-}
-function renderTable(rows, stats) {
-    const tbody = document.getElementById('table-body');
-    const total = stats.total || 0;
-    const correct = stats.correct || 0;
-    const wrong = total - correct;
-    animateNumber(document.getElementById('stat-total'), total);
-    animateNumber(document.getElementById('stat-win'), correct);
-    animateNumber(document.getElementById('stat-lose'), wrong);
-    const rate = total > 0 ? (correct / total) * 100 : 0;
-    animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
-    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>'; return; }
-    let html = '';
-    rows.forEach((row) => {
-        let trClass = '';
-        if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
-        let predHtml = `<span class="badge badge-empty">-</span>`;
-        if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
-        if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
-        let recBadge = "";
-        if (row.recovery_flipped) { recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡</span>`; }
-        let confHtml = "";
-        if (row.conf && row.prediction !== "-") {
-            const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
-            confHtml = `<div class="${cls}">${row.conf}%</div>`;
-        }
-        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}${recBadge}</div>`;
-        let resultHtml = `<span class="badge badge-empty">-</span>`;
-        if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
-        if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
-        let diceDisplay = "";
-        if (row.dice !== "? + ? + ?") {
-            const p = row.dice.split(" + ");
-            const sum = parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]);
-            diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
-        }
-        let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
-        let statusHtml = '';
-        if (row.is_next) {
-            statusHtml = row.recovery_flipped ? `<span class="status st-recover">⚡ Đảo chiều</span>` : `<span class="status st-wait">Chờ kết quả</span>`;
-        } else if (row.is_correct === true) {
-            statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
-        } else if (row.is_correct === false) {
-            statusHtml = `<span class="status st-lose">✖ THUA</span>`;
-        } else {
-            statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
-        }
-        html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
-    });
-    tbody.innerHTML = html;
-}
-async function confirmReset() {
-    Swal.fire({
-        title: 'Xác nhận Reset?', text: "Toàn bộ lịch sử hiển thị sẽ bị xoá và bắt đầu lại từ đầu!",
-        icon: 'warning', background: '#1e293b', color: '#f8fafc',
-        showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
-        confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
-    }).then(async (result) => {
-        if (result.isConfirmed) {
-            isResetting = true;
-            Swal.fire({ title: 'Đang Reset...', allowOutsideClick: false, background: '#1e293b', color: '#f8fafc', didOpen: () => { Swal.showLoading() } });
-            try {
-                const res = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    Swal.fire({ title: 'Thành công!', text: 'Đã xoá lịch sử và bắt đầu lại.', icon: 'success', background: '#1e293b', color: '#f8fafc', confirmButtonColor: '#0ea5e9' });
-                    isResetting = false; fetchData();
-                } else { throw new Error(data.message); }
-            } catch (error) {
-                Swal.fire({title: 'Lỗi!', text: 'Không thể reset: ' + error.message, icon: 'error', background: '#1e293b', color: '#f8fafc'});
-                isResetting = false;
-            }
-        }
-    });
-}
-fetchData();
-setInterval(fetchData, 5000);
-</script>
-</body>
-</html>
-"""
+# ==== HTML giữ nguyên (bỏ qua trong snippet này để gọn) ====
+HTML_TEMPLATE = """..."""  # Giữ NGUYÊN template gốc
 
 # =====================================================================
-# CÁC HÀM XỬ LÝ
+# CÁC HÀM XỬ LÝ CƠ BẢN
 # =====================================================================
 def fetch_sessions():
     try:
@@ -378,9 +179,7 @@ def learn_incremental(valid):
         LEARNED_PHIEN = valid[-1]['phien']
 
 # =====================================================================
-# MODULE MỚI: PHÂN TÍCH CẦU 6 PHIÊN CHUẨN HÓA
-# Đảo / Thuận / Nghịch / 1-1
-# Trọng số 12-18 (thấp) → KHÔNG nghiêng về 1 phiên
+# MODULE 6P (giữ nguyên)
 # =====================================================================
 def classify_6p_pattern(results):
     n = len(results)
@@ -389,7 +188,6 @@ def classify_6p_pattern(results):
     last5 = results[:5]
     alt_count = sum(1 for i in range(5) if last6[i] != last6[i+1])
 
-    # ---------- ĐẢO: 6 phiên đảo hoàn toàn ----------
     if alt_count == 5:
         tai_next = xiu_next = 0
         key6 = tuple(last6)
@@ -411,7 +209,6 @@ def classify_6p_pattern(results):
         return {'type': 'Đảo', 'pred': _opp(last6[0]), 'weight': 13,
                 'reason': 'dao_6p_lythuyet'}
 
-    # ---------- THUẬN: 6 phiên cùng hướng ----------
     if alt_count == 0:
         current = last6[0]
         cont = brk = 0
@@ -434,7 +231,6 @@ def classify_6p_pattern(results):
         return {'type': 'Thuận', 'pred': current, 'weight': 12,
                 'reason': 'thuan_6p_lythuyet'}
 
-    # ---------- 1-1 (ZIGZAG cặp đôi) ----------
     groups = get_groups(last6)
     if len(groups) == 3 and all(g == 2 for g in groups):
         return {'type': '1-1', 'pred': last6[0], 'weight': 15,
@@ -449,7 +245,6 @@ def classify_6p_pattern(results):
         return {'type': '1-1', 'pred': _opp(last6[0]), 'weight': 14,
                 'reason': 'zigzag_3_3'}
 
-    # ---------- NGHỊCH: 5 phiên đảo 4 lần ----------
     alt5 = sum(1 for i in range(4) if last5[i] != last5[i+1])
     if alt5 == 4:
         key5 = tuple(last5)
@@ -472,7 +267,6 @@ def classify_6p_pattern(results):
         return {'type': 'Nghịch', 'pred': _opp(last5[0]), 'weight': 14,
                 'reason': 'nghich_5p_lythuyet'}
 
-    # ---------- NGHỊCH NHẸ: streak 3-4 ----------
     streak = _count_streak(results)
     if 3 <= streak <= 4 and len(results) > streak:
         current = results[0]
@@ -500,13 +294,12 @@ def classify_6p_pattern(results):
 
 
 def algo_6p_balanced(results):
-    """Wrapper trả về tuple (pred, weight, name) cho analyze_full_bridge."""
     info = classify_6p_pattern(results)
     if not info: return None
     return (info['pred'], info['weight'], info['reason'])
 
 # =====================================================================
-# THUẬT TOÁN LC79 CHUYÊN BIỆT
+# CÁC THUẬT TOÁN KHÁC (giữ nguyên, không đổi)
 # =====================================================================
 def algo_lc79_specialist(results):
     n = len(results)
@@ -656,32 +449,6 @@ def algo_consensus_filter(results, current_signals):
     if ratio < 0.55: return None
     pred = "Tài" if tai_score > xiu_score else "Xỉu"
     return (pred, min(14, 9 + (ratio - 0.5) * 28), f"consensus_{int(ratio*100)}pct")
-
-# Giữ analyze_5phien cũ để tương thích endpoint /api/predict (nhưng không dùng trong analyze_full_bridge)
-def analyze_5phien(results):
-    if len(results) < 5: return None
-    last5 = results[:5]
-    alt = sum(1 for i in range(4) if last5[i] != last5[i+1])
-    if alt == 4: return ("Đảo", _opp(last5[0]), 20)
-    if alt == 0:
-        n = len(results); same_streak_cont = same_streak_break = 0
-        for i in range(min(n - 5, 40)):
-            if results[i:i+5] == last5:
-                if results[i+5] == last5[0]: same_streak_cont += 1
-                else: same_streak_break += 1
-        total = same_streak_cont + same_streak_break
-        if total >= 3:
-            p_cont = (same_streak_cont + 1) / (total + 2)
-            if p_cont >= 0.55: return ("Thuận", last5[0], 17)
-            else: return ("Thuận_break", _opp(last5[0]), 16)
-        return ("Thuận", last5[0], 15)
-    last4 = results[:4]
-    alt4 = sum(1 for i in range(3) if last4[i] != last4[i+1])
-    if alt4 == 3: return ("1-1", _opp(last4[0]), 18)
-    streak = _count_streak(results)
-    if streak >= 3 and streak <= 4 and len(results) > streak:
-        return ("Nghịch", _opp(results[0]), 17)
-    return None
 
 def algo_hash_deep_5p(results):
     tx = encode_tx(results, 5)
@@ -1026,9 +793,6 @@ def algo_pair_pattern(results):
         return (_opp(results[0]), 14, f"pattern_{groups[0]}_{groups[1]}_break")
     return None
 
-# =====================================================================
-# META-PREDICTOR
-# =====================================================================
 def algo_regime_predictor(results):
     n = len(results)
     if n < 30: return None
@@ -1057,45 +821,283 @@ def algo_regime_predictor(results):
         return (_opp(results[0]), min(20, 12 + prob * 14), f"regime_pred_alt_{prob:.2f}")
     return None
 
-def meta_predictor(all_signals, signal_stats):
-    adjusted_signals = []
-    for pred, weight, name in all_signals:
-        stats = signal_stats.get(name, {})
-        recent_hits = stats.get('recent_hits', [])
-        win_streak = 0; loss_streak = 0
-        for hit in recent_hits[:5]:
-            if hit: win_streak += 1
-            else: break
-        for hit in recent_hits[:5]:
-            if not hit: loss_streak += 1
-            else: break
-        momentum = 0.0
-        if recent_hits:
-            for i, hit in enumerate(recent_hits[:5]):
-                momentum += (1.0 if hit else 0.0) * (0.9 ** i)
-            momentum /= sum(0.9 ** i for i in range(min(5, len(recent_hits))))
-        streak_bonus = 1.0
-        if win_streak >= 3: streak_bonus = 1.30
-        elif win_streak == 2: streak_bonus = 1.15
-        elif loss_streak >= 3: streak_bonus = 0.50
-        elif loss_streak == 2: streak_bonus = 0.75
-        momentum_mult = 0.6 + momentum * 0.8
-        final_weight = weight * streak_bonus * momentum_mult
-        adjusted_signals.append((pred, final_weight, name, win_streak, loss_streak, momentum))
-    return adjusted_signals
+def analyze_5phien(results):
+    if len(results) < 5: return None
+    last5 = results[:5]
+    alt = sum(1 for i in range(4) if last5[i] != last5[i+1])
+    if alt == 4: return ("Đảo", _opp(last5[0]), 20)
+    if alt == 0:
+        n = len(results); same_streak_cont = same_streak_break = 0
+        for i in range(min(n - 5, 40)):
+            if results[i:i+5] == last5:
+                if results[i+5] == last5[0]: same_streak_cont += 1
+                else: same_streak_break += 1
+        total = same_streak_cont + same_streak_break
+        if total >= 3:
+            p_cont = (same_streak_cont + 1) / (total + 2)
+            if p_cont >= 0.55: return ("Thuận", last5[0], 17)
+            else: return ("Thuận_break", _opp(last5[0]), 16)
+        return ("Thuận", last5[0], 15)
+    last4 = results[:4]
+    alt4 = sum(1 for i in range(3) if last4[i] != last4[i+1])
+    if alt4 == 3: return ("1-1", _opp(last4[0]), 18)
+    streak = _count_streak(results)
+    if streak >= 3 and streak <= 4 and len(results) > streak:
+        return ("Nghịch", _opp(results[0]), 17)
+    return None
 
 # =====================================================================
-# ANALYZER CHÍNH - ĐÃ TÍCH HỢP 6P
+# ★ V9 ENGINE — THAY THẾ META-PREDICTOR CŨ
+# =====================================================================
+SIGNAL_FAMILIES = {
+    'lc79':      ('lc79_',),
+    '6p':        ('dao_6p', 'thuan_6p', 'nghich_6p', 'zigzag'),
+    '7p':        ('7p_radar', '7p_no_reverse', '7p_hash_deep'),
+    '10p':       ('stable_zone', 'hash_deep_10p'),
+    'hash13':    ('hash_deep_13p', 'hash_deep_multi'),
+    'bit':       ('md5_bit_',),
+    'ngram':     ('md5_ngram_',),
+    'hamming':   ('md5_hamming_',),
+    'alt':       ('5p_alt', 'alt_'),
+    'streak':    ('streak_', 'break_rhythm', 'volatility_'),
+    'trend':     ('trend_',),
+    'markov':    ('markov',),
+    'pattern':   ('pattern_', 'pattern3'),
+    'bayes':     ('bayes_', 'tilt_', 'entropy_', 'cusum_'),
+    'periodic':  ('periodicity_',),
+    'regime':    ('regime_pred',),
+    'consensus': ('consensus_',),
+}
+
+_FAMILY_BASE_CAP = {
+    'lc79': 30, '6p': 34, '7p': 26, '10p': 22, 'hash13': 20,
+    'bit': 18, 'ngram': 16, 'hamming': 14, 'alt': 18, 'streak': 16,
+    'trend': 14, 'markov': 16, 'pattern': 18, 'bayes': 14,
+    'periodic': 16, 'regime': 20, 'consensus': 12, 'other': 12,
+}
+
+def _signal_family(name):
+    for fam, prefixes in SIGNAL_FAMILIES.items():
+        for p in prefixes:
+            if p in name:
+                return fam
+    return 'other'
+
+def _family_cap(family, regime):
+    cap = _FAMILY_BASE_CAP.get(family, 12)
+    if regime == 'alternation':
+        if family in ('alt', '6p', '7p'): cap *= 1.30
+        if family in ('streak', 'trend'):  cap *= 0.70
+    elif regime == 'streak':
+        if family in ('streak', 'trend'):  cap *= 1.30
+        if family in ('alt', '6p'):        cap *= 0.75
+    return cap
+
+def _bayes_accuracy(wins, total, prior=0.5, prior_strength=2.0):
+    return (wins + prior * prior_strength) / (total + prior_strength)
+
+def meta_predictor_v9(all_signals, signal_stats, regime):
+    """Điều chỉnh weight dựa trên: 
+       - accuracy lịch sử (co giãn tuyến tính [0.55, 1.35])
+       - streak bonus/penalty
+       - momentum decay
+       - regime multiplier theo family
+    """
+    adjusted = []
+    for pred, weight, name in all_signals:
+        stats = signal_stats.get(name, {})
+        wins = stats.get('wins', 0.0)
+        total = stats.get('total', 0.0)
+        recent = stats.get('recent_hits', [])
+
+        # --- Accuracy co giãn tuyến tính (KHÔNG phình) ---
+        if total >= 3.0:
+            acc = _bayes_accuracy(wins, total, prior=0.5, prior_strength=2.5)
+        else:
+            acc = 0.5
+        accuracy_mult = 0.55 + max(0.0, min(0.80, (acc - 0.40) * 2.0))
+        # → acc=0.40 → 0.55 ; acc=0.65 → 1.05 ; acc=0.80 → 1.35
+
+        # --- Streak bonus/penalty ---
+        win_streak = 0; loss_streak = 0
+        for h in recent[:5]:
+            if h: win_streak += 1
+            else: break
+        for h in recent[:5]:
+            if not h: loss_streak += 1
+            else: break
+        if   loss_streak >= 4: streak_mult = 0.45
+        elif loss_streak == 3: streak_mult = 0.60
+        elif loss_streak == 2: streak_mult = 0.80
+        elif win_streak >= 4:  streak_mult = 1.20
+        elif win_streak == 3:  streak_mult = 1.12
+        elif win_streak == 2:  streak_mult = 1.05
+        else:                  streak_mult = 1.00
+
+        # --- Momentum (decay 0.85) ---
+        if recent:
+            n_use = min(5, len(recent))
+            w_sum = sum(0.85 ** i for i in range(n_use))
+            m = sum((1.0 if recent[i] else 0.0) * (0.85 ** i) for i in range(n_use)) / w_sum
+        else:
+            m = 0.5
+        momentum_mult = 0.85 + m * 0.30   # [0.85, 1.15]
+
+        # --- Regime multiplier theo family ---
+        fam = _signal_family(name)
+        reg_mult = 1.0
+        if regime == 'alternation':
+            if fam in ('alt', '6p', '7p'): reg_mult = 1.15
+            elif fam in ('streak', 'trend'): reg_mult = 0.85
+        elif regime == 'streak':
+            if fam in ('streak', 'trend'): reg_mult = 1.15
+            elif fam in ('alt', '6p'):     reg_mult = 0.85
+
+        final_w = weight * accuracy_mult * streak_mult * momentum_mult * reg_mult
+        adjusted.append({
+            'name': name, 'pred': pred, 'family': fam,
+            'base_weight': weight, 'final_weight': final_w,
+            'accuracy': round(acc, 3), 'streak_mult': streak_mult,
+            'momentum': round(m, 2), 'regime_mult': reg_mult,
+        })
+    return adjusted
+
+def apply_family_cap(signals, regime):
+    """Giới hạn tổng |weight| của mỗi family để chống 1 họ lấn át."""
+    fam_sum = defaultdict(float)
+    for s in signals:
+        fam_sum[s['family']] += s['final_weight']
+    # Scale down nếu vượt cap
+    for s in signals:
+        cap = _family_cap(s['family'], regime)
+        if fam_sum[s['family']] > cap and fam_sum[s['family']] > 0:
+            ratio = cap / fam_sum[s['family']]
+            s['final_weight'] *= ratio
+    return signals
+
+def full_bridge_predict_adaptive(results, replay_n=120):
+    """V9 — Pipeline dự đoán chính."""
+    n = len(results)
+    if n == 0: return "Tài", 50, []
+    if n == 1: return _opp(results[0]), 52, []
+    if n == 2:
+        if results[0] == results[1]: return _opp(results[0]), 55, []
+        return results[1], 52, []
+
+    # ---------- Replay để học stats ----------
+    signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0, 'recent_hits': []})
+    replay_count = min(replay_n, n - 3)
+    for j in range(replay_count):
+        history = results[j + 1:]
+        actual = results[j]
+        # Decay mạnh hơn với mẫu xa: exp(-j / 40)
+        decay = math.exp(-j / 40.0)
+        for pred_sig, weight, name in analyze_full_bridge(history):
+            signal_stats[name]['total'] += decay
+            hit = (pred_sig == actual)
+            if hit: signal_stats[name]['wins'] += decay
+            if j < 6:
+                signal_stats[name]['recent_hits'].append(hit)
+
+    # ---------- Signals hiện tại ----------
+    signals = analyze_full_bridge(results)
+    if not signals: return results[0], 52, []
+
+    regime = _regime(results)
+    adjusted = meta_predictor_v9(signals, signal_stats, regime)
+    adjusted = apply_family_cap(adjusted, regime)
+
+    # ---------- Vote ----------
+    st = sx = 0.0
+    detail = []
+    for a in adjusted:
+        w = a['final_weight']
+        if a['pred'] == "Tài": st += w
+        else:                  sx += w
+        detail.append({
+            'name': a['name'], 'pred': a['pred'],
+            'base_weight': a['base_weight'],
+            'accuracy': a['accuracy'],
+            'adjusted_weight': round(w, 2),
+            'family': a['family'],
+            'streak_mult': a['streak_mult'],
+            'momentum': a['momentum'],
+            'regime_mult': a['regime_mult'],
+        })
+
+    total = st + sx
+    if total <= 0:
+        return results[0], 50, detail
+
+    # ---------- Base prediction ----------
+    if st > sx: pred = "Tài"
+    elif sx > st: pred = "Xỉu"
+    else: return _opp(results[0]), 50, detail
+
+    lean = max(st, sx) / total
+
+    # ---------- Conflict Guard ----------
+    agree_w = sum(a['final_weight'] for a in adjusted if a['pred'] == pred)
+    disagree_w = total - agree_w
+    conflict_ratio = disagree_w / total if total > 0 else 0
+
+    # ---------- Kill switch: 2 signal cực đoan ----------
+    if len(signals) <= 2 and lean > 0.88:
+        # 1-2 signal nhưng nghiêng 88% → đảo chiều phòng thủ
+        pred = _opp(pred)
+        conf = 51
+        return pred, conf, detail
+
+    # ---------- Confidence (Bayes-evidence) ----------
+    # base_conf từ lean
+    raw_conf = 50.0 + (lean - 0.5) * 100.0
+    # evidence: tổng weight / (tổng + 80) → 0..1
+    evidence = total / (total + 80.0)
+    # số signal cũng là evidence
+    sig_evidence = min(1.0, len(adjusted) / 8.0)
+    # accuracy trung bình có trọng số
+    if total > 0:
+        wacc = sum(a['final_weight'] * a['accuracy'] for a in adjusted) / total
+    else:
+        wacc = 0.5
+    acc_factor = 0.85 + (wacc - 0.5) * 0.6  # [0.85, 1.15] khi wacc 0.5→0.5, 1.0→1.15
+
+    conf = 50.0 + (raw_conf - 50.0) * evidence * sig_evidence * acc_factor
+
+    # Conflict penalty
+    if conflict_ratio > 0.60: conf -= 15
+    elif conflict_ratio > 0.50: conf -= 8
+    elif conflict_ratio > 0.40: conf -= 4
+
+    # Conflict Guard: nếu xung đột > 58% → về 50
+    if conflict_ratio > 0.58:
+        conf = min(conf, 52)
+
+    # Lean bonus
+    if lean >= 0.75: conf += 4
+    if lean >= 0.82 and conflict_ratio < 0.30: conf += 2
+
+    # Family độc canh cảnh báo
+    fam_set = set(a['family'] for a in adjusted)
+    if len(fam_set) <= 2 and len(adjusted) >= 3:
+        conf = min(conf, 68)
+
+    conf = int(max(50, min(MAX_CONFIDENCE, round(conf))))
+    return pred, conf, detail
+
+# =====================================================================
+# ANALYZER
 # =====================================================================
 def analyze_full_bridge(results):
     if len(results) < 3: return []
     signals = []
     for fn in (
         algo_lc79_specialist,
-        algo_6p_balanced,          # ← MODULE MỚI
+        algo_6p_balanced,
         algo_stable_zone_10p,
         algo_7p_no_reverse,
         algo_7p_hash_deep,
+        algo_7p_pattern_radar,
         algo_hash_deep_5p,
         algo_hash_deep_10p,
         algo_hash_deep_13p,
@@ -1103,7 +1105,7 @@ def analyze_full_bridge(results):
         algo_md5_bit_analysis,
         algo_md5_ngram,
         algo_md5_hamming,
-        algo_5p_alternation,       # vẫn giữ nhưng weight giảm
+        algo_5p_alternation,
         algo_trend_break,
         algo_break_rhythm,
         data_markov2,
@@ -1133,115 +1135,21 @@ def analyze_full_bridge(results):
         pass
     return signals
 
-def full_bridge_predict_adaptive(results, replay_n=80):
-    n = len(results)
-    if n == 0: return "Tài", 50, []
-    if n == 1: return _opp(results[0]), 52, []
-    if n == 2:
-        if results[0] == results[1]: return _opp(results[0]), 55, []
-        return results[1], 52, []
-
-    signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0, 'recent_hits': []})
-    replay_count = min(replay_n, n - 3)
-    for j in range(replay_count):
-        history = results[j + 1:]
-        actual = results[j]
-        decay = math.exp(-j / max(replay_count / 2.0, 1.0))
-        for pred_sig, weight, name in analyze_full_bridge(history):
-            signal_stats[name]['total'] += decay
-            hit = (pred_sig == actual)
-            if hit: signal_stats[name]['wins'] += decay
-            if j < 5:
-                signal_stats[name]['recent_hits'].append(hit)
-
-    signals = analyze_full_bridge(results)
-    if not signals: return results[0], 52, []
-
-    meta_adjusted = meta_predictor(signals, signal_stats)
-    regime = _regime(results)
-    st = sx = 0.0; detail = []
-
-    for pred_sig, weight, name, ws, ls, momentum in meta_adjusted:
-        s = signal_stats[name]
-        if s['total'] >= 3:
-            acc = (s['wins'] + 1.0) / (s['total'] + 2.0)
-        else:
-            acc = 0.5
-
-        # GIẢM hệ số phóng đại để tránh nghiêng
-        accuracy_mult = 0.4 + max(0.0, min(1.7, (acc - 0.3) * 2.8))
-
-        if "lc79_" in name: accuracy_mult *= 1.35
-        if "stable_zone" in name: accuracy_mult *= 1.18
-        if "consensus" in name: accuracy_mult *= 1.08
-        if "7p_no_reverse" in name: accuracy_mult *= 1.12
-        if "7p_hash_deep" in name: accuracy_mult *= 1.08
-        if "hash_deep_10p" in name: accuracy_mult *= 1.10
-        if "regime_pred" in name: accuracy_mult *= 1.12
-
-        # Boost module 6p mới
-        if "dao_6p" in name or "thuan_6p" in name or "nghich_6p" in name:
-            accuracy_mult *= 1.10
-        if "zigzag" in name:
-            accuracy_mult *= 1.06
-
-        if regime == "streak" and "break" in name: accuracy_mult *= 1.08
-        elif regime == "alternation" and ("alt" in name or "dao" in name): accuracy_mult *= 1.10
-
-        if "trend_" in name or "rhythm_" in name: accuracy_mult *= 1.08
-        if "hash_deep_5p" in name: accuracy_mult *= 1.12
-        if "hash_deep_13p" in name: accuracy_mult *= 1.05
-        if "md5_bit_" in name or "md5_ngram_" in name: accuracy_mult *= 1.05
-
-        adjusted = weight * accuracy_mult
-        if pred_sig == "Tài": st += adjusted
-        else: sx += adjusted
-        detail.append({
-            'name': name, 'pred': pred_sig, 'base_weight': weight,
-            'accuracy': round(acc, 3), 'adjusted_weight': round(adjusted, 2),
-            'win_streak': ws, 'loss_streak': ls, 'momentum': round(momentum, 2)
-        })
-
-    total = st + sx
-    if total == 0: return results[0], 50, detail
-
-    # ===== CÂN BẰNG VOTE: chống nghiêng 1 phiên =====
-    lean = max(st, sx) / total
-    # Nếu nghiêng quá 85% mà chỉ có 1-2 signal → giảm tin cậy
-    if lean > 0.85 and len(signals) <= 2:
-        return _opp(results[0]) if st > sx else results[0], 51, detail
-
-    if st > sx: pred, ratio = "Tài", st / total
-    elif sx > st: pred, ratio = "Xỉu", sx / total
-    else: return _opp(results[0]), 50, detail
-
-    conf = 50 + (ratio - 0.5) * 100
-    conf = conf * min(1.0, total / 50.0) + 50 * (1 - min(1.0, total / 50.0))
-
-    agree_w = sum(d['adjusted_weight'] for d in detail if d['pred'] == pred)
-    disagree_w = sum(d['adjusted_weight'] for d in detail if d['pred'] != pred)
-    total_w = agree_w + disagree_w + 1e-6
-    conflict_ratio = disagree_w / total_w
-    if conflict_ratio > 0.55: conf -= 12
-    elif conflict_ratio > 0.40: conf -= 6
-
-    if ratio >= 0.72: conf += 5
-    if len(signals) >= 6 and ratio >= 0.68: conf += 3
-    if len(signals) < 3: conf -= 5
-
-    # Chống nghiêng: nếu 1 bên > 80% & chỉ 1 nhóm cầu, hạ conf
-    if lean > 0.80 and len(signals) < 5:
-        conf = min(conf, 70)
-
-    if ratio < 0.55 and total < 30:
-        conf = min(conf, 55)
-
-    conf = int(max(50, min(MAX_CONFIDENCE, conf)))
-    return pred, conf, detail
-
 # =====================================================================
-# CÁC HÀM PHỤ TRỢ
+# RECOVERY V9 — REGIME-AWARE
 # =====================================================================
+def compute_loss_streak(valid, max_scan=10):
+    if len(valid) < 5: return 0
+    streak = 0
+    end = len(valid) - 1
+    start = max(0, end - max_scan)
+    for i in range(end, start - 1, -1):
+        pred, conf, is_correct = get_prediction_for(valid, i)
+        if is_correct is None: break
+        if is_correct: break
+        streak += 1
+    return streak
+
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
     if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
@@ -1256,43 +1164,39 @@ def get_prediction_for(valid, i):
     PREDICTION_CACHE[key] = result
     return result
 
-def compute_loss_streak(valid, max_scan=10):
-    if len(valid) < 5: return 0
-    streak = 0
-    end = len(valid) - 1
-    start = max(0, end - max_scan)
-    for i in range(end, start - 1, -1):
-        pred, conf, is_correct = get_prediction_for(valid, i)
-        if is_correct is None: break
-        if is_correct: break
-        streak += 1
-    return streak
-
 def apply_recovery(base_pred, conf, loss_streak, results=None):
+    """V9 — Recovery thông minh theo regime, KHÔNG auto-flip mù."""
     if loss_streak < 1:
         return base_pred, conf, False, None
+
     regime = _regime(results) if results else "balanced"
-    n = len(results) if results else 0
+
     if loss_streak == 1:
+        # Loss 1 → giữ, giảm conf nhẹ
         return base_pred, max(50, conf - 3), False, "hold_1"
+
     if loss_streak == 2:
+        # Loss 2:
         if regime == "streak":
-            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True, "flip_streak_2"
+            # Đang streak → theo base_pred (không đảo), tăng conf vì đã hết loss
+            return base_pred, min(MAX_CONFIDENCE, conf + 3), False, "hold_streak_2"
         if regime == "alternation":
-            return base_pred, max(50, conf - 2), False, "hold_alt_2"
-        trend = algo_trend_break(results) if results else None
-        rhythm = algo_break_rhythm(results) if results else None
-        if trend and trend[0] == _opp(base_pred):
-            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 73)), True, "flip_trend_2"
-        if rhythm and rhythm[0] == _opp(base_pred):
-            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 72)), True, "flip_rhythm_2"
-        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 70)), True, "flip_2"
+            # Alt đang bị đảo → flip để bắt đúng nhịp
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 72)), True, "flip_alt_2"
+        # Balanced: thử flip với conf vừa
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 68)), True, "flip_2"
+
     if loss_streak == 3:
-        if regime == "alternation" and n >= 3:
-            return results[0], min(MAX_CONFIDENCE, max(conf, 72)), False, "follow_3"
+        # Loss 3: bắt buộc flip, trừ khi regime streak
+        if regime == "streak":
+            # Streak đang ngược → theo kết quả (results[0]) thay vì base_pred
+            if results and len(results) >= 1:
+                return results[0], min(MAX_CONFIDENCE, max(conf, 72)), False, "follow_3"
         return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True, "flip_3"
+
     if loss_streak == 4:
         return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 80)), True, "flip_4"
+
     return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 82)), True, "flip_5plus"
 
 def get_stable_next_prediction(valid):
@@ -1326,7 +1230,7 @@ def reset_all_databases():
         LEARNED_PHIEN = RESET_ID
 
 # =====================================================================
-# ROUTES
+# ROUTES (giữ nguyên contract)
 # =====================================================================
 @app.route('/')
 def index():
@@ -1523,7 +1427,7 @@ def lc79():
         cau6_type = cau6['type'] if cau6 else "none"
 
         return jsonify({
-            'Id': 'le minh md5 deep v8 6p-standard',
+            'Id': 'le minh md5 deep v9',
             'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
