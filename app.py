@@ -4,7 +4,7 @@ import hashlib
 import traceback
 import threading
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, Counter
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -19,21 +19,34 @@ PREDICTION_CACHE = {}
 NEXT_PREDICTION_CACHE = {}
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
-MAX_CONFIDENCE = 88
+MAX_CONFIDENCE = 90
 
 LEARNED_PHIEN = 0
 LEARN_LOCK = threading.Lock()
 
+# ==================== DB NÂNG CẤP VIP (8 TẦNG) ====================
 HASH_DEEP_DB = {
     5: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    7: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
 }
 MD5_BIT_DB = {bit: {"Tài": 0, "Xỉu": 0} for bit in range(128)}
 MD5_NGRAM_DB = {
-    2: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
-    3: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
-    4: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
+    n: defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for n in (2, 3, 4, 5, 6)
 }
 MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+MARKOV_DB = {
+    order: defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for order in (1, 2, 3, 4, 5)
+}
+BAC_NHO_POS_DB = {
+    pos: defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for pos in (0, 1, 2)
+}
+CAU_SPECIAL_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+STREAK_DB = defaultdict(lambda: {"cont": 0, "brk": 0})
+# Signature hash 32-bit rolling
+SIG_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -41,7 +54,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 V18</title>
+<title>LE MINH MD5 V19 VIP</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -90,6 +103,7 @@ HTML_TEMPLATE = """
     .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; }
     .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
     .conf-badge.high { color: #34d399; background: rgba(52, 211, 153, 0.15); }
+    .conf-badge.vip { color: #fbbf24; background: rgba(251, 191, 36, 0.18); box-shadow: 0 0 8px rgba(251,191,36,0.4); }
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
     @media (max-width: 500px) {
         .data-table th, .data-table td { padding: 10px 6px; font-size: 12px; }
@@ -103,7 +117,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span>V18</span></div>
+    <div class="header-title">LE MINH <span>V19 VIP</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -167,7 +181,9 @@ function renderTable(rows, stats) {
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
-            const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
+            let cls = 'conf-badge';
+            if (row.conf >= 80) cls = 'conf-badge vip';
+            else if (row.conf >= 70) cls = 'conf-badge high';
             confHtml = `<div class="${cls}">${row.conf}%</div>`;
         }
         let predFull = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${predHtml}${confHtml}</div>`;
@@ -261,12 +277,20 @@ def encode_tx(results, length):
     if not results or len(results) < length: return None
     return "".join("T" if r == "Tài" else "X" for r in results[:length])
 
+# =====================================================================
+# HASH ĐA TẦNG
+# =====================================================================
 def hash_deep_md5(tx_string, depth_level=2):
     if not tx_string: return None
     salted = f"leminh_deep_{depth_level}|{tx_string}"
     h = hashlib.md5(salted.encode('utf-8')).hexdigest()
     for _ in range(depth_level - 1):
         h = hashlib.md5(f"{h}|salt_{depth_level}".encode('utf-8')).hexdigest()
+    return h
+
+def hash_sha256_bits(tx_string):
+    if not tx_string: return None
+    h = hashlib.sha256(f"leminh_vip|{tx_string}".encode('utf-8')).hexdigest()
     return h
 
 def hash_to_bits(hash_hex):
@@ -282,6 +306,18 @@ def hamming_distance(h1, h2):
     if not h1 or not h2 or len(h1) != len(h2): return 0
     return sum(a != b for a, b in zip(hash_to_bits(h1), hash_to_bits(h2)))
 
+def rolling_signature(results, length=7):
+    """Signature 32-bit rolling của chuỗi kết quả"""
+    if not results or len(results) < length: return None
+    sig = 0
+    for i in range(length):
+        bit = 1 if results[i] == "Tài" else 0
+        sig = ((sig << 1) | bit) & 0xFFFFFFFF
+    return sig
+
+# =====================================================================
+# HỌC TĂNG CƯỜNG (MỞ RỘNG VIP)
+# =====================================================================
 def learn_incremental(valid):
     global LEARNED_PHIEN
     if not valid: return
@@ -289,21 +325,30 @@ def learn_incremental(valid):
         new_indices = [idx for idx, v in enumerate(valid) if v['phien'] > LEARNED_PHIEN]
         if not new_indices: return
         n = len(valid)
-        if n <= 5:
+        if n <= 7:
             LEARNED_PHIEN = valid[-1]['phien']
             return
 
-        db = HASH_DEEP_DB[5]
+        # Tầng 1: Pattern 5p + 7p
         for idx in new_indices:
             if idx < 5: continue
-            history = [v['result'] for v in valid[idx-5:idx]][::-1]
-            tx = encode_tx(history, 5)
-            if not tx: continue
-            h = hash_deep_md5(tx, depth_level=3)
-            if not h: continue
-            db[h][valid[idx]['result']] += 1
+            history5 = [v['result'] for v in valid[idx-5:idx]][::-1]
+            tx5 = encode_tx(history5, 5)
+            if tx5:
+                h5 = hash_deep_md5(tx5, depth_level=3)
+                if h5:
+                    HASH_DEEP_DB[5][h5][valid[idx]['result']] += 1
+            if idx >= 7:
+                history7 = [v['result'] for v in valid[idx-7:idx]][::-1]
+                tx7 = encode_tx(history7, 7)
+                if tx7:
+                    h7 = hash_deep_md5(tx7, depth_level=4)
+                    if h7:
+                        HASH_DEEP_DB[7][h7][valid[idx]['result']] += 1
 
+        # Cache hash cho các tầng sau
         hash_cache = {}
+        sig_cache = {}
         for idx in new_indices:
             if idx < 5: continue
             history = [v['result'] for v in valid[idx-5:idx]][::-1]
@@ -312,34 +357,81 @@ def learn_incremental(valid):
             h = hash_deep_md5(tx, depth_level=3)
             if not h: continue
             hash_cache[idx] = h
+
+            # Tầng 2: MD5 bit
             bits = hash_to_bits(h)
-            for bit_idx in range(128):
-                if bit_idx < len(bits) and bits[bit_idx] == 1:
+            for bit_idx in range(min(128, len(bits))):
+                if bits[bit_idx] == 1:
                     MD5_BIT_DB[bit_idx][valid[idx]['result']] += 1
-            for ng_size in (2, 3, 4):
+
+            # Tầng 3: N-gram (2-6)
+            for ng_size in (2, 3, 4, 5, 6):
                 for start in range(0, len(h) - ng_size + 1):
                     gram = h[start:start + ng_size]
                     MD5_NGRAM_DB[ng_size][gram][valid[idx]['result']] += 1
 
+        # Tầng 4: Hamming
         for idx in new_indices:
             if idx < 6 or idx not in hash_cache: continue
             prev_idx = idx - 1
-            if prev_idx in hash_cache:
-                h_prev = hash_cache[prev_idx]
-            else:
-                if prev_idx < 5: continue
-                ph = [v['result'] for v in valid[prev_idx-5:prev_idx]][::-1]
-                ptx = encode_tx(ph, 5)
-                if not ptx: continue
-                h_prev = hash_deep_md5(ptx, depth_level=3)
-                if not h_prev: continue
-            hd = hamming_distance(hash_cache[idx], h_prev)
+            if prev_idx not in hash_cache: continue
+            hd = hamming_distance(hash_cache[idx], hash_cache[prev_idx])
             MD5_HAMMING_DB[hd // 8][valid[idx]['result']] += 1
+
+        # Tầng 5: Markov Chain (bậc 1-5)
+        for idx in new_indices:
+            for order in (1, 2, 3, 4, 5):
+                if idx < order: continue
+                key = tuple(v['result'] for v in valid[idx-order:idx])
+                MARKOV_DB[order][key][valid[idx]['result']] += 1
+
+        # Tầng 6: Bạc nhớ theo vị trí (3 phiên gần nhất)
+        for idx in new_indices:
+            if idx < 3: continue
+            last3 = [v['result'] for v in valid[idx-3:idx]]
+            for pos in (0, 1, 2):
+                key = (last3[pos], pos)
+                BAC_NHO_POS_DB[pos][last3[pos]][valid[idx]['result']] += 1
+
+        # Tầng 7: Cầu đặc biệt
+        for idx in new_indices:
+            if idx < 6: continue
+            last6 = [v['result'] for v in valid[idx-6:idx]][::-1]
+            groups = get_groups(last6)
+            if len(groups) == 1:
+                key = f"BET_{last6[0]}_{min(groups[0], 6)}"
+                CAU_SPECIAL_DB[key][valid[idx]['result']] += 1
+            elif len(groups) == 2 and sum(groups[:1]) and groups[0] >= 3:
+                key = f"3X_{last6[0]}_{last6[groups[0]]}"
+                CAU_SPECIAL_DB[key][valid[idx]['result']] += 1
+            elif len(groups) >= 3 and groups[0] == 2 and groups[1] == 2:
+                key = f"221_{last6[0]}_{last6[2]}_{last6[4]}"
+                CAU_SPECIAL_DB[key][valid[idx]['result']] += 1
+
+        # Tầng 8: Streak stats
+        for idx in new_indices:
+            for streak_len in (3, 4, 5, 6):
+                if idx < streak_len: continue
+                cur = valid[idx-1]['result']
+                if all(valid[idx-1-j]['result'] == cur for j in range(streak_len)):
+                    key = f"{cur}_{streak_len}"
+                    if valid[idx]['result'] == cur:
+                        STREAK_DB[key]['cont'] += 1
+                    else:
+                        STREAK_DB[key]['brk'] += 1
+
+        # Tầng 9: Signature
+        for idx in new_indices:
+            if idx < 7: continue
+            history = [v['result'] for v in valid[idx-7:idx]][::-1]
+            sig = rolling_signature(history, 7)
+            if sig is not None:
+                SIG_DB[sig][valid[idx]['result']] += 1
 
         LEARNED_PHIEN = valid[-1]['phien']
 
 # =====================================================================
-# PATTERN + ĐA TẦNG MD5
+# PATTERN CLASSIFIER MỞ RỘNG
 # =====================================================================
 def classify_5p_pattern(last5):
     if len(last5) < 5: return None
@@ -373,8 +465,10 @@ def classify_5p_pattern(last5):
         return {'type': '1-1', 'groups': groups, 'alt': alt_count}
     return {'type': 'KHÁC', 'groups': groups, 'alt': alt_count}
 
-
-def lookup_pattern_stats(results, key_len, key_tuple, max_scan=80):
+# =====================================================================
+# CÁC HÀM LOOKUP
+# =====================================================================
+def lookup_pattern_stats(results, key_len, key_tuple, max_scan=120):
     n = len(results)
     tai_next = xiu_next = 0
     for i in range(min(n - key_len, max_scan)):
@@ -395,6 +489,20 @@ def lookup_hash_deep_5p(results):
     h = hash_deep_md5(tx, depth_level=3)
     if not h or h not in HASH_DEEP_DB[5]: return None
     counts = HASH_DEEP_DB[5][h]
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 3: return None
+    p_tai = (counts["Tài"] + 1) / (total + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    return pred, total, z, p_tai
+
+
+def lookup_hash_deep_7p(results):
+    tx = encode_tx(results, 7)
+    if not tx: return None
+    h = hash_deep_md5(tx, depth_level=4)
+    if not h or h not in HASH_DEEP_DB[7]: return None
+    counts = HASH_DEEP_DB[7][h]
     total = counts["Tài"] + counts["Xỉu"]
     if total < 3: return None
     p_tai = (counts["Tài"] + 1) / (total + 2)
@@ -433,8 +541,8 @@ def lookup_md5_ngram(results):
     if not h: return None
     tai_votes = xiu_votes = 0
     total_seen = 0
-    for ng_size in (2, 3, 4):
-        weight = 1.0 + (ng_size - 2) * 0.5
+    for ng_size in (2, 3, 4, 5, 6):
+        weight = 1.0 + (ng_size - 2) * 0.4
         for start in range(0, len(h) - ng_size + 1):
             gram = h[start:start + ng_size]
             counts = MD5_NGRAM_DB[ng_size].get(gram)
@@ -470,49 +578,152 @@ def lookup_md5_hamming(results, prev_results):
     return pred, total, z, p_tai
 
 
-def _count_streak_break_stats(results, current, streak_len, max_scan=80):
-    n = len(results)
-    cont = brk = 0
-    for i in range(min(n - streak_len, max_scan)):
-        if all(results[i+j] == current for j in range(streak_len)):
-            if i + streak_len < n:
-                if results[i+streak_len] == current: cont += 1
-                else: brk += 1
-    return cont, brk
+def lookup_markov(results):
+    """Markov Chain ensemble bậc 1-5"""
+    if not results or len(results) < 5: return None
+    tai_votes = xiu_votes = 0
+    total_seen = 0
+    for order in (1, 2, 3, 4, 5):
+        if len(results) < order: continue
+        key = tuple(results[:order])
+        counts = MARKOV_DB[order].get(key)
+        if not counts: continue
+        t = counts["Tài"] + counts["Xỉu"]
+        if t < 2: continue
+        weight = 1.0 + (order - 1) * 0.5
+        tai_votes += counts["Tài"] * weight
+        xiu_votes += counts["Xỉu"] * weight
+        total_seen += t * weight
+    if total_seen < 15: return None
+    p_tai = (tai_votes + 1) / (total_seen + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    return pred, total_seen, z, p_tai
 
 
-def compute_stability_score(total_pat, z_pat, hash_agree, bit_agree, ngram_agree, hamming_agree, cau_type):
+def lookup_bac_nho(results):
+    """Bạc nhớ 3 vị trí"""
+    if not results or len(results) < 3: return None
+    tai_votes = xiu_votes = 0
+    total_seen = 0
+    for pos in (0, 1, 2):
+        val = results[pos]
+        counts = BAC_NHO_POS_DB[pos].get(val)
+        if not counts: continue
+        t = counts["Tài"] + counts["Xỉu"]
+        if t < 2: continue
+        weight = 1.0 if pos == 0 else (0.8 if pos == 1 else 0.6)
+        tai_votes += counts["Tài"] * weight
+        xiu_votes += counts["Xỉu"] * weight
+        total_seen += t * weight
+    if total_seen < 10: return None
+    p_tai = (tai_votes + 1) / (total_seen + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    return pred, total_seen, z, p_tai
+
+
+def lookup_cau_special(results):
+    """Cầu đặc biệt: bệt, 3-x, 2-2-1"""
+    if not results or len(results) < 6: return None
+    last6 = results[:6]
+    groups = get_groups(last6)
+    key = None
+    if len(groups) == 1:
+        key = f"BET_{last6[0]}_{min(groups[0], 6)}"
+    elif len(groups) == 2 and groups[0] >= 3:
+        key = f"3X_{last6[0]}_{last6[groups[0]]}"
+    elif len(groups) >= 3 and groups[0] == 2 and groups[1] == 2:
+        key = f"221_{last6[0]}_{last6[2]}_{last6[4]}"
+    if not key: return None
+    counts = CAU_SPECIAL_DB.get(key)
+    if not counts: return None
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 3: return None
+    p_tai = (counts["Tài"] + 1) / (total + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    return pred, total, z, p_tai
+
+
+def lookup_streak(results):
+    """Streak continuation/break stats"""
+    if not results or len(results) < 3: return None
+    cur = results[0]
+    streak_len = 1
+    for i in range(1, min(len(results), 8)):
+        if results[i] == cur:
+            streak_len += 1
+        else:
+            break
+    if streak_len < 3: return None
+    key = f"{cur}_{min(streak_len, 6)}"
+    counts = STREAK_DB.get(key)
+    if not counts: return None
+    cont = counts['cont']; brk = counts['brk']
+    total = cont + brk
+    if total < 5: return None
+    p_cont = (cont + 1) / (total + 2)
+    z = (p_cont - 0.5) / math.sqrt(0.25 / (total + 2))
+    pred = cur if p_cont > 0.5 else _opp(cur)
+    p_tai = p_cont if cur == "Tài" else (1 - p_cont)
+    return pred, total, z, p_tai
+
+
+def lookup_signature(results):
+    """Signature 7-bit rolling"""
+    if not results or len(results) < 7: return None
+    sig = rolling_signature(results, 7)
+    if sig is None: return None
+    counts = SIG_DB.get(sig)
+    if not counts: return None
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 3: return None
+    p_tai = (counts["Tài"] + 1) / (total + 2)
+    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    return pred, total, z, p_tai
+
+# =====================================================================
+# STABILITY + RECOMMENDATION
+# =====================================================================
+def compute_stability_score(total_pat, z_pat, agreements, cau_type):
     score = 40.0
-    if total_pat >= 20: score += 20
+    if total_pat >= 25: score += 22
+    elif total_pat >= 20: score += 20
     elif total_pat >= 15: score += 16
     elif total_pat >= 10: score += 12
     elif total_pat >= 7: score += 8
     elif total_pat >= 5: score += 4
     abs_z = abs(z_pat)
-    if abs_z >= 2.0: score += 15
+    if abs_z >= 2.5: score += 15
+    elif abs_z >= 2.0: score += 13
     elif abs_z >= 1.5: score += 11
     elif abs_z >= 1.0: score += 7
     elif abs_z >= 0.8: score += 3
-    agrees = [x for x in (hash_agree, bit_agree, ngram_agree, hamming_agree) if x is not None]
+    agrees = [x for x in agreements if x is not None]
     if agrees:
         ratio = sum(agrees) / len(agrees)
-        score += ratio * 20
-        if len(agrees) >= 3 and all(agrees):
-            score += 5
+        score += ratio * 18
+        if len(agrees) >= 5 and all(agrees):
+            score += 6
     stable_cau = {'ĐẢO': 5, 'THUẬN': 4, 'NGHỊCH': 3, '1-1': 3, 'KHÁC': 0}
     score += stable_cau.get(cau_type, 0)
     return max(0, min(100, round(score, 1)))
 
 
 def _recommendation_from_stability(stability, conf):
-    if stability >= 75 and conf >= 70: return "STRONG"
-    if stability >= 60 and conf >= 62: return "NORMAL"
+    if stability >= 80 and conf >= 75: return "VIP"
+    if stability >= 70 and conf >= 68: return "STRONG"
+    if stability >= 55 and conf >= 60: return "NORMAL"
     if stability >= 45: return "CAUTION"
     return "SKIP"
 
-
+# =====================================================================
+# PREDICT CHÍNH — ENSEMBLE 9 TẦNG
+# =====================================================================
 def predict_5p_pattern(results):
-    """Core prediction — KHÔNG flip."""
+    """Core prediction — Ensemble 9 tầng."""
     n = len(results)
     if n < 5:
         if n == 0: return "Tài", 50, "KHÁC", _empty_detail(50)
@@ -537,13 +748,20 @@ def predict_5p_pattern(results):
 
     key_tuple = tuple(last5)
     p_tai_pat, total_pat, z_pat = lookup_pattern_stats(results, 5, key_tuple)
-    hash_result = lookup_hash_deep_5p(results)
+
+    # ===== Chạy 9 tầng =====
+    hash5_result = lookup_hash_deep_5p(results)
+    hash7_result = lookup_hash_deep_7p(results)
     bit_result = lookup_md5_bit(results)
     ngram_result = lookup_md5_ngram(results)
-    hamming_result = None
-    if n >= 6:
-        hamming_result = lookup_md5_hamming(results, results[1:])
+    hamming_result = lookup_md5_hamming(results, results[1:]) if n >= 6 else None
+    markov_result = lookup_markov(results)
+    bacnho_result = lookup_bac_nho(results)
+    cau_result = lookup_cau_special(results)
+    streak_result = lookup_streak(results)
+    sig_result = lookup_signature(results)
 
+    # Ngưỡng z động
     if total_pat >= 15: z_threshold = 0.7
     elif total_pat >= 10: z_threshold = 0.85
     elif total_pat >= 6: z_threshold = 1.0
@@ -551,18 +769,19 @@ def predict_5p_pattern(results):
 
     pred = None; conf = 50; reason = ""; extra = {}
 
+    # ===== TẦNG CẦU CHÍNH =====
     if cau_type == 'ĐẢO':
         theory_pred = _opp(last5[0])
         if total_pat >= 5 and abs(z_pat) >= z_threshold:
             data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
             if data_pred == theory_pred:
-                pred = data_pred; conf = 60 + min(20, abs(z_pat) * 10)
+                pred = data_pred; conf = 62 + min(18, abs(z_pat) * 10)
                 reason = f"dao_data_{total_pat}"
             else:
-                pred = data_pred; conf = 55 + min(10, abs(z_pat) * 6)
+                pred = data_pred; conf = 56 + min(10, abs(z_pat) * 6)
                 reason = f"dao_data_conflict_{total_pat}"
         else:
-            pred = theory_pred; conf = 58; reason = "dao_theory"
+            pred = theory_pred; conf = 60; reason = "dao_theory"
         extra = {'theory_pred': theory_pred}
 
     elif cau_type == 'THUẬN':
@@ -575,35 +794,31 @@ def predict_5p_pattern(results):
                 z_cont = (p_cont - 0.5) / math.sqrt(0.25 / (total_streak + 2))
                 if abs(z_cont) >= z_threshold:
                     if p_cont >= 0.55:
-                        pred = current; conf = 58 + min(18, abs(z_cont) * 8)
+                        pred = current; conf = 60 + min(18, abs(z_cont) * 8)
                         reason = f"thuan_cont_{total_streak}"
                     else:
-                        pred = _opp(current); conf = 56 + min(15, abs(z_cont) * 7)
+                        pred = _opp(current); conf = 58 + min(15, abs(z_cont) * 7)
                         reason = f"thuan_break_{total_streak}"
                 else:
-                    pred = current; conf = 55; reason = "thuan_theory"
+                    pred = current; conf = 57; reason = "thuan_theory"
             else:
-                pred = current; conf = 55; reason = "thuan_theory"
+                pred = current; conf = 57; reason = "thuan_theory"
             extra = {'cont': cont, 'brk': brk, 'total_streak': total_streak}
         else:
-            if groups[0] == 4:
-                pred = last5[0]; conf = 56; reason = "thuan_4_1_head"
-            else:
-                pred = last5[0]; conf = 55; reason = "thuan_4_1_tail"
-            extra = {'groups_mode': '4-1'}
+            pred = last5[0]; conf = 57; reason = "thuan_4_1"
 
     elif cau_type == 'NGHỊCH':
         theory_pred = _opp(last5[0])
         if total_pat >= 5 and abs(z_pat) >= z_threshold:
             data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
             if data_pred == theory_pred:
-                pred = data_pred; conf = 58 + min(18, abs(z_pat) * 9)
+                pred = data_pred; conf = 60 + min(18, abs(z_pat) * 9)
                 reason = f"nghich_data_{total_pat}"
             else:
-                pred = data_pred; conf = 54 + min(10, abs(z_pat) * 6)
+                pred = data_pred; conf = 55 + min(10, abs(z_pat) * 6)
                 reason = f"nghich_data_conflict_{total_pat}"
         else:
-            pred = theory_pred; conf = 56; reason = "nghich_theory"
+            pred = theory_pred; conf = 58; reason = "nghich_theory"
         extra = {'theory_pred': theory_pred}
 
     elif cau_type == '1-1':
@@ -611,123 +826,134 @@ def predict_5p_pattern(results):
         if total_pat >= 5 and abs(z_pat) >= z_threshold:
             data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
             if data_pred == theory_pred:
-                pred = data_pred; conf = 57 + min(17, abs(z_pat) * 8)
+                pred = data_pred; conf = 59 + min(17, abs(z_pat) * 8)
                 reason = f"11_data_{total_pat}"
             else:
-                pred = data_pred; conf = 54 + min(10, abs(z_pat) * 6)
+                pred = data_pred; conf = 55 + min(10, abs(z_pat) * 6)
                 reason = f"11_data_conflict_{total_pat}"
         else:
-            pred = theory_pred; conf = 55; reason = "11_theory"
+            pred = theory_pred; conf = 57; reason = "11_theory"
         extra = {'theory_pred': theory_pred}
 
     else:
         if total_pat >= 5 and abs(z_pat) >= z_threshold:
             pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
-            conf = 55 + min(15, abs(z_pat) * 8)
+            conf = 56 + min(15, abs(z_pat) * 8)
             reason = f"khac_data_{total_pat}"
         else:
             if n >= 2 and results[0] == results[1]:
-                pred = _opp(results[0]); conf = 53; reason = "khac_fallback_streak"
+                pred = _opp(results[0]); conf = 54; reason = "khac_fallback_streak"
             else:
-                pred = results[0]; conf = 51; reason = "khac_fallback_follow"
+                pred = results[0]; conf = 52; reason = "khac_fallback_follow"
 
-    hash_info = {}; bit_info = {}; ngram_info = {}; hamming_info = {}
-    hash_agree = bit_agree = ngram_agree = hamming_agree = None
+    # ===== TÍCH HỢP TÍN HIỆU 9 TẦNG =====
+    layers = {
+        'hash5': hash5_result,
+        'hash7': hash7_result,
+        'bit': bit_result,
+        'ngram': ngram_result,
+        'hamming': hamming_result,
+        'markov': markov_result,
+        'bacnho': bacnho_result,
+        'cau': cau_result,
+        'streak': streak_result,
+        'sig': sig_result,
+    }
+    layer_info = {}
+    agreements = []
+    weighted_bonus = 0.0
+    weighted_penalty = 0.0
 
-    if hash_result:
-        h_pred, h_total, h_z, h_p_tai = hash_result
-        hash_info = {'pred': h_pred, 'total': h_total, 'z': round(h_z, 2), 'p_tai': round(h_p_tai, 3)}
-        if h_total >= 5 and abs(h_z) >= 1.0:
-            hash_agree = (h_pred == pred)
-            if hash_agree:
-                conf += min(6, abs(h_z) * 2.5); reason += "+hash_ok"
-            else:
-                conf -= min(8, abs(h_z) * 3); reason += "+hash_no"
+    layer_weights = {
+        'hash5': 1.0, 'hash7': 1.2, 'bit': 1.0, 'ngram': 1.0,
+        'hamming': 1.0, 'markov': 1.5, 'bacnho': 1.3,
+        'cau': 1.4, 'streak': 1.2, 'sig': 1.0,
+    }
 
-    if bit_result:
-        b_pred, b_total, b_z, b_p_tai = bit_result
-        bit_info = {'pred': b_pred, 'total': b_total, 'z': round(b_z, 2)}
-        if abs(b_z) >= 1.0:
-            bit_agree = (b_pred == pred)
-            if bit_agree:
-                conf += min(5, abs(b_z) * 2); reason += "+bit_ok"
-            else:
-                conf -= min(6, abs(b_z) * 2.5); reason += "+bit_no"
+    for name, res in layers.items():
+        if not res: continue
+        l_pred, l_total, l_z, l_p_tai = res
+        layer_info[name] = {'pred': l_pred, 'total': l_total,
+                            'z': round(l_z, 2), 'p_tai': round(l_p_tai, 3)}
+        if abs(l_z) < 1.0: continue
+        agree = (l_pred == pred)
+        agreements.append(agree)
+        w = layer_weights[name]
+        strength = min(abs(l_z), 2.5)
+        if agree:
+            weighted_bonus += w * strength
+        else:
+            weighted_penalty += w * strength
 
-    if ngram_result:
-        n_pred, n_total, n_z, n_p_tai = ngram_result
-        ngram_info = {'pred': n_pred, 'total': n_total, 'z': round(n_z, 2)}
-        if abs(n_z) >= 1.0:
-            ngram_agree = (n_pred == pred)
-            if ngram_agree:
-                conf += min(5, abs(n_z) * 2); reason += "+ngram_ok"
-            else:
-                conf -= min(6, abs(n_z) * 2.5); reason += "+ngram_no"
+    # Áp dụng bonus/penalty (giới hạn)
+    conf += min(15.0, weighted_bonus * 1.8)
+    conf -= min(18.0, weighted_penalty * 2.0)
 
-    if hamming_result:
-        hm_pred, hm_total, hm_z, hm_p_tai = hamming_result
-        hamming_info = {'pred': hm_pred, 'total': hm_total, 'z': round(hm_z, 2)}
-        if abs(hm_z) >= 1.0:
-            hamming_agree = (hm_pred == pred)
-            if hamming_agree:
-                conf += min(4, abs(hm_z) * 1.8); reason += "+ham_ok"
-            else:
-                conf -= min(5, abs(hm_z) * 2); reason += "+ham_no"
+    agree_count = sum(1 for a in agreements if a)
+    disagree_count = sum(1 for a in agreements if not a)
 
-    disagree_count = sum(1 for x in (hash_agree, bit_agree, ngram_agree, hamming_agree) if x is False)
-    agree_count = sum(1 for x in (hash_agree, bit_agree, ngram_agree, hamming_agree) if x is True)
+    # VETO: nếu nhiều tầng mạnh phản đối → hạ conf hoặc đổi
+    if disagree_count >= 5 and agree_count == 0:
+        conf = min(conf, 52)
+    elif disagree_count >= 4:
+        conf = min(conf, 58)
+    elif disagree_count >= 3:
+        conf = min(conf, 65)
 
-    if disagree_count >= 3: conf = min(conf, 56)
-    elif disagree_count == 2: conf = min(conf, 62)
-    elif disagree_count == 1: conf = min(conf, 72)
-
-    if agree_count >= 3:
-        conf = min(conf + 5, MAX_CONFIDENCE)
+    if agree_count >= 5:
+        conf = min(conf + 6, MAX_CONFIDENCE)
+    elif agree_count >= 4:
+        conf = min(conf + 4, MAX_CONFIDENCE)
 
     if total_pat < 8:
         conf = min(conf, 68)
 
     conf = int(max(50, min(MAX_CONFIDENCE, round(conf))))
 
-    stability = compute_stability_score(total_pat, z_pat, hash_agree, bit_agree, ngram_agree, hamming_agree, cau_type)
+    stability = compute_stability_score(total_pat, z_pat, agreements, cau_type)
     recommendation = _recommendation_from_stability(stability, conf)
 
     detail = {
         'cau_type': cau_type, 'groups': groups,
         'pattern_total': total_pat, 'pattern_p_tai': round(p_tai_pat, 3),
         'pattern_z': round(z_pat, 2), 'z_threshold_used': round(z_threshold, 2),
-        'hash_info': hash_info, 'bit_info': bit_info,
-        'ngram_info': ngram_info, 'hamming_info': hamming_info,
-        'agreement': {'hash': hash_agree, 'bit': bit_agree, 'ngram': ngram_agree,
-                      'hamming': hamming_agree, 'agree_count': agree_count,
-                      'disagree_count': disagree_count},
+        'layer_info': layer_info,
+        'agreement': {'agree_count': agree_count, 'disagree_count': disagree_count,
+                      'details': agreements},
         'reason': reason, 'extra': extra,
         'stability_score': stability, 'recommendation': recommendation,
     }
     return pred, conf, cau_type, detail
 
 
+def _count_streak_break_stats(results, current, streak_len, max_scan=80):
+    n = len(results)
+    cont = brk = 0
+    for i in range(min(n - streak_len, max_scan)):
+        if all(results[i+j] == current for j in range(streak_len)):
+            if i + streak_len < n:
+                if results[i+streak_len] == current: cont += 1
+                else: brk += 1
+    return cont, brk
+
+
 def _empty_detail(conf):
     return {
         'cau_type': 'KHÁC', 'groups': [], 'pattern_total': 0,
         'pattern_p_tai': 0.5, 'pattern_z': 0.0, 'z_threshold_used': 1.3,
-        'hash_info': {}, 'bit_info': {}, 'ngram_info': {}, 'hamming_info': {},
-        'agreement': {'hash': None, 'bit': None, 'ngram': None, 'hamming': None,
-                      'agree_count': 0, 'disagree_count': 0},
+        'layer_info': {},
+        'agreement': {'agree_count': 0, 'disagree_count': 0, 'details': []},
         'reason': 'insufficient_data', 'extra': {},
         'stability_score': 40.0,
         'recommendation': _recommendation_from_stability(40.0, conf),
     }
 
-
 # =====================================================================
-# ★★★ V18: KHÔNG FLIP — SINGLE SOURCE OF TRUTH ★★★
+# PREDICTION WRAPPER (KHÔNG FLIP)
 # =====================================================================
 def get_prediction_for(valid, i):
-    """Prediction cho phiên i — KHÔNG flip."""
     key = valid[i]['phien']
     if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
-
     hist = [v['result'] for v in valid[:i]][::-1]
     if len(hist) < 5:
         result = ("-", 50, None)
@@ -735,35 +961,22 @@ def get_prediction_for(valid, i):
         pred, conf, _, _ = predict_5p_pattern(hist)
         is_correct = (pred == valid[i]['result'])
         result = (pred, conf, is_correct)
-
     if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE: PREDICTION_CACHE.clear()
     PREDICTION_CACHE[key] = result
     return result
 
 
 def get_final_prediction(valid):
-    """Dự đoán cuối cùng cho phiên tới — KHÔNG flip. Dùng chung UI + API."""
     if not valid:
-        return {
-            'phien': None, 'prediction': None, 'confidence': 50,
-            'cau_type': None, 'detail': _empty_detail(50),
-        }
-
+        return {'phien': None, 'prediction': None, 'confidence': 50,
+                'cau_type': None, 'detail': _empty_detail(50)}
     next_phien = valid[-1]['phien'] + 1
     if next_phien in NEXT_PREDICTION_CACHE:
         return NEXT_PREDICTION_CACHE[next_phien]
-
     results = [v['result'] for v in valid][::-1]
     pred, conf, cau_type, detail = predict_5p_pattern(results)
-
-    result = {
-        'phien': next_phien,
-        'prediction': pred,
-        'confidence': conf,
-        'cau_type': cau_type,
-        'detail': detail,
-    }
-
+    result = {'phien': next_phien, 'prediction': pred,
+              'confidence': conf, 'cau_type': cau_type, 'detail': detail}
     NEXT_PREDICTION_CACHE[next_phien] = result
     if len(NEXT_PREDICTION_CACHE) > 200:
         oldest = min(NEXT_PREDICTION_CACHE.keys())
@@ -775,14 +988,21 @@ def reset_all_databases():
     global LEARNED_PHIEN
     with LEARN_LOCK:
         HASH_DEEP_DB[5].clear()
+        HASH_DEEP_DB[7].clear()
         for bit in range(128):
             MD5_BIT_DB[bit]["Tài"] = 0
             MD5_BIT_DB[bit]["Xỉu"] = 0
-        for ng_size in (2, 3, 4):
+        for ng_size in (2, 3, 4, 5, 6):
             MD5_NGRAM_DB[ng_size].clear()
         MD5_HAMMING_DB.clear()
+        for order in (1, 2, 3, 4, 5):
+            MARKOV_DB[order].clear()
+        for pos in (0, 1, 2):
+            BAC_NHO_POS_DB[pos].clear()
+        CAU_SPECIAL_DB.clear()
+        STREAK_DB.clear()
+        SIG_DB.clear()
         LEARNED_PHIEN = RESET_ID
-
 
 # =====================================================================
 # ROUTES
@@ -874,9 +1094,6 @@ def predict():
         return jsonify({'error': str(e)}), 500
 
 
-# =====================================================================
-# ★★★ /lc79md5 — OUTPUT GỌN, ĐỒNG BỘ UI ★★★
-# =====================================================================
 @app.route('/lc79md5')
 def lc79md5():
     global RESET_ID
@@ -890,7 +1107,6 @@ def lc79md5():
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         learn_incremental(valid)
 
-        # Dùng chung get_final_prediction — GIỐNG HỆT UI
         final = get_final_prediction(valid)
 
         last = valid[-1]
