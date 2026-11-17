@@ -39,7 +39,7 @@ MD5_NGRAM_DB = {
 MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 LOSS_HISTORY = deque(maxlen=20)
 
-# ==== HTML + CSS (GIỮ NGUYÊN) ====
+# ==== HTML + CSS (GIỮ NGUYÊN HOÀN TOÀN) ====
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -378,7 +378,160 @@ def learn_incremental(valid):
         LEARNED_PHIEN = valid[-1]['phien']
 
 # =====================================================================
-# MODULE 6P
+# ★★★ V10 CORE: 5P SUPERNET — SIÊU NÉT 5 PHIÊN ★★★
+# =====================================================================
+def analyze_5p_supernet(results):
+    """
+    Phân tích 5 phiên cuối → 4 dạng cầu chuẩn: THUẬN / ĐẢO / NGHỊCH / BẺ
+    Trả về dict: {type, pred, weight, reason, confidence, groups}
+    """
+    n = len(results)
+    if n < 5:
+        return None
+
+    last5 = results[:5]
+    groups = get_groups(last5)
+    alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
+
+    # ===== DẠNG 1: ĐẢO (1-1-1-1-1) — alternating liên tục =====
+    if alt_count == 4:
+        key5 = tuple(last5)
+        tai_next = xiu_next = 0
+        # Data-driven: tìm pattern 5 phiên đảo giống trong lịch sử
+        for i in range(min(n - 5, 80)):
+            if tuple(results[i:i+5]) == key5:
+                if results[i+5] == "Tài": tai_next += 1
+                else: xiu_next += 1
+        total_seen = tai_next + xiu_next
+        if total_seen >= 3:
+            p_tai = (tai_next + 1) / (total_seen + 2)
+            if p_tai >= 0.62:
+                return {'type': 'ĐẢO', 'pred': 'Tài',
+                        'weight': min(32, 22 + (p_tai - 0.5) * 24),
+                        'reason': f'supernet_dao_dataT_{total_seen}',
+                        'confidence': int(p_tai * 100), 'groups': groups}
+            elif p_tai <= 0.38:
+                return {'type': 'ĐẢO', 'pred': 'Xỉu',
+                        'weight': min(32, 22 + (0.5 - p_tai) * 24),
+                        'reason': f'supernet_dao_dataX_{total_seen}',
+                        'confidence': int((1 - p_tai) * 100), 'groups': groups}
+        # Fallback lý thuyết: đảo phiên cuối
+        return {'type': 'ĐẢO', 'pred': _opp(last5[0]),
+                'weight': 26, 'reason': 'supernet_dao_lythuyet',
+                'confidence': 70, 'groups': groups}
+
+    # ===== DẠNG 2: THUẬN (5-0 / 4-1 cùng hướng) =====
+    if alt_count == 0:  # 5-0: cả 5 phiên giống nhau
+        current = last5[0]
+        cont = brk = 0
+        for i in range(min(n - 5, 80)):
+            if all(results[i+j] == current for j in range(5)):
+                if i + 5 < n:
+                    if results[i+5] == current: cont += 1
+                    else: brk += 1
+        total = cont + brk
+        if total >= 3:
+            p_cont = (cont + 1) / (total + 2)
+            if p_cont >= 0.55:  # Ưu tiên theo cầu
+                return {'type': 'THUẬN', 'pred': current,
+                        'weight': min(32, 22 + (p_cont - 0.5) * 22),
+                        'reason': f'supernet_thuan_cont_{total}',
+                        'confidence': int(p_cont * 100), 'groups': groups}
+            elif p_cont <= 0.40:  # Bẻ
+                return {'type': 'THUẬN_BẺ', 'pred': _opp(current),
+                        'weight': min(30, 20 + (0.5 - p_cont) * 22),
+                        'reason': f'supernet_thuan_break_{total}',
+                        'confidence': int((1 - p_cont) * 100), 'groups': groups}
+        return {'type': 'THUẬN', 'pred': current,
+                'weight': 24, 'reason': 'supernet_thuan_lythuyet',
+                'confidence': 65, 'groups': groups}
+
+    if alt_count == 1 and groups[0] == 4:
+        # 4-1 cùng hướng → ưu tiên theo phiên cuối (phiên lẻ)
+        return {'type': 'THUẬN', 'pred': last5[0],
+                'weight': 24, 'reason': 'supernet_thuan_4_1',
+                'confidence': 68, 'groups': groups}
+
+    # ===== DẠNG 3: NGHỊCH (3-1-1 / 1-1-3 / 3-2) =====
+    if len(groups) == 3 and (
+        (groups[0] == 3 and groups[1] == 1 and groups[2] == 1) or
+        (groups[0] == 1 and groups[1] == 1 and groups[2] == 3) or
+        (groups[0] == 3 and groups[1] == 2)
+    ):
+        # Nghịch: đảo sau khi cầu 3 gãy
+        key5 = tuple(last5)
+        tai_next = xiu_next = 0
+        for i in range(min(n - 5, 80)):
+            if tuple(results[i:i+5]) == key5:
+                if results[i+5] == "Tài": tai_next += 1
+                else: xiu_next += 1
+        total_seen = tai_next + xiu_next
+        if total_seen >= 3:
+            p_tai = (tai_next + 1) / (total_seen + 2)
+            if p_tai >= 0.60:
+                return {'type': 'NGHỊCH', 'pred': 'Tài',
+                        'weight': min(30, 20 + (p_tai - 0.5) * 22),
+                        'reason': f'supernet_nghich_dataT_{total_seen}',
+                        'confidence': int(p_tai * 100), 'groups': groups}
+            elif p_tai <= 0.40:
+                return {'type': 'NGHỊCH', 'pred': 'Xỉu',
+                        'weight': min(30, 20 + (0.5 - p_tai) * 22),
+                        'reason': f'supernet_nghich_dataX_{total_seen}',
+                        'confidence': int((1 - p_tai) * 100), 'groups': groups}
+        return {'type': 'NGHỊCH', 'pred': _opp(last5[0]),
+                'weight': 22, 'reason': 'supernet_nghich_lythuyet',
+                'confidence': 65, 'groups': groups}
+
+    # ===== DẠNG 4: BẺ (2-1-2 / 1-3-1 / 2-2-1) =====
+    if (len(groups) == 3 and (
+        (groups[0] == 2 and groups[1] == 1 and groups[2] == 2) or
+        (groups[0] == 1 and groups[1] == 3 and groups[2] == 1) or
+        (groups[0] == 2 and groups[1] == 2 and groups[2] == 1)
+    )):
+        key5 = tuple(last5)
+        tai_next = xiu_next = 0
+        for i in range(min(n - 5, 80)):
+            if tuple(results[i:i+5]) == key5:
+                if results[i+5] == "Tài": tai_next += 1
+                else: xiu_next += 1
+        total_seen = tai_next + xiu_next
+        if total_seen >= 3:
+            p_tai = (tai_next + 1) / (total_seen + 2)
+            if p_tai >= 0.60:
+                return {'type': 'BẺ', 'pred': 'Tài',
+                        'weight': min(30, 20 + (p_tai - 0.5) * 22),
+                        'reason': f'supernet_be_dataT_{total_seen}',
+                        'confidence': int(p_tai * 100), 'groups': groups}
+            elif p_tai <= 0.40:
+                return {'type': 'BẺ', 'pred': 'Xỉu',
+                        'weight': min(30, 20 + (0.5 - p_tai) * 22),
+                        'reason': f'supernet_be_dataX_{total_seen}',
+                        'confidence': int((1 - p_tai) * 100), 'groups': groups}
+        # Fallback: bẻ = đảo phiên cuối
+        return {'type': 'BẺ', 'pred': _opp(last5[0]),
+                'weight': 24, 'reason': 'supernet_be_lythuyet',
+                'confidence': 68, 'groups': groups}
+
+    # ===== FALLBACK: 2-2-1 → xét phiên cuối =====
+    if len(groups) == 3 and groups[0] == 2 and groups[1] == 2:
+        # Cầu 2-2 đối xứng → phiên cuối thường đảo
+        return {'type': 'BẺ', 'pred': _opp(last5[0]),
+                'weight': 22, 'reason': 'supernet_be_2_2',
+                'confidence': 66, 'groups': groups}
+
+    return None
+
+
+def algo_5p_supernet(results):
+    """Wrapper cho engine voting."""
+    info = analyze_5p_supernet(results)
+    if not info:
+        return None
+    return (info['pred'], info['weight'], info['reason'])
+
+
+# =====================================================================
+# MODULE 6P (giữ nguyên — đã ổn định)
 # =====================================================================
 def classify_6p_pattern(results):
     n = len(results)
@@ -498,7 +651,7 @@ def algo_6p_balanced(results):
     return (info['pred'], info['weight'], info['reason'])
 
 # =====================================================================
-# CÁC THUẬT TOÁN KHÁC (giữ nguyên)
+# CÁC THUẬT TOÁN PHỤ (giữ nguyên)
 # =====================================================================
 def algo_lc79_specialist(results):
     n = len(results)
@@ -523,27 +676,6 @@ def algo_lc79_specialist(results):
                 pred = "Tài" if p_tai > 0.5 else "Xỉu"
                 weight = min(27, 16 + abs(z) * 4)
                 return (pred, weight, f"lc79_matrix_3x3_{t1}{t2}{t3}")
-    groups = get_groups(results[:10])
-    if len(groups) >= 2:
-        if groups[0] == 1 and groups[1] >= 3:
-            hist_count = 0; tai_next = xiu_next = 0
-            for i in range(min(n - groups[1] - 1, 60)):
-                if results[i] != results[i+1]:
-                    seg_start = i + 1; seg_len = 1
-                    while seg_start + seg_len < n and results[seg_start] == results[seg_start + seg_len]:
-                        seg_len += 1
-                    if seg_len >= 3 and seg_start + seg_len < n:
-                        hist_count += 1
-                        if results[seg_start + seg_len] == "Tài": tai_next += 1
-                        else: xiu_next += 1
-            if hist_count >= 3:
-                p_tai = (tai_next + 1) / (tai_next + xiu_next + 2)
-                pred = "Tài" if p_tai > 0.5 else "Xỉu"
-                return (pred, 22, "lc79_break_pattern")
-    groups5 = get_groups(results[:5])
-    if len(groups5) == 3 and (groups5[0] == 1 and groups5[1] == 2 and groups5[2] == 1) or \
-       (len(groups5) == 3 and groups5[0] == 2 and groups5[1] == 1 and groups5[2] == 2):
-        return (results[0], 20, "lc79_zigzag_121")
     return None
 
 def algo_7p_pattern_radar(results):
@@ -574,80 +706,6 @@ def algo_7p_pattern_radar(results):
     if len(groups) >= 2 and groups[0] == 1 and groups[1] >= 3: return (last7[0], 20, "7p_radar_nghich")
     if len(groups) >= 3 and groups[0] == 2 and groups[1] == 2 and groups[2] == 2: return (last7[0], 20, "7p_radar_2_2")
     return None
-
-def algo_7p_no_reverse(results):
-    n = len(results)
-    if n < 15: return None
-    last7 = results[:7]
-    alternations = sum(1 for i in range(6) if last7[i] != last7[i+1])
-    if alternations <= 3:
-        key7 = tuple(last7); tai_next = xiu_next = 0
-        for i in range(min(n - 7, 60)):
-            if tuple(results[i:i+7]) == key7:
-                if results[i+7] == "Tài": tai_next += 1
-                else: xiu_next += 1
-        total_seen = tai_next + xiu_next
-        if total_seen >= 3:
-            p_tai = (tai_next + 1) / (total_seen + 2)
-            z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
-            if abs(z) >= 1.0:
-                pred = "Tài" if p_tai > 0.5 else "Xỉu"
-                return (pred, min(22, 13 + abs(z) * 4), f"7p_no_reverse_{alternations}alt")
-        groups = get_groups(results[:7])
-        if len(groups) >= 2:
-            if groups[0] < groups[1]: return (last7[0], 15, "7p_no_reverse_extend")
-            else: return (_opp(last7[0]), 13, "7p_no_reverse_wait")
-    return None
-
-def algo_7p_hash_deep(results):
-    n = len(results)
-    if n < 15: return None
-    tx = encode_tx(results, 7)
-    if not tx: return None
-    h = hash_deep_md5(tx, depth_level=3)
-    if not h or h not in HASH_DEEP_DB[7]: return None
-    counts = HASH_DEEP_DB[7][h]; total = counts["Tài"] + counts["Xỉu"]
-    if total < 3: return None
-    p_tai = (counts["Tài"] + 1) / (total + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-    if abs(z) < 1.1: return None
-    pred = "Tài" if p_tai > 0.5 else "Xỉu"
-    return (pred, min(22, 12 + abs(z) * 4), f"7p_hash_deep_{total}")
-
-def algo_stable_zone_10p(results):
-    n = len(results)
-    if n < 20: return None
-    last10 = results[:10]
-    noise = sum(1 for i in range(9) if last10[i] != last10[i+1])
-    if noise < 2 or noise > 6: return None
-    key10 = tuple(last10); tai_next = xiu_next = 0
-    for i in range(min(n - 10, 80)):
-        if tuple(results[i:i+10]) == key10:
-            if results[i+10] == "Tài": tai_next += 1
-            else: xiu_next += 1
-    total_seen = tai_next + xiu_next
-    if total_seen >= 2:
-        p_tai = (tai_next + 1) / (total_seen + 2)
-        z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
-        if abs(z) >= 0.9:
-            pred = "Tài" if p_tai > 0.5 else "Xỉu"
-            return (pred, min(24, 14 + abs(z) * 4), "stable_zone_10p")
-    groups = get_groups(last10)
-    if len(groups) >= 2:
-        if groups[0] < groups[1]: return (last10[0], 15, "stable_zone_extend")
-        else: return (_opp(last10[0]), 14, "stable_zone_break")
-    return None
-
-def algo_consensus_filter(results, current_signals):
-    if not current_signals: return None
-    tai_score = sum(w for p, w, n in current_signals if p == "Tài")
-    xiu_score = sum(w for p, w, n in current_signals if p == "Xỉu")
-    total = tai_score + xiu_score
-    if total == 0: return None
-    ratio = max(tai_score, xiu_score) / total
-    if ratio < 0.55: return None
-    pred = "Tài" if tai_score > xiu_score else "Xỉu"
-    return (pred, min(14, 9 + (ratio - 0.5) * 28), f"consensus_{int(ratio*100)}pct")
 
 def algo_hash_deep_5p(results):
     tx = encode_tx(results, 5)
@@ -688,157 +746,6 @@ def algo_hash_deep_13p(results):
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
     return (pred, min(22, 12 + abs(z) * 4), f"hash_deep_13p_{total}")
 
-def algo_hash_deep_multi(results):
-    combined = {"Tài": 0.0, "Xỉu": 0.0}; total_samples = 0
-    for depth, wf in ((13, 1.0), (10, 0.75), (7, 0.55), (5, 0.9)):
-        tx = encode_tx(results, depth)
-        if not tx: continue
-        h = hash_deep_md5(tx, depth_level=2 if depth >= 7 else 3)
-        if not h or h not in HASH_DEEP_DB[depth]: continue
-        counts = HASH_DEEP_DB[depth][h]; total = counts["Tài"] + counts["Xỉu"]
-        if total < 2: continue
-        p_tai = (counts["Tài"] + 1) / (total + 2)
-        z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-        pred = "Tài" if p_tai > 0.5 else "Xỉu"
-        combined[pred] += min(18, 8 + abs(z) * 3.5) * wf; total_samples += total
-    if total_samples < 4: return None
-    st, sx = combined["Tài"], combined["Xỉu"]
-    if st == sx: return None
-    pred = "Tài" if st > sx else "Xỉu"
-    ratio = max(st, sx) / (st + sx)
-    if ratio < 0.56: return None
-    return (pred, min(20, 10 + (ratio - 0.5) * 30), f"hash_deep_multi_{total_samples}")
-
-def algo_md5_bit_analysis(results):
-    if len(results) < 13: return None
-    tx = encode_tx(results, 13)
-    if not tx: return None
-    h = hash_deep_md5(tx, depth_level=2)
-    if not h: return None
-    bits = hash_to_bits(h)
-    if len(bits) < 128: return None
-    st = sx = 0.0; total_active = 0
-    for bit_idx in range(128):
-        if bits[bit_idx] != 1: continue
-        cnt = MD5_BIT_DB[bit_idx]; total = cnt["Tài"] + cnt["Xỉu"]
-        if total < 5: continue
-        p_tai = (cnt["Tài"] + 1) / (total + 2)
-        z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-        if abs(z) < 0.8: continue
-        w = abs(z) * 2
-        if p_tai > 0.5: st += w
-        else: sx += w
-        total_active += 1
-    if total_active < 5 or st == sx: return None
-    pred = "Tài" if st > sx else "Xỉu"
-    ratio = max(st, sx) / (st + sx)
-    if ratio < 0.58: return None
-    return (pred, min(20, 10 + (ratio - 0.5) * 35), f"md5_bit_{total_active}")
-
-def algo_md5_ngram(results):
-    if len(results) < 13: return None
-    tx = encode_tx(results, 13)
-    if not tx: return None
-    h = hash_deep_md5(tx, depth_level=2)
-    if not h: return None
-    st = sx = 0.0; total_grams = 0
-    for ng_size, wf in ((2, 0.5), (3, 1.0), (4, 1.5)):
-        db = MD5_NGRAM_DB[ng_size]
-        for start in range(0, len(h) - ng_size + 1):
-            gram = h[start:start + ng_size]
-            if gram not in db: continue
-            cnt = db[gram]; total = cnt["Tài"] + cnt["Xỉu"]
-            if total < 3: continue
-            p_tai = (cnt["Tài"] + 1) / (total + 2)
-            z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-            if abs(z) < 1.0: continue
-            w = abs(z) * 2 * wf
-            if p_tai > 0.5: st += w
-            else: sx += w
-            total_grams += 1
-    if total_grams < 8 or st == sx: return None
-    pred = "Tài" if st > sx else "Xỉu"
-    ratio = max(st, sx) / (st + sx)
-    if ratio < 0.58: return None
-    return (pred, min(19, 10 + (ratio - 0.5) * 30), f"md5_ngram_{total_grams}")
-
-def algo_md5_hamming(results):
-    if len(results) < 15: return None
-    tx_now = encode_tx(results, 13)
-    tx_prev = encode_tx(results[1:], 13) if len(results) > 14 else None
-    if not tx_now or not tx_prev: return None
-    h_now = hash_deep_md5(tx_now, depth_level=2)
-    h_prev = hash_deep_md5(tx_prev, depth_level=2)
-    if not h_now or not h_prev: return None
-    hd = hamming_distance(h_now, h_prev); bin_key = hd // 8
-    if bin_key not in MD5_HAMMING_DB: return None
-    cnt = MD5_HAMMING_DB[bin_key]; total = cnt["Tài"] + cnt["Xỉu"]
-    if total < 4: return None
-    p_tai = (cnt["Tài"] + 1) / (total + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-    if abs(z) < 1.2: return None
-    pred = "Tài" if p_tai > 0.5 else "Xỉu"
-    return (pred, min(18, 10 + abs(z) * 3), f"md5_hamming_{hd}")
-
-def algo_5p_alternation(results):
-    n = len(results)
-    if n < 10: return None
-    last5 = results[:5]
-    alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
-    if alt_count == 4:
-        tai_next = xiu_next = 0; key5 = tuple(last5)
-        for i in range(min(n - 5, 50)):
-            if tuple(results[i:i+5]) == key5:
-                if results[i+5] == "Tài": tai_next += 1
-                else: xiu_next += 1
-        total_seen = tai_next + xiu_next
-        if total_seen >= 3:
-            p_tai = (tai_next + 1) / (total_seen + 2)
-            if p_tai >= 0.62: return ("Tài", min(20, 12 + (p_tai - 0.5) * 22), "5p_alt_data_T")
-            elif p_tai <= 0.38: return ("Xỉu", min(20, 12 + (0.5 - p_tai) * 22), "5p_alt_data_X")
-        return (_opp(last5[0]), 16, "5p_alt_continue")
-    if alt_count == 3:
-        tai_next = xiu_next = 0; key5 = tuple(last5)
-        for i in range(min(n - 5, 50)):
-            if tuple(results[i:i+5]) == key5:
-                if results[i+5] == "Tài": tai_next += 1
-                else: xiu_next += 1
-        total_seen = tai_next + xiu_next
-        if total_seen >= 3:
-            p_tai = (tai_next + 1) / (total_seen + 2)
-            if p_tai >= 0.62: return ("Tài", min(18, 11 + (p_tai - 0.5) * 20), "5p_alt_reverse_data_T")
-            elif p_tai <= 0.38: return ("Xỉu", min(18, 11 + (0.5 - p_tai) * 20), "5p_alt_reverse_data_X")
-        return (_opp(last5[0]), 13, "5p_alt_reverse")
-    return None
-
-def algo_trend_break(results):
-    n = len(results)
-    if n < 20: return None
-    window = list(reversed(results[:20]))
-    b = [1 if r == "Tài" else 0 for r in window]
-    x_mean = 9.5; y_mean = sum(b) / 20
-    num = sum((i - x_mean) * (b[i] - y_mean) for i in range(20))
-    den = sum((i - x_mean) ** 2 for i in range(20))
-    slope = num / den if den else 0; last3 = b[-3:]
-    if slope > 0.04:
-        if sum(last3) <= 1: return ("Tài", min(18, 11 + abs(slope) * 28), "trend_bounce_T")
-    elif slope < -0.04:
-        if sum(last3) >= 2: return ("Xỉu", min(18, 11 + abs(slope) * 28), "trend_bounce_X")
-    if abs(slope) > 0.08:
-        last_dir = "Tài" if sum(last3) >= 2 else "Xỉu"
-        if (slope > 0 and last_dir == "Tài") or (slope < 0 and last_dir == "Xỉu"):
-            return (last_dir, min(16, 11 + abs(slope) * 22), "trend_continue")
-    return None
-
-def algo_break_rhythm(results):
-    n = len(results)
-    if n < 12: return None
-    last8 = results[:8]
-    alt_count = sum(1 for i in range(7) if last8[i] != last8[i+1])
-    if 5 <= alt_count <= 6: return (_opp(last8[0]), 14, "break_rhythm_alt")
-    if alt_count <= 2: return (last8[0], 13, "break_rhythm_streak")
-    return None
-
 def data_markov2(results):
     n = len(results)
     if n < 20: return None
@@ -865,21 +772,6 @@ def data_markov3(results):
     if abs(z) < 1.3: return None
     return ("Tài" if p_tai > 0.5 else "Xỉu", min(20, 10 + abs(z) * 3), "markov3_data")
 
-def data_pattern3(results):
-    n = len(results)
-    if n < 25: return None
-    key = tuple(results[:3]); tai_next = xiu_next = 0
-    for i in range(min(n - 3, 60)):
-        if tuple(results[i:i+3]) == key:
-            if results[i+3] == "Tài": tai_next += 1
-            else: xiu_next += 1
-    tot = tai_next + xiu_next
-    if tot < 4: return None
-    p = (tai_next + 1) / (tot + 2)
-    if p >= 0.68: return ("Tài", min(17, 10 + (p - 0.5) * 20), "pattern3_data")
-    if p <= 0.32: return ("Xỉu", min(17, 10 + (0.5 - p) * 20), "pattern3_data")
-    return None
-
 def data_alternation(results):
     n = len(results)
     if n < 4: return None
@@ -888,25 +780,6 @@ def data_alternation(results):
     if alt >= 6: return (_opp(results[0]), 17, "alt_6_7")
     if alt >= 4: return (_opp(results[0]), 13, "alt_4_5")
     if alt >= 3: return (_opp(results[0]), 9, "alt_3")
-    return None
-
-def data_streak_break(results):
-    n = len(results)
-    if n < 25: return None
-    streak = _count_streak(results)
-    if streak < 3: return None
-    current = results[0]; breaks = totals = 0; i = 0
-    while i < n - 1:
-        j = i; cnt = 1
-        while j + 1 < n and results[j] == results[j+1]: cnt += 1; j += 1
-        if cnt >= streak and results[i] == current:
-            totals += 1
-            if j + 1 < n and results[j+1] != current: breaks += 1
-        i = j + 1
-    if totals < 4: return None
-    p_break = (breaks + 1) / (totals + 2)
-    if p_break >= 0.65: return (_opp(current), min(17, 10 + (p_break - 0.5) * 20), "streak_break_data")
-    if p_break <= 0.35: return (current, min(14, 9 + (0.5 - p_break) * 15), "streak_continue_data")
     return None
 
 def data_bayes_ratio(results):
@@ -921,76 +794,6 @@ def data_bayes_ratio(results):
     z = abs((p_tai - 0.5) / std) if std else 0
     if z < 1.5: return None
     return ("Tài" if p_tai > 0.5 else "Xỉu", min(15, 9 + z * 2), "bayes_data")
-
-def data_tilt(results):
-    n = len(results)
-    if n < 12: return None
-    for w, hi, lo, wgt in ((8, 7, 1, 14), (12, 10, 2, 12)):
-        if n < w: continue
-        tc = results[:w].count("Tài")
-        if tc >= hi: return ("Xỉu", wgt, f"tilt_tai_{w}")
-        if tc <= lo: return ("Tài", wgt, f"tilt_xiu_{w}")
-    return None
-
-def data_periodicity(results):
-    n = len(results)
-    if n < 24: return None
-    best_period, best_score = 0, 0.0
-    for period in range(2, min(12, n // 2)):
-        matches = total = 0
-        for i in range(period, min(n, period + 20)):
-            total += 1
-            if results[i] == results[i - period]: matches += 1
-        if total >= 10:
-            score = matches / total
-            if score > best_score: best_score, best_period = score, period
-    if best_period and best_score >= 0.72:
-        pred = results[best_period - 1]
-        return (pred, min(20, 12 + (best_score - 0.5) * 22), f"periodicity_p{best_period}")
-    return None
-
-def data_volatility_break(results):
-    n = len(results)
-    if n < 15: return None
-    window = results[:12]
-    changes = sum(1 for i in range(11) if window[i] != window[i+1])
-    if changes <= 2: return (_opp(results[0]), 16, "volatility_low_break")
-    if changes >= 9: return (results[0], 14, "volatility_high_continue")
-    return None
-
-def data_entropy_bias(results):
-    n = len(results)
-    if n < 15: return None
-    window = results[:20]
-    p_tai = (window.count("Tài") + 1) / (len(window) + 2); p_xiu = 1 - p_tai
-    if p_tai <= 0 or p_xiu <= 0: return None
-    entropy = -(p_tai * math.log2(p_tai) + p_xiu * math.log2(p_xiu))
-    if entropy < 0.75: return ("Tài" if p_tai > 0.5 else "Xỉu", 14, f"entropy_{entropy:.2f}")
-    return None
-
-def data_cusum(results):
-    n = len(results)
-    if n < 20: return None
-    window = list(reversed(results[:20])); s_pos = s_neg = 0.0; target = 0.5
-    for r in window:
-        x = 1 if r == "Tài" else 0
-        s_pos = max(0, s_pos + (x - target))
-        s_neg = max(0, s_neg + (target - x))
-    if s_pos > 3.5: return ("Xỉu", 15, "cusum_T_bias")
-    if s_neg > 3.5: return ("Tài", 15, "cusum_X_bias")
-    return None
-
-def algo_pair_pattern(results):
-    n = len(results)
-    if n < 8: return None
-    groups = get_groups(results)
-    if len(groups) < 3: return None
-    last3 = groups[:3]
-    if last3 == [2, 2, 2]: return (results[0], 16, "pattern_2_2_2")
-    if last3 == [3, 3, 3]: return (results[0], 18, "pattern_3_3_3")
-    if groups[0] == groups[1] and groups[0] <= 3 and len(groups) >= 2:
-        return (_opp(results[0]), 14, f"pattern_{groups[0]}_{groups[1]}_break")
-    return None
 
 def algo_regime_predictor(results):
     n = len(results)
@@ -1020,184 +823,27 @@ def algo_regime_predictor(results):
         return (_opp(results[0]), min(20, 12 + prob * 14), f"regime_pred_alt_{prob:.2f}")
     return None
 
-def analyze_5phien(results):
-    if len(results) < 5: return None
-    last5 = results[:5]
-    alt = sum(1 for i in range(4) if last5[i] != last5[i+1])
-    if alt == 4: return ("Đảo", _opp(last5[0]), 20)
-    if alt == 0:
-        n = len(results); same_streak_cont = same_streak_break = 0
-        for i in range(min(n - 5, 40)):
-            if results[i:i+5] == last5:
-                if results[i+5] == last5[0]: same_streak_cont += 1
-                else: same_streak_break += 1
-        total = same_streak_cont + same_streak_break
-        if total >= 3:
-            p_cont = (same_streak_cont + 1) / (total + 2)
-            if p_cont >= 0.55: return ("Thuận", last5[0], 17)
-            else: return ("Thuận_break", _opp(last5[0]), 16)
-        return ("Thuận", last5[0], 15)
-    last4 = results[:4]
-    alt4 = sum(1 for i in range(3) if last4[i] != last4[i+1])
-    if alt4 == 3: return ("1-1", _opp(last4[0]), 18)
-    streak = _count_streak(results)
-    if streak >= 3 and streak <= 4 and len(results) > streak:
-        return ("Nghịch", _opp(results[0]), 17)
-    return None
-
 # =====================================================================
-# ★ V9 ENGINE — META-PREDICTOR MỚI
-# =====================================================================
-SIGNAL_FAMILIES = {
-    'lc79':      ('lc79_',),
-    '6p':        ('dao_6p', 'thuan_6p', 'nghich_6p', 'zigzag'),
-    '7p':        ('7p_radar', '7p_no_reverse', '7p_hash_deep'),
-    '10p':       ('stable_zone', 'hash_deep_10p'),
-    'hash13':    ('hash_deep_13p', 'hash_deep_multi'),
-    'bit':       ('md5_bit_',),
-    'ngram':     ('md5_ngram_',),
-    'hamming':   ('md5_hamming_',),
-    'alt':       ('5p_alt', 'alt_'),
-    'streak':    ('streak_', 'break_rhythm', 'volatility_'),
-    'trend':     ('trend_',),
-    'markov':    ('markov',),
-    'pattern':   ('pattern_', 'pattern3'),
-    'bayes':     ('bayes_', 'tilt_', 'entropy_', 'cusum_'),
-    'periodic':  ('periodicity_',),
-    'regime':    ('regime_pred',),
-    'consensus': ('consensus_',),
-}
-
-_FAMILY_BASE_CAP = {
-    'lc79': 30, '6p': 34, '7p': 26, '10p': 22, 'hash13': 20,
-    'bit': 18, 'ngram': 16, 'hamming': 14, 'alt': 18, 'streak': 16,
-    'trend': 14, 'markov': 16, 'pattern': 18, 'bayes': 14,
-    'periodic': 16, 'regime': 20, 'consensus': 12, 'other': 12,
-}
-
-def _signal_family(name):
-    for fam, prefixes in SIGNAL_FAMILIES.items():
-        for p in prefixes:
-            if p in name:
-                return fam
-    return 'other'
-
-def _family_cap(family, regime):
-    cap = _FAMILY_BASE_CAP.get(family, 12)
-    if regime == 'alternation':
-        if family in ('alt', '6p', '7p'): cap *= 1.30
-        if family in ('streak', 'trend'):  cap *= 0.70
-    elif regime == 'streak':
-        if family in ('streak', 'trend'):  cap *= 1.30
-        if family in ('alt', '6p'):        cap *= 0.75
-    return cap
-
-def _bayes_accuracy(wins, total, prior=0.5, prior_strength=2.5):
-    return (wins + prior * prior_strength) / (total + prior_strength)
-
-def meta_predictor(all_signals, signal_stats, regime="balanced"):
-    adjusted = []
-    for pred, weight, name in all_signals:
-        stats = signal_stats.get(name, {})
-        wins = stats.get('wins', 0.0)
-        total = stats.get('total', 0.0)
-        recent = stats.get('recent_hits', [])
-
-        if total >= 3.0:
-            acc = _bayes_accuracy(wins, total, prior=0.5, prior_strength=2.5)
-        else:
-            acc = 0.5
-
-        accuracy_mult = 0.55 + max(0.0, min(0.80, (acc - 0.40) * 2.0))
-
-        win_streak = 0; loss_streak = 0
-        for h in recent[:5]:
-            if h: win_streak += 1
-            else: break
-        for h in recent[:5]:
-            if not h: loss_streak += 1
-            else: break
-        if   loss_streak >= 4: streak_mult = 0.45
-        elif loss_streak == 3: streak_mult = 0.60
-        elif loss_streak == 2: streak_mult = 0.80
-        elif win_streak >= 4:  streak_mult = 1.20
-        elif win_streak == 3:  streak_mult = 1.12
-        elif win_streak == 2:  streak_mult = 1.05
-        else:                  streak_mult = 1.00
-
-        if recent:
-            n_use = min(5, len(recent))
-            w_sum = sum(0.85 ** i for i in range(n_use))
-            m = sum((1.0 if recent[i] else 0.0) * (0.85 ** i) for i in range(n_use)) / w_sum
-        else:
-            m = 0.5
-        momentum_mult = 0.85 + m * 0.30
-
-        fam = _signal_family(name)
-        reg_mult = 1.0
-        if regime == 'alternation':
-            if fam in ('alt', '6p', '7p'): reg_mult = 1.15
-            elif fam in ('streak', 'trend'): reg_mult = 0.85
-        elif regime == 'streak':
-            if fam in ('streak', 'trend'): reg_mult = 1.15
-            elif fam in ('alt', '6p'):     reg_mult = 0.85
-
-        final_w = weight * accuracy_mult * streak_mult * momentum_mult * reg_mult
-        adjusted.append({
-            'name': name, 'pred': pred, 'family': fam,
-            'base_weight': weight, 'final_weight': final_w,
-            'accuracy': round(acc, 3), 'streak_mult': streak_mult,
-            'momentum': round(m, 2), 'regime_mult': reg_mult,
-            'win_streak': win_streak, 'loss_streak': loss_streak,
-        })
-    return adjusted
-
-def apply_family_cap(signals, regime):
-    fam_sum = defaultdict(float)
-    for s in signals:
-        fam_sum[s['family']] += s['final_weight']
-    for s in signals:
-        cap = _family_cap(s['family'], regime)
-        if fam_sum[s['family']] > cap and fam_sum[s['family']] > 0:
-            ratio = cap / fam_sum[s['family']]
-            s['final_weight'] *= ratio
-    return signals
-
-# =====================================================================
-# ANALYZER
+# ANALYZER — V10 CORE
 # =====================================================================
 def analyze_full_bridge(results):
+    """V10: Tập trung vào 5P Supernet + các module cốt lõi."""
     if len(results) < 3: return []
     signals = []
+
+    # Core signals (ưu tiên cao)
     for fn in (
-        algo_lc79_specialist,
+        algo_5p_supernet,        # ★ MỚI: siêu nét 5P
         algo_6p_balanced,
-        algo_stable_zone_10p,
-        algo_7p_no_reverse,
-        algo_7p_hash_deep,
         algo_7p_pattern_radar,
+        algo_lc79_specialist,
         algo_hash_deep_5p,
         algo_hash_deep_10p,
         algo_hash_deep_13p,
-        algo_hash_deep_multi,
-        algo_md5_bit_analysis,
-        algo_md5_ngram,
-        algo_md5_hamming,
-        algo_5p_alternation,
-        algo_trend_break,
-        algo_break_rhythm,
         data_markov2,
         data_markov3,
-        data_pattern3,
         data_alternation,
-        data_streak_break,
         data_bayes_ratio,
-        data_tilt,
-        data_periodicity,
-        data_volatility_break,
-        data_entropy_bias,
-        data_cusum,
-        algo_pair_pattern,
         algo_regime_predictor,
     ):
         try:
@@ -1205,15 +851,17 @@ def analyze_full_bridge(results):
             if s: signals.append(s)
         except Exception:
             pass
-    try:
-        consensus = algo_consensus_filter(results, signals)
-        if consensus:
-            signals.append(consensus)
-    except Exception:
-        pass
+
     return signals
 
-def full_bridge_predict_adaptive(results, replay_n=120):
+# =====================================================================
+# ★★★ V10 PREDICTOR — TÍCH HỢP 5P SUPERNET + CONFIDENCE STABILITY ★★★
+# =====================================================================
+def full_bridge_predict_adaptive(results, replay_n=100):
+    """
+    V10: Tích hợp 5P Supernet làm tín hiệu chủ đạo.
+    Confidence được điều chỉnh bởi stability_score.
+    """
     n = len(results)
     if n == 0: return "Tài", 50, []
     if n == 1: return _opp(results[0]), 52, []
@@ -1221,41 +869,45 @@ def full_bridge_predict_adaptive(results, replay_n=120):
         if results[0] == results[1]: return _opp(results[0]), 55, []
         return results[1], 52, []
 
-    signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0, 'recent_hits': []})
+    # Bước 1: Lấy tất cả signals hiện tại
+    signals = analyze_full_bridge(results)
+    if not signals:
+        return results[0], 52, []
+
+    # Bước 2: Replay để tính accuracy từng signal (nhẹ, 100 phiên)
+    signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
     replay_count = min(replay_n, n - 3)
     for j in range(replay_count):
         history = results[j + 1:]
         actual = results[j]
-        decay = math.exp(-j / 40.0)
+        decay = math.exp(-j / 50.0)
         for pred_sig, weight, name in analyze_full_bridge(history):
             signal_stats[name]['total'] += decay
-            hit = (pred_sig == actual)
-            if hit: signal_stats[name]['wins'] += decay
-            if j < 6:
-                signal_stats[name]['recent_hits'].append(hit)
+            if pred_sig == actual:
+                signal_stats[name]['wins'] += decay
 
-    signals = analyze_full_bridge(results)
-    if not signals: return results[0], 52, []
-
-    regime = _regime(results)
-    adjusted = meta_predictor(signals, signal_stats, regime)
-    adjusted = apply_family_cap(adjusted, regime)
-
+    # Bước 3: Tính weighted score với accuracy multiplier
     st = sx = 0.0
     detail = []
-    for a in adjusted:
-        w = a['final_weight']
-        if a['pred'] == "Tài": st += w
-        else:                  sx += w
+    for pred, weight, name in signals:
+        stats = signal_stats[name]
+        total_s = stats['total']
+        if total_s >= 3.0:
+            acc = (stats['wins'] + 1.25) / (total_s + 2.5)
+        else:
+            acc = 0.5
+        # multiplier: 0.55 (acc=0.4) → 1.0 (acc=0.5) → 1.35 (acc=0.65+)
+        acc_mult = 0.55 + max(0.0, min(0.80, (acc - 0.40) * 2.0))
+        final_w = weight * acc_mult
+
+        if pred == "Tài": st += final_w
+        else: sx += final_w
+
         detail.append({
-            'name': a['name'], 'pred': a['pred'],
-            'base_weight': a['base_weight'],
-            'accuracy': a['accuracy'],
-            'adjusted_weight': round(w, 2),
-            'family': a['family'],
-            'streak_mult': a['streak_mult'],
-            'momentum': a['momentum'],
-            'regime_mult': a['regime_mult'],
+            'name': name, 'pred': pred,
+            'base_weight': weight,
+            'accuracy': round(acc, 3),
+            'adjusted_weight': round(final_w, 2),
         })
 
     total = st + sx
@@ -1267,44 +919,51 @@ def full_bridge_predict_adaptive(results, replay_n=120):
     else: return _opp(results[0]), 50, detail
 
     lean = max(st, sx) / total
-
-    agree_w = sum(a['final_weight'] for a in adjusted if a['pred'] == pred)
+    agree_w = sum(d['adjusted_weight'] for d in detail if d['pred'] == pred)
     disagree_w = total - agree_w
     conflict_ratio = disagree_w / total if total > 0 else 0
 
-    if len(signals) <= 2 and lean > 0.88:
-        return _opp(pred), 51, detail
-
+    # ===== CONFIDENCE =====
     raw_conf = 50.0 + (lean - 0.5) * 100.0
-    evidence = total / (total + 80.0)
-    sig_evidence = min(1.0, len(adjusted) / 8.0)
-    if total > 0:
-        wacc = sum(a['final_weight'] * a['accuracy'] for a in adjusted) / total
-    else:
-        wacc = 0.5
+
+    # Stability score: đo độ đồng thuận
+    stability = 100.0 * (1.0 - conflict_ratio)
+
+    # Evidence: đủ mẫu
+    evidence = total / (total + 60.0)
+
+    # Accuracy factor
+    wacc = sum(d['adjusted_weight'] * d['accuracy'] for d in detail) / total if total > 0 else 0.5
     acc_factor = 0.85 + (wacc - 0.5) * 0.6
 
-    conf = 50.0 + (raw_conf - 50.0) * evidence * sig_evidence * acc_factor
+    conf = 50.0 + (raw_conf - 50.0) * evidence * acc_factor
 
-    if conflict_ratio > 0.60: conf -= 15
-    elif conflict_ratio > 0.50: conf -= 8
-    elif conflict_ratio > 0.40: conf -= 4
+    # Phạt nếu mâu thuẫn cao
+    if conflict_ratio > 0.55: conf -= 14
+    elif conflict_ratio > 0.45: conf -= 8
+    elif conflict_ratio > 0.35: conf -= 4
 
-    if conflict_ratio > 0.58:
-        conf = min(conf, 52)
+    # Thưởng nếu đồng thuận cao
+    if lean >= 0.78 and conflict_ratio < 0.25: conf += 5
+    if lean >= 0.85 and conflict_ratio < 0.20: conf += 3
 
-    if lean >= 0.75: conf += 4
-    if lean >= 0.82 and conflict_ratio < 0.30: conf += 2
-
-    fam_set = set(a['family'] for a in adjusted)
-    if len(fam_set) <= 2 and len(adjusted) >= 3:
+    # Cap nếu quá ít signals
+    if len(signals) <= 2 and lean > 0.85:
         conf = min(conf, 68)
+
+    # ★ BONUS: 5P Supernet đồng thuận cao → tăng confidence
+    supernet = analyze_5p_supernet(results)
+    if supernet and supernet['pred'] == pred:
+        if supernet['weight'] >= 28:
+            conf += 4
+        if supernet['confidence'] >= 75:
+            conf += 2
 
     conf = int(max(50, min(MAX_CONFIDENCE, round(conf))))
     return pred, conf, detail
 
 # =====================================================================
-# RECOVERY V9
+# ★★★ V10 RECOVERY — THÔNG MINH DỰA TRÊN 5P SUPERNET ★★★
 # =====================================================================
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
@@ -1333,27 +992,48 @@ def compute_loss_streak(valid, max_scan=10):
     return streak
 
 def apply_recovery(base_pred, conf, loss_streak, results=None):
+    """
+    V10 Recovery: Dùng 5P Supernet để quyết định flip.
+    - Nếu 5P nói ngược base + loss_streak >= 2 → flip
+    - Nếu 5P đồng thuận base → giữ (không flip mù)
+    """
     if loss_streak < 1:
         return base_pred, conf, False, None
 
     regime = _regime(results) if results else "balanced"
+    supernet = analyze_5p_supernet(results) if results else None
 
+    # ===== Loss 1: giữ nguyên, giảm nhẹ conf =====
     if loss_streak == 1:
         return base_pred, max(50, conf - 3), False, "hold_1"
 
+    # ===== Loss 2: xét 5P Supernet =====
     if loss_streak == 2:
+        if supernet:
+            # 5P đồng thuận base → giữ
+            if supernet['pred'] == base_pred:
+                return base_pred, min(MAX_CONFIDENCE, conf + 2), False, "hold_supernet_agree_2"
+            # 5P ngược base → flip theo 5P
+            if supernet['pred'] != base_pred and supernet['weight'] >= 22:
+                return (supernet['pred'], min(MAX_CONFIDENCE, max(conf, 70)), True,
+                        f"flip_supernet_{supernet['type']}_2")
+        # Fallback: theo regime
         if regime == "streak":
-            return base_pred, min(MAX_CONFIDENCE, conf + 3), False, "hold_streak_2"
+            return base_pred, min(MAX_CONFIDENCE, conf + 2), False, "hold_streak_2"
         if regime == "alternation":
-            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 72)), True, "flip_alt_2"
-        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 68)), True, "flip_2"
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 70)), True, "flip_alt_2"
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 66)), True, "flip_2"
 
+    # ===== Loss 3: ưu tiên 5P hoặc follow streak =====
     if loss_streak == 3:
-        if regime == "streak":
-            if results and len(results) >= 1:
-                return results[0], min(MAX_CONFIDENCE, max(conf, 72)), False, "follow_3"
-        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True, "flip_3"
+        if supernet and supernet['pred'] != base_pred and supernet['weight'] >= 20:
+            return (supernet['pred'], min(MAX_CONFIDENCE, max(conf, 76)), True,
+                    f"flip_supernet_{supernet['type']}_3")
+        if regime == "streak" and results:
+            return results[0], min(MAX_CONFIDENCE, max(conf, 72)), False, "follow_3"
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 76)), True, "flip_3"
 
+    # ===== Loss 4+: flip mạnh =====
     if loss_streak == 4:
         return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 80)), True, "flip_4"
 
@@ -1425,6 +1105,10 @@ def history():
         loss_streak = compute_loss_streak(valid)
         out = []; correct_count = 0; total_past = 0
 
+        # 5P supernet info cho phiên tới
+        results_now = [v['result'] for v in valid][::-1]
+        supernet_info = analyze_5p_supernet(results_now)
+
         out.append({
             'phien': next_phien, 'is_next': True,
             'prediction': next_pred, 'result': 'Chờ...',
@@ -1432,6 +1116,8 @@ def history():
             'conf': next_conf, 'recovery_flipped': flipped,
             'recovery_reason': reason, 'loss_streak': loss_streak,
             'base_prediction': base_pred if flipped else None,
+            'cau_5p_type': supernet_info['type'] if supernet_info else None,
+            'cau_5p_pred': supernet_info['pred'] if supernet_info else None,
         })
 
         scan_limit = min(len(valid), 200)
@@ -1473,39 +1159,21 @@ def predict():
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
 
-        cau6 = classify_6p_pattern(results)
-        cau6_info = None
-        if cau6:
-            cau6_info = {'type': cau6['type'], 'pred': cau6['pred'],
-                         'weight': cau6['weight'], 'reason': cau6['reason']}
+        # 5P Supernet info
+        supernet = analyze_5p_supernet(results)
+        supernet_info = None
+        if supernet:
+            supernet_info = {
+                'type': supernet['type'],
+                'pred': supernet['pred'],
+                'weight': round(supernet['weight'], 1),
+                'confidence': supernet['confidence'],
+                'reason': supernet['reason'],
+                'groups': supernet['groups'],
+            }
 
-        cau5 = analyze_5phien(results)
-        cau_info = None
-        if cau5:
-            cau_info = {'name': cau5[0], 'pred': cau5[1], 'weight': cau5[2]}
-
-        cau7_radar = algo_7p_pattern_radar(results)
-        cau7_info = {'name': cau7_radar[2], 'pred': cau7_radar[0], 'weight': cau7_radar[1]} if cau7_radar else None
-
-        cau_lc79 = algo_lc79_specialist(results)
-        cau_lc79_info = {'name': cau_lc79[2], 'pred': cau_lc79[0], 'weight': cau_lc79[1]} if cau_lc79 else None
-
-        regime_pred = algo_regime_predictor(results)
-        regime_info = {'name': regime_pred[2], 'pred': regime_pred[0], 'weight': regime_pred[1]} if regime_pred else None
-
-        p5_signal = algo_5p_alternation(results)
-        hash5_signal = algo_hash_deep_5p(results)
-        hash10_signal = algo_hash_deep_10p(results)
-        hash13_signal = algo_hash_deep_13p(results)
-        bit_signal = algo_md5_bit_analysis(results)
-        ngram_signal = algo_md5_ngram(results)
-        hamming_signal = algo_md5_hamming(results)
-        trend_signal = algo_trend_break(results)
-        rhythm_signal = algo_break_rhythm(results)
-        last5_tx = encode_tx(results, 5)
-        last13_tx = encode_tx(results, 13)
-        last13_hash = hash_deep_md5(last13_tx, depth_level=2) if last13_tx else None
-        last5_hash = hash_deep_md5(last5_tx, depth_level=3) if last5_tx else None
+        tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
+        xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
 
         return jsonify({
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
@@ -1514,30 +1182,11 @@ def predict():
             'base_prediction': base_pred, 'base_confidence': base_conf,
             'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak, 'total_sessions': len(valid),
-            'cau_6phien': cau6_info,
-            'cau_5phien': cau_info,
-            'cau_7phien_radar': cau7_info,
-            'cau_lc79': cau_lc79_info,
-            'regime_prediction': regime_info,
-            'meta_confidence': conf,
-            'prediction_breakdown': {'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
-                                      'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
-                                      'signal_count': len(detail)},
-            'last5_pattern': last5_tx, 'last5_hash_deep': last5_hash,
-            'last13_hash': last13_hash,
-            'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
-            'hash_deep_5p': {'pred': hash5_signal[0], 'name': hash5_signal[2]} if hash5_signal else None,
-            'hash_deep_10p': {'pred': hash10_signal[0], 'name': hash10_signal[2]} if hash10_signal else None,
-            'hash_deep_13p': {'pred': hash13_signal[0], 'name': hash13_signal[2]} if hash13_signal else None,
-            'md5_bit': {'pred': bit_signal[0], 'name': bit_signal[2]} if bit_signal else None,
-            'md5_ngram': {'pred': ngram_signal[0], 'name': ngram_signal[2]} if ngram_signal else None,
-            'md5_hamming': {'pred': hamming_signal[0], 'name': hamming_signal[2]} if hamming_signal else None,
-            'trend': {'pred': trend_signal[0], 'name': trend_signal[2]} if trend_signal else None,
-            'rhythm': {'pred': rhythm_signal[0], 'name': rhythm_signal[2]} if rhythm_signal else None,
-            'signals': detail,
-            'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
-            'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
+            'cau_5p_supernet': supernet_info,   # ★ MỚI
+            'tai_score': round(tai_score, 2),
+            'xiu_score': round(xiu_score, 2),
             'signal_count': len(detail),
+            'signals': detail,
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
@@ -1546,6 +1195,7 @@ def predict():
 
 @app.route('/lc79')
 def lc79():
+    """Endpoint siêu nét — trả về định dạng gọn cho bot."""
     global RESET_ID
     try:
         raw_rows, success = fetch_sessions()
@@ -1561,43 +1211,22 @@ def lc79():
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
 
-        tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
-        xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
-        total_sig = tai_score + xiu_score
-        if total_sig > 0:
-            ratio = max(tai_score, xiu_score) / total_sig
-            base_conf_f = 50 + (ratio - 0.5) * 100
-            evidence = min(1.0, total_sig / 50.0)
-            conf_float = max(50.0, min(float(MAX_CONFIDENCE), 50 + (base_conf_f - 50) * evidence))
-        else:
-            conf_float = 50.0
-        conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
+        supernet = analyze_5p_supernet(results)
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         last = valid[-1]; next_phien = last['phien'] + 1
 
-        cau7_radar = algo_7p_pattern_radar(results)
-        radar_name = cau7_radar[2] if cau7_radar else "none"
-        cau_lc79 = algo_lc79_specialist(results)
-        lc79_name = cau_lc79[2] if cau_lc79 else "none"
-        regime_pred = algo_regime_predictor(results)
-        regime_name = regime_pred[2] if regime_pred else "none"
-        cau6 = classify_6p_pattern(results)
-        cau6_name = cau6['reason'] if cau6 else "none"
-        cau6_type = cau6['type'] if cau6 else "none"
-
         return jsonify({
-            'Id': 'le minh md5 deep v9',
+            'Id': 'le minh md5 deep v10 supernet',
             'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
-            'Du_doan': pred, 'Do_tin_cay': conf_str,
-            'Cau_6p': cau6_type,
-            'Cau_6p_Detail': cau6_name,
-            'Cau_7p_Radar': radar_name,
-            'Cau_LC79': lc79_name,
-            'Regime_Predict': regime_name,
+            'Du_doan': pred, 'Do_tin_cay': f"{conf}%",
+            'Cau_5P': supernet['type'] if supernet else "none",
+            'Cau_5P_Detail': supernet['reason'] if supernet else "none",
+            'Cau_5P_Pred': supernet['pred'] if supernet else "none",
             'Base_du_doan': base_pred if flipped else None,
             'Auto_flip': flipped, 'Chuoi_thua': loss_streak,
+            'Recovery_reason': reason,
         })
     except Exception as e:
         traceback.print_exc()
@@ -1620,18 +1249,7 @@ def lc79md5():
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results=results)
 
-        tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
-        xiu_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu')
-        total_sig = tai_score + xiu_score
-        if total_sig > 0:
-            ratio = max(tai_score, xiu_score) / total_sig
-            base_conf_f = 50 + (ratio - 0.5) * 100
-            evidence = min(1.0, total_sig / 50.0)
-            conf_float = max(50.0, min(float(MAX_CONFIDENCE), 50 + (base_conf_f - 50) * evidence))
-        else:
-            conf_float = 50.0
-        conf_str = f"{conf_float:.1f}".replace(".", ",") + "%"
-
+        supernet = analyze_5p_supernet(results)
         last = valid[-1]
         dice_parts = last['dice'].split(" + ")
         dice_short = "-".join(dice_parts) if len(dice_parts) == 3 else last['dice']
@@ -1640,27 +1258,16 @@ def lc79md5():
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         next_phien = last['phien'] + 1
 
-        cau7_radar = algo_7p_pattern_radar(results)
-        radar_name = cau7_radar[2] if cau7_radar else "none"
-        cau_lc79 = algo_lc79_specialist(results)
-        lc79_name = cau_lc79[2] if cau_lc79 else "none"
-        regime_pred = algo_regime_predictor(results)
-        regime_name = regime_pred[2] if regime_pred else "none"
-        cau6 = classify_6p_pattern(results)
-        cau6_name = cau6['reason'] if cau6 else "none"
-        cau6_type = cau6['type'] if cau6 else "none"
-
         return jsonify({
-            'id': '@cskhleminh', 'phien': str(next_phien),
+            'id': '@cskhleminh v10', 'phien': str(next_phien),
             'ket_qua': ket_qua_str, 'du_doan': pred,
-            'do_tin_cay': conf_str, 'lich_su': lich_su,
-            'cau_6p': cau6_type,
-            'cau_6p_detail': cau6_name,
-            'cau_7p_radar': radar_name,
-            'cau_lc79': lc79_name,
-            'regime_predict': regime_name,
+            'do_tin_cay': f"{conf}%", 'lich_su': lich_su,
+            'cau_5p': supernet['type'] if supernet else "none",
+            'cau_5p_detail': supernet['reason'] if supernet else "none",
+            'cau_5p_pred': supernet['pred'] if supernet else "none",
             'base_du_doan': base_pred if flipped else None,
             'auto_flip': flipped, 'chuoi_thua': loss_streak,
+            'recovery_reason': reason,
         })
     except Exception as e:
         traceback.print_exc()
