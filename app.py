@@ -4,7 +4,7 @@ import hashlib
 import traceback
 import threading
 from datetime import datetime
-from collections import defaultdict, deque
+from collections import defaultdict
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -24,7 +24,6 @@ MAX_CONFIDENCE = 88
 LEARNED_PHIEN = 0
 LEARN_LOCK = threading.Lock()
 
-# Chỉ giữ DB cho 5P hash-deep
 HASH_DEEP_DB = {
     5: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
 }
@@ -35,7 +34,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 V12</title>
+<title>LE MINH MD5 V13</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -47,7 +46,6 @@ HTML_TEMPLATE = """
         --win-color: #34d399; --win-bg: rgba(52, 211, 153, 0.15);
         --lose-color: #f87171; --lose-bg: rgba(248, 113, 113, 0.15);
         --wait-color: #fbbf24; --wait-bg: rgba(251, 191, 36, 0.15);
-        --recovery-color: #fb923c; --recovery-bg: rgba(251, 146, 60, 0.15);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
     body { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); color: var(--text-main); min-height: 100vh; padding-bottom: 40px; }
@@ -73,27 +71,18 @@ HTML_TEMPLATE = """
     .data-table th { background: #111827; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 16px 12px; text-align: center; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 10; }
     .data-table td { padding: 14px 12px; text-align: center; border-bottom: 1px solid var(--border-color); font-size: 14px; font-weight: 600; }
     .row-next { background: rgba(14, 165, 233, 0.08); border-left: 4px solid var(--tai-color); }
-    .row-next.recovery { background: rgba(251, 146, 60, 0.1); border-left: 4px solid var(--recovery-color); }
     .badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; min-width: 70px; text-align: center; }
     .badge-tai { background: var(--tai-bg); color: var(--tai-color); border: 1px solid rgba(56, 189, 248, 0.3); }
     .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); border: 1px solid rgba(244, 114, 182, 0.3); }
     .badge-empty { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
-    .recovery-badge { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 800; background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); }
     .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; }
     .st-win { background: var(--win-bg); color: var(--win-color); }
     .st-lose { background: var(--lose-bg); color: var(--lose-color); }
     .st-wait { background: var(--wait-bg); color: var(--wait-color); animation: pulse 1.5s infinite; }
-    .st-recover { background: var(--recovery-bg); color: var(--recovery-color); animation: pulse 1.5s infinite; }
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; }
     .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
     .conf-badge.high { color: #34d399; background: rgba(52, 211, 153, 0.15); }
-    .cau-badge { font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 8px; margin-top: 4px; display: inline-block; letter-spacing: 0.3px; }
-    .cau-dao { background: rgba(251, 146, 60, 0.2); color: #fb923c; }
-    .cau-thuan { background: rgba(52, 211, 153, 0.2); color: #34d399; }
-    .cau-nghich { background: rgba(244, 114, 182, 0.2); color: #f472b6; }
-    .cau-11 { background: rgba(56, 189, 248, 0.2); color: #38bdf8; }
-    .cau-none { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
     .loading { text-align: center; padding: 40px; color: var(--tai-color); font-weight: 600; }
     @media (max-width: 500px) {
         .data-table th, .data-table td { padding: 10px 6px; font-size: 12px; }
@@ -107,7 +96,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span>V12</span></div>
+    <div class="header-title">LE MINH <span>V13</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -143,15 +132,6 @@ function animateNumber(el, target, suffix = '') {
     }
     requestAnimationFrame(update);
 }
-function getCauClass(type) {
-    if (!type) return 'cau-none';
-    const t = type.toLowerCase();
-    if (t.includes('đảo') || t.includes('dao')) return 'cau-dao';
-    if (t.includes('thuận') || t.includes('thuan')) return 'cau-thuan';
-    if (t.includes('nghịch') || t.includes('nghich')) return 'cau-nghich';
-    if (t.includes('1-1')) return 'cau-11';
-    return 'cau-none';
-}
 async function fetchData() {
     if (isResetting) return;
     try {
@@ -174,22 +154,16 @@ function renderTable(rows, stats) {
     if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu.</td></tr>'; return; }
     let html = '';
     rows.forEach((row) => {
-        let trClass = '';
-        if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
+        let trClass = row.is_next ? 'class="row-next"' : '';
         let predHtml = `<span class="badge badge-empty">-</span>`;
         if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
-        let recBadge = row.recovery_flipped ? `<span class="recovery-badge">⚡</span>` : "";
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
             const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
             confHtml = `<div class="${cls}">${row.conf}%</div>`;
         }
-        let cauHtml = "";
-        if (row.cau_type) {
-            cauHtml = `<div class="cau-badge ${getCauClass(row.cau_type)}">${row.cau_type}</div>`;
-        }
-        let predFull = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${predHtml}${confHtml}${cauHtml}${recBadge}</div>`;
+        let predFull = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${predHtml}${confHtml}</div>`;
         let resultHtml = `<span class="badge badge-empty">-</span>`;
         if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
@@ -201,9 +175,8 @@ function renderTable(rows, stats) {
         }
         let resultFull = `<div style="display:flex;flex-direction:column;align-items:center;">${resultHtml}${diceDisplay}</div>`;
         let statusHtml = '';
-        if (row.is_next) {
-            statusHtml = row.recovery_flipped ? `<span class="status st-recover">⚡ Đảo chiều</span>` : `<span class="status st-wait">Chờ kết quả</span>`;
-        } else if (row.is_correct === true) statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
+        if (row.is_next) statusHtml = `<span class="status st-wait">Chờ kết quả</span>`;
+        else if (row.is_correct === true) statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         else if (row.is_correct === false) statusHtml = `<span class="status st-lose">✖ THUA</span>`;
         else statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
         html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
@@ -242,7 +215,7 @@ setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# CÁC HÀM CƠ BẢN
+# HÀM CƠ BẢN
 # =====================================================================
 def fetch_sessions():
     try:
@@ -265,14 +238,6 @@ def fetch_sessions():
     return [], False
 
 def _opp(v): return "Xỉu" if v == "Tài" else "Tài"
-
-def _count_streak(results):
-    if not results: return 0
-    r0 = results[0]; c = 1
-    for r in results[1:]:
-        if r == r0: c += 1
-        else: break
-    return c
 
 def get_groups(results):
     if not results: return []
@@ -298,7 +263,6 @@ def hash_deep_md5(tx_string, depth_level=2):
     return h
 
 def learn_incremental(valid):
-    """Chỉ học 5P hash-deep."""
     global LEARNED_PHIEN
     if not valid: return
     with LEARN_LOCK:
@@ -320,35 +284,21 @@ def learn_incremental(valid):
         LEARNED_PHIEN = valid[-1]['phien']
 
 # =====================================================================
-# ★★★ V12 CORE: 5P PATTERN ENGINE ★★★
+# ★★★ V13 CORE: 5P PATTERN ENGINE (NÂNG CAO) ★★★
 # =====================================================================
 def classify_5p_pattern(last5):
-    """
-    Phân loại 5 phiên gần nhất thành 4 cầu:
-    - ĐẢO: 5 phiên xen kẽ hoàn toàn (T-X-T-X-T hoặc X-T-X-T-X)
-    - THUẬN: 5 phiên cùng loại (T-T-T-T-T hoặc X-X-X-X-X)
-              hoặc 4-1 với 4 phiên đầu giống nhau
-    - NGHỊCH: 3-1-1 / 1-1-3 / 3-2 (cầu đổi hướng)
-    - 1-1: 2-2-1 / 1-2-2 / 2-1-2 (zigzag 2 phiên)
-    """
+    """Phân loại 5 phiên: ĐẢO / THUẬN / NGHỊCH / 1-1 / KHÁC."""
     if len(last5) < 5:
         return None
     groups = get_groups(last5)
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
 
-    # ĐẢO: xen kẽ hoàn toàn
     if alt_count == 4:
         return {'type': 'ĐẢO', 'groups': groups, 'alt': alt_count}
-
-    # THUẬN: 5-0
     if len(groups) == 1 and groups[0] == 5:
         return {'type': 'THUẬN', 'groups': groups, 'alt': alt_count}
-
-    # THUẬN 4-1
     if len(groups) == 2 and (groups[0] == 4 or groups[1] == 4):
         return {'type': 'THUẬN', 'groups': groups, 'alt': alt_count}
-
-    # NGHỊCH: 3-1-1 / 1-1-3 / 3-2
     if len(groups) == 3 and (
         (groups[0] == 3 and groups[1] == 1 and groups[2] == 1) or
         (groups[0] == 1 and groups[1] == 1 and groups[2] == 3)
@@ -359,28 +309,20 @@ def classify_5p_pattern(last5):
         (groups[0] == 2 and groups[1] == 3)
     ):
         return {'type': 'NGHỊCH', 'groups': groups, 'alt': alt_count}
-
-    # 1-1: 2-2-1 / 1-2-2 / 2-1-2 / 2-2-1
     if len(groups) == 3 and (
         (groups[0] == 2 and groups[1] == 2 and groups[2] == 1) or
         (groups[0] == 1 and groups[1] == 2 and groups[2] == 2) or
         (groups[0] == 2 and groups[1] == 1 and groups[2] == 2)
     ):
         return {'type': '1-1', 'groups': groups, 'alt': alt_count}
-
-    # 1-1 mở rộng: 2-1-1-1 (4 groups)
     if len(groups) == 4 and (groups[0] == 2 or groups[3] == 2):
         return {'type': '1-1', 'groups': groups, 'alt': alt_count}
-
-    # Fallback: 2-2 (nếu chỉ có 4 phiên khớp) hoặc không xác định
     if len(groups) == 2 and groups[0] == 2 and groups[1] == 2:
         return {'type': '1-1', 'groups': groups, 'alt': alt_count}
-
     return {'type': 'KHÁC', 'groups': groups, 'alt': alt_count}
 
 
 def lookup_pattern_stats(results, key_len, key_tuple, max_scan=80):
-    """Tra cứu pattern trong lịch sử, trả (p_tai, total_seen, z)."""
     n = len(results)
     tai_next = xiu_next = 0
     for i in range(min(n - key_len, max_scan)):
@@ -396,7 +338,6 @@ def lookup_pattern_stats(results, key_len, key_tuple, max_scan=80):
 
 
 def lookup_hash_deep_5p(results):
-    """Tra MD5 hash-deep 5P, trả (pred, total, z, p_tai)."""
     tx = encode_tx(results, 5)
     if not tx: return None
     h = hash_deep_md5(tx, depth_level=3)
@@ -410,22 +351,29 @@ def lookup_hash_deep_5p(results):
     return pred, total, z, p_tai
 
 
+def _count_streak_break_stats(results, current, streak_len, max_scan=80):
+    """Đếm tiếp diễn vs bẻ gãy cho chuỗi streak_len cùng loại."""
+    n = len(results)
+    cont = brk = 0
+    for i in range(min(n - streak_len, max_scan)):
+        if all(results[i+j] == current for j in range(streak_len)):
+            if i + streak_len < n:
+                if results[i+streak_len] == current: cont += 1
+                else: brk += 1
+    return cont, brk
+
+
 def predict_5p_pattern(results):
     """
-    ★ THUẬT TOÁN CHÍNH V12 ★
-    Chỉ dùng 5 phiên gần nhất + hash-deep 5P xác nhận.
-    Trả (pred, conf, cau_type, detail).
-
-    Logic:
-    1. Phân loại cầu 5P (ĐẢO/THUẬN/NGHỊCH/1-1)
-    2. Tra pattern stats trong lịch sử
-    3. Tra hash-deep 5P
-    4. Kết hợp: pattern + hash → quyết định cuối
-    5. KHÔNG nghiêng 1 phiên: nếu 2 nguồn ngược nhau → conf thấp
+    ★ THUẬT TOÁN V13 — NÂNG CAO ★
+    - 5P pattern classification
+    - Pattern stats + Hash-deep 5P cross-check
+    - Confidence calibration chặt
+    - Không nghiêng 1 phiên
+    - Không flip
     """
     n = len(results)
     if n < 5:
-        # Không đủ dữ liệu → dùng heuristic nhẹ
         if n == 0: return "Tài", 50, "KHÁC", {}
         if n == 1: return _opp(results[0]), 52, "KHÁC", {}
         if n == 2:
@@ -447,21 +395,17 @@ def predict_5p_pattern(results):
     groups = pattern['groups']
     alt = pattern['alt']
 
-    # ===== Tra pattern stats =====
     key_tuple = tuple(last5)
     p_tai_pat, total_pat, z_pat = lookup_pattern_stats(results, 5, key_tuple)
-
-    # ===== Tra hash-deep 5P =====
     hash_result = lookup_hash_deep_5p(results)
 
-    # ===== Quyết định theo từng loại cầu =====
     pred = None
     conf = 50
     reason = ""
+    extra = {}
 
     # ====== ĐẢO ======
     if cau_type == 'ĐẢO':
-        # Lý thuyết: đảo → phiên tiếp theo đảo tiếp
         theory_pred = _opp(last5[0])
         if total_pat >= 5 and abs(z_pat) >= 0.8:
             data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
@@ -470,7 +414,6 @@ def predict_5p_pattern(results):
                 conf = 60 + min(20, abs(z_pat) * 10)
                 reason = f"dao_data_{total_pat}"
             else:
-                # Data ngược lý thuyết → giảm conf
                 pred = data_pred
                 conf = 55 + min(10, abs(z_pat) * 6)
                 reason = f"dao_data_conflict_{total_pat}"
@@ -478,18 +421,13 @@ def predict_5p_pattern(results):
             pred = theory_pred
             conf = 58
             reason = "dao_theory"
+        extra = {'theory_pred': theory_pred}
 
     # ====== THUẬN ======
     elif cau_type == 'THUẬN':
         current = last5[0]
         if len(groups) == 1:
-            # 5-0: kiểm tra lịch sử chuỗi 5 cùng loại
-            cont = brk = 0
-            for i in range(min(n - 5, 80)):
-                if all(results[i+j] == current for j in range(5)):
-                    if i + 5 < n:
-                        if results[i+5] == current: cont += 1
-                        else: brk += 1
+            cont, brk = _count_streak_break_stats(results, current, 5)
             total_streak = cont + brk
             if total_streak >= 5:
                 p_cont = (cont + 1) / (total_streak + 2)
@@ -505,19 +443,16 @@ def predict_5p_pattern(results):
                     pred = current; conf = 55; reason = "thuan_theory"
             else:
                 pred = current; conf = 55; reason = "thuan_theory"
+            extra = {'cont': cont, 'brk': brk, 'total_streak': total_streak}
         else:
-            # 4-1: ưu tiên phiên cuối (đang là 1)
-            # Nhưng không nghiêng: nếu 1 ở đầu (4 cuối giống nhau) → theo nhóm 4
             if groups[0] == 4:
-                # 4 phiên đầu giống, phiên cuối khác → xu hướng tiếp tục nhóm 4
                 pred = last5[0]; conf = 56; reason = "thuan_4_1_head"
             else:
-                # 1 đầu, 4 cuối giống → phiên cuối đang break
                 pred = last5[0]; conf = 55; reason = "thuan_4_1_tail"
+            extra = {'groups_mode': '4-1'}
 
     # ====== NGHỊCH ======
     elif cau_type == 'NGHỊCH':
-        # Nghịch: đổi hướng → phiên tiếp theo thường đảo so với phiên cuối
         theory_pred = _opp(last5[0])
         if total_pat >= 5 and abs(z_pat) >= 0.8:
             data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
@@ -531,10 +466,10 @@ def predict_5p_pattern(results):
                 reason = f"nghich_data_conflict_{total_pat}"
         else:
             pred = theory_pred; conf = 56; reason = "nghich_theory"
+        extra = {'theory_pred': theory_pred}
 
     # ====== 1-1 ======
     elif cau_type == '1-1':
-        # 1-1 zigzag 2 phiên → phiên tiếp theo đảo
         theory_pred = _opp(last5[0])
         if total_pat >= 5 and abs(z_pat) >= 0.8:
             data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
@@ -548,16 +483,15 @@ def predict_5p_pattern(results):
                 reason = f"11_data_conflict_{total_pat}"
         else:
             pred = theory_pred; conf = 55; reason = "11_theory"
+        extra = {'theory_pred': theory_pred}
 
     # ====== KHÁC ======
     else:
-        # Pattern không xác định → dùng pattern stats + hash
         if total_pat >= 5 and abs(z_pat) >= 1.0:
             pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
             conf = 55 + min(15, abs(z_pat) * 8)
             reason = f"khac_data_{total_pat}"
         else:
-            # fallback nhẹ
             if n >= 2 and results[0] == results[1]:
                 pred = _opp(results[0]); conf = 53; reason = "khac_fallback_streak"
             else:
@@ -567,22 +501,18 @@ def predict_5p_pattern(results):
     hash_info = {}
     if hash_result:
         h_pred, h_total, h_z, h_p_tai = hash_result
-        hash_info = {'pred': h_pred, 'total': h_total, 'z': round(h_z, 2)}
+        hash_info = {'pred': h_pred, 'total': h_total,
+                     'z': round(h_z, 2), 'p_tai': round(h_p_tai, 3)}
 
         if h_total >= 5 and abs(h_z) >= 1.0:
             if h_pred == pred:
-                # Hash đồng thuận → tăng conf vừa phải
                 conf += min(8, abs(h_z) * 3)
                 reason += "+hash_agree"
             else:
-                # Hash ngược → giảm conf, KHÔNG đảo pred
                 conf -= min(10, abs(h_z) * 4)
                 reason += "+hash_conflict"
 
-    # ====== GUARD CHỐNG NGHIÊNG 1 PHIÊN ======
-    # Nếu chỉ có 1 nguồn (pattern only) → conf tối đa 62
-    # Nếu 2 nguồn đồng thuận → conf tối đa 82
-    # Nếu 2 nguồn xung đột → conf tối đa 58
+    # ====== GUARD CHỐNG NGHIÊNG ======
     if hash_result and hash_info.get('pred') != pred:
         conf = min(conf, 58)
     elif not hash_result:
@@ -590,7 +520,6 @@ def predict_5p_pattern(results):
     else:
         conf = min(conf, 82)
 
-    # Không quá tự tin khi data ít
     if total_pat < 8:
         conf = min(conf, 68)
 
@@ -604,27 +533,15 @@ def predict_5p_pattern(results):
         'pattern_z': round(z_pat, 2),
         'hash_info': hash_info,
         'reason': reason,
+        'extra': extra,
     }
 
     return pred, conf, cau_type, detail
 
 
 # =====================================================================
-# RECOVERY — đơn giản, dựa trên loss streak
+# PREDICTION CACHE (KHÔNG FLIP)
 # =====================================================================
-def compute_loss_streak(valid, max_scan=8):
-    if len(valid) < 5: return 0
-    streak = 0
-    end = len(valid) - 1
-    start = max(0, end - max_scan)
-    for i in range(end, start - 1, -1):
-        pred, conf, is_correct = get_prediction_for(valid, i)
-        if is_correct is None: break
-        if is_correct: break
-        streak += 1
-    return streak
-
-
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
     if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
@@ -640,34 +557,15 @@ def get_prediction_for(valid, i):
     return result
 
 
-def apply_recovery(base_pred, conf, loss_streak, results=None):
-    """
-    Recovery đơn giản:
-    - loss 0-1: giữ nguyên
-    - loss 2: giữ, conf -5
-    - loss 3: flip, conf 70
-    - loss 4+: flip, conf 75
-    """
-    if loss_streak < 2:
-        return base_pred, conf, False, None
-    if loss_streak == 2:
-        return base_pred, max(50, conf - 5), False, "hold_2"
-    if loss_streak == 3:
-        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 70)), True, "flip_3"
-    return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True, "flip_4plus"
-
-
 def get_stable_next_prediction(valid):
     if not valid:
-        return None, 50, False, None, None
+        return None, 50, None
     next_phien = valid[-1]['phien'] + 1
     if next_phien in NEXT_PREDICTION_CACHE:
         return NEXT_PREDICTION_CACHE[next_phien]
     results = [v['result'] for v in valid][::-1]
-    loss_streak = compute_loss_streak(valid)
-    base_pred, base_conf, cau_type, _ = predict_5p_pattern(results)
-    pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results)
-    NEXT_PREDICTION_CACHE[next_phien] = (pred, conf, flipped, reason, base_pred, cau_type)
+    pred, conf, cau_type, _ = predict_5p_pattern(results)
+    NEXT_PREDICTION_CACHE[next_phien] = (pred, conf, cau_type)
     if len(NEXT_PREDICTION_CACHE) > 200:
         oldest = min(NEXT_PREDICTION_CACHE.keys())
         del NEXT_PREDICTION_CACHE[oldest]
@@ -704,29 +602,15 @@ def history():
         learn_incremental(valid)
 
         next_phien = valid[-1]['phien'] + 1
-        cached_next = get_stable_next_prediction(valid)
-        if cached_next and cached_next[0] is not None:
-            next_pred, next_conf, flipped, reason, base_pred, cau_type = cached_next
-        else:
-            results_now = [v['result'] for v in valid][::-1]
-            ls_now = compute_loss_streak(valid)
-            bp, bc, ct, _ = predict_5p_pattern(results_now)
-            next_pred, next_conf, flipped, reason = apply_recovery(bp, bc, ls_now, results_now)
-            base_pred = bp
-            cau_type = ct
-            NEXT_PREDICTION_CACHE[next_phien] = (next_pred, next_conf, flipped, reason, bp, ct)
+        next_pred, next_conf, next_cau = get_stable_next_prediction(valid)
 
-        loss_streak = compute_loss_streak(valid)
         out = []; correct_count = 0; total_past = 0
 
         out.append({
             'phien': next_phien, 'is_next': True,
             'prediction': next_pred, 'result': 'Chờ...',
             'dice': "? + ? + ?", 'is_correct': None,
-            'conf': next_conf, 'recovery_flipped': flipped,
-            'cau_type': cau_type,
-            'recovery_reason': reason, 'loss_streak': loss_streak,
-            'base_prediction': base_pred if flipped else None,
+            'conf': next_conf,
         })
 
         scan_limit = min(len(valid), 200)
@@ -736,23 +620,14 @@ def history():
             pred, conf, is_correct = get_prediction_for(valid, i)
             if is_correct is not None: total_past += 1
             if is_correct: correct_count += 1
-            # Lấy cầu type cho phiên đó (dùng history trước nó)
-            hist = [v['result'] for v in valid[:i]][::-1]
-            cau_type_hist = None
-            if len(hist) >= 5:
-                ct_info = classify_5p_pattern(hist[:5])
-                cau_type_hist = ct_info['type'] if ct_info else None
             out.append({'phien': current_session['phien'], 'is_next': False,
                         'prediction': pred, 'result': current_session['result'],
                         'dice': current_session['dice'], 'is_correct': is_correct,
-                        'conf': conf, 'recovery_flipped': False,
-                        'cau_type': cau_type_hist})
+                        'conf': conf})
 
         return jsonify({
             'rows': out,
             'stats': {'total': total_past, 'correct': correct_count},
-            'loss_streak': loss_streak, 'recovery_active': flipped,
-            'recovery_reason': reason, 'base_prediction': base_pred,
         })
     except Exception as e:
         traceback.print_exc()
@@ -773,18 +648,17 @@ def predict():
         learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
 
-        loss_streak = compute_loss_streak(valid)
-        base_pred, base_conf, cau_type, detail = predict_5p_pattern(results)
-        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results)
+        pred, conf, cau_type, detail = predict_5p_pattern(results)
 
         return jsonify({
-            'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
-            'last_result': valid[-1]['result'], 'last_dice': valid[-1]['dice'],
-            'prediction': pred, 'confidence': conf,
+            'last_phien': valid[-1]['phien'],
+            'next_phien': valid[-1]['phien'] + 1,
+            'last_result': valid[-1]['result'],
+            'last_dice': valid[-1]['dice'],
+            'prediction': pred,
+            'confidence': conf,
             'cau_type': cau_type,
-            'base_prediction': base_pred, 'base_confidence': base_conf,
-            'recovery_flipped': flipped, 'recovery_reason': reason,
-            'loss_streak': loss_streak, 'total_sessions': len(valid),
+            'total_sessions': len(valid),
             'detail': detail,
             'timestamp': datetime.now().isoformat()
         })
@@ -806,16 +680,14 @@ def lc79():
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
-        loss_streak = compute_loss_streak(valid)
-        base_pred, base_conf, cau_type, detail = predict_5p_pattern(results)
-        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results)
+        pred, conf, cau_type, detail = predict_5p_pattern(results)
 
         last = valid[-1]; next_phien = last['phien'] + 1
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
 
         return jsonify({
-            'Id': 'le minh md5 v12',
+            'Id': 'le minh md5 v13',
             'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(),
             'Lich_su': lich_su,
@@ -823,10 +695,8 @@ def lc79():
             'Do_tin_cay': f"{conf}%",
             'Cau_5P': cau_type,
             'Cau_5P_Detail': detail.get('reason', ''),
-            'Base_du_doan': base_pred if flipped else None,
-            'Auto_flip': flipped,
-            'Chuoi_thua': loss_streak,
-            'Recovery_reason': reason,
+            'Pattern_Total': detail.get('pattern_total', 0),
+            'Hash_Info': detail.get('hash_info', {}),
         })
     except Exception as e:
         traceback.print_exc()
@@ -846,9 +716,7 @@ def lc79md5():
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         learn_incremental(valid)
         results = [v['result'] for v in valid][::-1]
-        loss_streak = compute_loss_streak(valid)
-        base_pred, base_conf, cau_type, detail = predict_5p_pattern(results)
-        pred, conf, flipped, reason = apply_recovery(base_pred, base_conf, loss_streak, results)
+        pred, conf, cau_type, detail = predict_5p_pattern(results)
 
         last = valid[-1]
         dice_parts = last['dice'].split(" + ")
@@ -858,15 +726,16 @@ def lc79md5():
         next_phien = last['phien'] + 1
 
         return jsonify({
-            'id': '@cskhleminh v12', 'phien': str(next_phien),
+            'id': '@cskhleminh v13',
+            'phien': str(next_phien),
             'ket_qua': f"{last['result'].lower()} {dice_short}",
-            'du_doan': pred, 'do_tin_cay': f"{conf}%",
+            'du_doan': pred,
+            'do_tin_cay': f"{conf}%",
             'lich_su': lich_su,
             'cau_5p': cau_type,
             'cau_5p_detail': detail.get('reason', ''),
-            'base_du_doan': base_pred if flipped else None,
-            'auto_flip': flipped, 'chuoi_thua': loss_streak,
-            'recovery_reason': reason,
+            'pattern_total': detail.get('pattern_total', 0),
+            'hash_info': detail.get('hash_info', {}),
         })
     except Exception as e:
         traceback.print_exc()
