@@ -24,7 +24,6 @@ MAX_CONFIDENCE = 88
 LEARNED_PHIEN = 0
 LEARN_LOCK = threading.Lock()
 
-# ===== DATABASE ĐA TẦNG =====
 HASH_DEEP_DB = {
     5: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
 }
@@ -42,7 +41,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 V16</title>
+<title>LE MINH MD5 V18</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -104,7 +103,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span>V16</span></div>
+    <div class="header-title">LE MINH <span>V18</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -343,11 +342,9 @@ def learn_incremental(valid):
 # PATTERN + ĐA TẦNG MD5
 # =====================================================================
 def classify_5p_pattern(last5):
-    if len(last5) < 5:
-        return None
+    if len(last5) < 5: return None
     groups = get_groups(last5)
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
-
     if alt_count == 4:
         return {'type': 'ĐẢO', 'groups': groups, 'alt': alt_count}
     if len(groups) == 1 and groups[0] == 5:
@@ -491,20 +488,17 @@ def compute_stability_score(total_pat, z_pat, hash_agree, bit_agree, ngram_agree
     elif total_pat >= 10: score += 12
     elif total_pat >= 7: score += 8
     elif total_pat >= 5: score += 4
-
     abs_z = abs(z_pat)
     if abs_z >= 2.0: score += 15
     elif abs_z >= 1.5: score += 11
     elif abs_z >= 1.0: score += 7
     elif abs_z >= 0.8: score += 3
-
     agrees = [x for x in (hash_agree, bit_agree, ngram_agree, hamming_agree) if x is not None]
     if agrees:
         ratio = sum(agrees) / len(agrees)
         score += ratio * 20
         if len(agrees) >= 3 and all(agrees):
             score += 5
-
     stable_cau = {'ĐẢO': 5, 'THUẬN': 4, 'NGHỊCH': 3, '1-1': 3, 'KHÁC': 0}
     score += stable_cau.get(cau_type, 0)
     return max(0, min(100, round(score, 1)))
@@ -518,7 +512,7 @@ def _recommendation_from_stability(stability, conf):
 
 
 def predict_5p_pattern(results):
-    """Core prediction — V15 giữ nguyên."""
+    """Core prediction — KHÔNG flip."""
     n = len(results)
     if n < 5:
         if n == 0: return "Tài", 50, "KHÁC", _empty_detail(50)
@@ -543,7 +537,6 @@ def predict_5p_pattern(results):
 
     key_tuple = tuple(last5)
     p_tai_pat, total_pat, z_pat = lookup_pattern_stats(results, 5, key_tuple)
-
     hash_result = lookup_hash_deep_5p(results)
     bit_result = lookup_md5_bit(results)
     ngram_result = lookup_md5_ngram(results)
@@ -728,74 +721,13 @@ def _empty_detail(conf):
 
 
 # =====================================================================
-# ★★★ V16: AUTO FLIP 2-3 TAY THEO DEEP-HASH 5P ★★★
-# =====================================================================
-def _get_prev_actual_result(valid, upto_idx):
-    """Lấy kết quả thực tế của phiên trước đó."""
-    if upto_idx <= 0 or upto_idx > len(valid): return None
-    return valid[upto_idx - 1]['result']
-
-
-def count_loss_streak(valid, max_scan=10):
-    """
-    Đếm chuỗi thua liên tiếp của thuật toán.
-    Dựa trên PREDICTION_CACHE đã có.
-    """
-    if len(valid) < 6: return 0
-    streak = 0
-    end = len(valid) - 1
-    start = max(0, end - max_scan)
-    for i in range(end, start - 1, -1):
-        pred, conf, is_correct = get_prediction_for(valid, i)
-        if is_correct is None: break
-        if is_correct: break
-        streak += 1
-    return streak
-
-
-def apply_auto_flip(base_pred, base_conf, loss_streak, results, detail):
-    """
-    ★ AUTO FLIP 2-3 TAY THEO DEEP-HASH 5P ★
-    - loss 0-1: giữ nguyên
-    - loss 2: flip CHỈ KHI deep-hash 5P đủ mạnh VÀ ngược base
-    - loss 3: flip THEO deep-hash nếu có, không thì flip thường
-    - loss 4+: flip mạnh
-    
-    Trả (final_pred, final_conf, flipped, flip_reason)
-    """
-    if loss_streak < 2:
-        return base_pred, base_conf, False, None
-
-    # Lấy tín hiệu deep-hash 5P (KHÔNG dùng bit/ngram/hamming vì chúng chỉ là xác nhận)
-    hash_result = detail.get('hash_info', {})
-    hash_pred = hash_result.get('pred')
-    hash_total = hash_result.get('total', 0)
-    hash_z = abs(hash_result.get('z', 0))
-
-    if loss_streak == 2:
-        # Flip nếu deep-hash đủ mạnh VÀ ngược base
-        if hash_pred and hash_pred != base_pred and hash_total >= 7 and hash_z >= 1.3:
-            return hash_pred, min(MAX_CONFIDENCE, max(base_conf, 70)), True, f"flip2_hash_{hash_total}_{hash_z:.1f}"
-        return base_pred, max(50, base_conf - 3), False, "hold_2"
-
-    if loss_streak == 3:
-        # Flip theo deep-hash nếu có, không thì đảo thường
-        if hash_pred and hash_pred != base_pred and hash_total >= 5 and hash_z >= 1.0:
-            return hash_pred, min(MAX_CONFIDENCE, max(base_conf, 72)), True, f"flip3_hash_{hash_total}_{hash_z:.1f}"
-        return _opp(base_pred), min(MAX_CONFIDENCE, max(base_conf, 70)), True, "flip3_opp"
-
-    # loss 4+
-    if hash_pred and hash_pred != base_pred:
-        return hash_pred, min(MAX_CONFIDENCE, max(base_conf, 75)), True, f"flip4_hash_{hash_total}"
-    return _opp(base_pred), min(MAX_CONFIDENCE, max(base_conf, 75)), True, "flip4_opp"
-
-
-# =====================================================================
-# CACHE
+# ★★★ V18: KHÔNG FLIP — SINGLE SOURCE OF TRUTH ★★★
 # =====================================================================
 def get_prediction_for(valid, i):
+    """Prediction cho phiên i — KHÔNG flip."""
     key = valid[i]['phien']
     if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
+
     hist = [v['result'] for v in valid[:i]][::-1]
     if len(hist) < 5:
         result = ("-", 50, None)
@@ -803,29 +735,40 @@ def get_prediction_for(valid, i):
         pred, conf, _, _ = predict_5p_pattern(hist)
         is_correct = (pred == valid[i]['result'])
         result = (pred, conf, is_correct)
+
     if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE: PREDICTION_CACHE.clear()
     PREDICTION_CACHE[key] = result
     return result
 
 
-def get_stable_next_prediction(valid):
-    """Trả prediction cuối cùng cho phiên tới (đã áp auto-flip)."""
+def get_final_prediction(valid):
+    """Dự đoán cuối cùng cho phiên tới — KHÔNG flip. Dùng chung UI + API."""
     if not valid:
-        return None, 50, None, False, None
+        return {
+            'phien': None, 'prediction': None, 'confidence': 50,
+            'cau_type': None, 'detail': _empty_detail(50),
+        }
+
     next_phien = valid[-1]['phien'] + 1
     if next_phien in NEXT_PREDICTION_CACHE:
         return NEXT_PREDICTION_CACHE[next_phien]
+
     results = [v['result'] for v in valid][::-1]
-    base_pred, base_conf, cau_type, detail = predict_5p_pattern(results)
-    loss_streak = count_loss_streak(valid)
-    final_pred, final_conf, flipped, flip_reason = apply_auto_flip(
-        base_pred, base_conf, loss_streak, results, detail
-    )
-    NEXT_PREDICTION_CACHE[next_phien] = (final_pred, final_conf, cau_type, flipped, flip_reason)
+    pred, conf, cau_type, detail = predict_5p_pattern(results)
+
+    result = {
+        'phien': next_phien,
+        'prediction': pred,
+        'confidence': conf,
+        'cau_type': cau_type,
+        'detail': detail,
+    }
+
+    NEXT_PREDICTION_CACHE[next_phien] = result
     if len(NEXT_PREDICTION_CACHE) > 200:
         oldest = min(NEXT_PREDICTION_CACHE.keys())
         del NEXT_PREDICTION_CACHE[oldest]
-    return NEXT_PREDICTION_CACHE[next_phien]
+    return result
 
 
 def reset_all_databases():
@@ -863,16 +806,15 @@ def history():
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
         learn_incremental(valid)
 
-        next_phien = valid[-1]['phien'] + 1
-        next_pred, next_conf, next_cau, next_flipped, next_reason = get_stable_next_prediction(valid)
+        final = get_final_prediction(valid)
 
         out = []; correct_count = 0; total_past = 0
 
         out.append({
-            'phien': next_phien, 'is_next': True,
-            'prediction': next_pred, 'result': 'Chờ...',
+            'phien': final['phien'], 'is_next': True,
+            'prediction': final['prediction'], 'result': 'Chờ...',
             'dice': "? + ? + ?", 'is_correct': None,
-            'conf': next_conf, 'flipped': next_flipped,
+            'conf': final['confidence'],
         })
 
         scan_limit = min(len(valid), 200)
@@ -885,7 +827,7 @@ def history():
             out.append({'phien': current_session['phien'], 'is_next': False,
                         'prediction': pred, 'result': current_session['result'],
                         'dice': current_session['dice'], 'is_correct': is_correct,
-                        'conf': conf, 'flipped': False})
+                        'conf': conf})
 
         return jsonify({
             'rows': out,
@@ -908,29 +850,21 @@ def predict():
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         learn_incremental(valid)
-        results = [v['result'] for v in valid][::-1]
 
-        base_pred, base_conf, cau_type, detail = predict_5p_pattern(results)
-        loss_streak = count_loss_streak(valid)
-        final_pred, final_conf, flipped, flip_reason = apply_auto_flip(
-            base_pred, base_conf, loss_streak, results, detail
-        )
+        final = get_final_prediction(valid)
+        detail = final['detail']
 
         return jsonify({
             'last_phien': valid[-1]['phien'],
-            'next_phien': valid[-1]['phien'] + 1,
+            'next_phien': final['phien'],
             'last_result': valid[-1]['result'],
             'last_dice': valid[-1]['dice'],
-            'prediction': final_pred,
-            'confidence': final_conf,
-            'base_prediction': base_pred,
-            'base_confidence': base_conf,
-            'flipped': flipped,
-            'flip_reason': flip_reason,
-            'loss_streak': loss_streak,
-            'cau_type': cau_type,
+            'prediction': final['prediction'],
+            'confidence': final['confidence'],
+            'cau_type': final['cau_type'],
             'stability_score': detail.get('stability_score', 50),
             'recommendation': detail.get('recommendation', 'CAUTION'),
+            'agreement': detail.get('agreement', {}),
             'total_sessions': len(valid),
             'detail': detail,
             'timestamp': datetime.now().isoformat()
@@ -941,11 +875,10 @@ def predict():
 
 
 # =====================================================================
-# ★★★ /lc79md5 — CHỈ OUTPUT GỌN ★★★
+# ★★★ /lc79md5 — OUTPUT GỌN, ĐỒNG BỘ UI ★★★
 # =====================================================================
 @app.route('/lc79md5')
 def lc79md5():
-    """Format CHÍNH: chỉ id, phien, ket_qua, du_doan, do_tin_cay."""
     global RESET_ID
     try:
         raw_rows, success = fetch_sessions()
@@ -956,25 +889,20 @@ def lc79md5():
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
         learn_incremental(valid)
-        results = [v['result'] for v in valid][::-1]
 
-        base_pred, base_conf, cau_type, detail = predict_5p_pattern(results)
-        loss_streak = count_loss_streak(valid)
-        final_pred, final_conf, flipped, flip_reason = apply_auto_flip(
-            base_pred, base_conf, loss_streak, results, detail
-        )
+        # Dùng chung get_final_prediction — GIỐNG HỆT UI
+        final = get_final_prediction(valid)
 
         last = valid[-1]
         dice_parts = last['dice'].split(" + ")
         dice_short = "-".join(dice_parts) if len(dice_parts) == 3 else last['dice']
-        next_phien = last['phien'] + 1
 
         return jsonify({
             'id': '@cskhleminh',
-            'phien': str(next_phien),
+            'phien': str(final['phien']),
             'ket_qua': f"{last['result'].lower()} {dice_short}",
-            'du_doan': final_pred,
-            'do_tin_cay': f"{final_conf}%",
+            'du_doan': final['prediction'],
+            'do_tin_cay': f"{final['confidence']}%",
         })
     except Exception as e:
         traceback.print_exc()
