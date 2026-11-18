@@ -19,20 +19,36 @@ PREDICTION_CACHE = {}
 NEXT_PREDICTION_CACHE = {}
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
-MAX_CONFIDENCE = 90
+MAX_CONFIDENCE = 92
 
 LEARNED_PHIEN = 0
 LEARN_LOCK = threading.Lock()
 
-# ==================== DB 5P THUẦN ====================
-# Chia kết quả cũ theo key pattern 5P (dạng chuỗi TX)
-PATTERN_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
-# Chia kết quả cũ theo hash MD5 salted (deep pattern)
-HASH_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
-# Chia kết quả cũ theo cầu type (ĐẢO/THUẬN/NGHỊCH/1-1/KHÁC)
+# ==================== DB CHIA PHIÊN CŨ (6 TẦNG) ====================
+# Tầng 1: Pattern đầy đủ (nhiều độ dài)
+PATTERN_DB = {
+    L: defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for L in (3, 4, 5, 6, 7)
+}
+# Tầng 2: Hash MD5 salted (nhiều depth)
+HASH_DB = {
+    d: defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for d in (2, 3, 4)
+}
+# Tầng 3: Cầu type thuần
 CAU_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
-# Chia theo (cầu_type + hướng phiên trước) để dự đoán next
+# Tầng 4: Cầu + hướng phiên đầu
 CAU_DIR_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+# Tầng 5: N-gram con (2, 3, 4)
+NGRAM_DB = {
+    L: defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for L in (2, 3, 4)
+}
+# Tầng 6: Vị trí + giá trị
+POS_VAL_DB = {
+    pos: defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    for pos in (0, 1, 2, 3, 4)
+}
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -40,7 +56,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 V21 — 5P THUẦN</title>
+<title>LE MINH MD5 V22 — CHIA PHIÊN THÔNG MINH</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -103,7 +119,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span>V21 5P</span></div>
+    <div class="header-title">LE MINH <span>V22 SMART</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -266,31 +282,25 @@ def encode_tx(results, length):
 def hash_pattern(tx_string, depth=2):
     """Hash MD5 salted để phân biệt pattern"""
     if not tx_string: return None
-    h = hashlib.md5(f"v21_5p_d{depth}|{tx_string}".encode('utf-8')).hexdigest()
+    h = hashlib.md5(f"v22_smart_d{depth}|{tx_string}".encode('utf-8')).hexdigest()
     for _ in range(depth - 1):
         h = hashlib.md5(f"{h}|salt{depth}".encode('utf-8')).hexdigest()
-    return h[:16]  # Lấy 16 ký tự đủ phân biệt
+    return h[:16]
 
 # =====================================================================
 # PHÂN LOẠI CẦU 5P
 # =====================================================================
 def classify_5p(last5):
-    """Trả về (type, groups, hướng)"""
     if len(last5) < 5: return None
     groups = get_groups(last5)
     alt = sum(1 for i in range(4) if last5[i] != last5[i+1])
 
-    # ĐẢO: T-X-T-X-T hoặc X-T-X-T-X
     if alt == 4:
         return {'type': 'ĐẢO', 'groups': groups}
-
-    # THUẬN: 5 liên tiếp hoặc 4-1 / 1-4
     if len(groups) == 1 and groups[0] == 5:
         return {'type': 'THUẬN', 'groups': groups}
     if len(groups) == 2 and (groups[0] == 4 or groups[1] == 4):
         return {'type': 'THUẬN', 'groups': groups}
-
-    # NGHỊCH: 3-1-1 / 1-1-3 / 3-2 / 2-3
     if len(groups) == 3 and (
         (groups[0] == 3 and groups[1] == 1 and groups[2] == 1) or
         (groups[0] == 1 and groups[1] == 1 and groups[2] == 3)
@@ -301,8 +311,6 @@ def classify_5p(last5):
         (groups[0] == 2 and groups[1] == 3)
     ):
         return {'type': 'NGHỊCH', 'groups': groups}
-
-    # 1-1: 2-2-1 / 1-2-2 / 2-1-2 / 2-2-... / 2-2
     if len(groups) == 3 and (
         (groups[0] == 2 and groups[1] == 2 and groups[2] == 1) or
         (groups[0] == 1 and groups[1] == 2 and groups[2] == 2) or
@@ -313,12 +321,11 @@ def classify_5p(last5):
         return {'type': '1-1', 'groups': groups}
     if len(groups) == 2 and groups[0] == 2 and groups[1] == 2:
         return {'type': '1-1', 'groups': groups}
-
     return {'type': 'KHÁC', 'groups': groups}
 
 
 # =====================================================================
-# HỌC: CHIA KẾT QUẢ CŨ THEO KEY 5P
+# HỌC: CHIA PHIÊN CŨ THEO 6 TẦNG
 # =====================================================================
 def learn_incremental(valid):
     global LEARNED_PHIEN
@@ -327,46 +334,160 @@ def learn_incremental(valid):
         new_indices = [idx for idx, v in enumerate(valid) if v['phien'] > LEARNED_PHIEN]
         if not new_indices: return
         n = len(valid)
-        if n <= 5:
+        if n <= 7:
             LEARNED_PHIEN = valid[-1]['phien']
             return
 
         for idx in new_indices:
-            if idx < 5: continue
-
-            # Lấy 5 phiên gần nhất (mới nhất first)
-            last5 = [v['result'] for v in valid[idx-5:idx]][::-1]
-            tx5 = encode_tx(last5, 5)
-            if not tx5: continue
+            if idx < 7: continue
 
             next_result = valid[idx]['result']
 
-            # 1. Chia theo pattern TX chuỗi
-            PATTERN_DB[tx5][next_result] += 1
+            # ===== TẦNG 1: Pattern đầy đủ nhiều độ dài =====
+            for L in (3, 4, 5, 6, 7):
+                if idx < L: continue
+                history = [v['result'] for v in valid[idx-L:idx]][::-1]
+                tx = encode_tx(history, L)
+                if tx:
+                    PATTERN_DB[L][tx][next_result] += 1
 
-            # 2. Chia theo hash MD5 salted
-            h = hash_pattern(tx5, depth=3)
-            if h:
-                HASH_DB[h][next_result] += 1
+            # ===== TẦNG 2: Hash MD5 salted nhiều depth =====
+            for L in (5, 7):
+                if idx < L: continue
+                history = [v['result'] for v in valid[idx-L:idx]][::-1]
+                tx = encode_tx(history, L)
+                if not tx: continue
+                for depth in (2, 3, 4):
+                    h = hash_pattern(tx, depth)
+                    if h:
+                        HASH_DB[depth][h][next_result] += 1
 
-            # 3. Chia theo cầu type
-            cau = classify_5p(last5)
-            if cau:
-                CAU_DB[cau['type']][next_result] += 1
-                # 4. Chia theo (cầu_type + kết quả phiên đầu của cầu)
-                key_dir = f"{cau['type']}|{last5[0]}"
-                CAU_DIR_DB[key_dir][next_result] += 1
+            # ===== TẦNG 3 + 4: Cầu type + Cầu+hướng =====
+            if idx >= 5:
+                last5 = [v['result'] for v in valid[idx-5:idx]][::-1]
+                cau = classify_5p(last5)
+                if cau:
+                    CAU_DB[cau['type']][next_result] += 1
+                    key_dir = f"{cau['type']}|{last5[0]}"
+                    CAU_DIR_DB[key_dir][next_result] += 1
+
+            # ===== TẦNG 5: N-gram con (2, 3, 4) =====
+            for L in (2, 3, 4):
+                if idx < L: continue
+                history = [v['result'] for v in valid[idx-L:idx]][::-1]
+                tx = encode_tx(history, L)
+                if tx:
+                    NGRAM_DB[L][tx][next_result] += 1
+
+            # ===== TẦNG 6: Vị trí + giá trị =====
+            for pos in (0, 1, 2, 3, 4):
+                if idx < pos + 1: continue
+                val = valid[idx-1-pos]['result']  # phiên pos trước đó
+                key = f"{val}"
+                POS_VAL_DB[pos][key][next_result] += 1
 
         LEARNED_PHIEN = valid[-1]['phien']
 
 
 # =====================================================================
-# DỰ ĐOÁN 5P THUẦN — CHIA KẾT QUẢ CŨ
+# DỰ ĐOÁN — CHIA PHIÊN THÔNG MINH 6 TẦNG
 # =====================================================================
+def _p_tai_from_counts(counts, min_total=3):
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < min_total: return None, 0
+    p_tai = (counts["Tài"] + 1) / (total + 2)
+    return p_tai, total
+
+
+def _collect_sources(results):
+    """Thu thập 6 tầng tín hiệu với trọng số"""
+    n = len(results)
+    last5 = results[:5]
+    cau = classify_5p(last5)
+    cau_type = cau['type'] if cau else 'KHÁC'
+    sources = []
+
+    # ===== TẦNG 1: Pattern đầy đủ =====
+    for L in (3, 4, 5, 6, 7):
+        if n < L: continue
+        tx = encode_tx(results, L)
+        if not tx: continue
+        counts = PATTERN_DB[L].get(tx)
+        if not counts: continue
+        p, total = _p_tai_from_counts(counts, min_total=3)
+        if p is not None:
+            w = math.sqrt(total) * (1.0 + (L - 3) * 0.15)
+            sources.append({'name': f'pattern_{L}', 'p_tai': p, 'total': total, 'weight': w})
+
+    # ===== TẦNG 2: Hash MD5 =====
+    for L in (5, 7):
+        if n < L: continue
+        tx = encode_tx(results, L)
+        if not tx: continue
+        for depth in (2, 3, 4):
+            h = hash_pattern(tx, depth)
+            if not h: continue
+            counts = HASH_DB[depth].get(h)
+            if not counts: continue
+            p, total = _p_tai_from_counts(counts, min_total=3)
+            if p is not None:
+                w = math.sqrt(total) * 1.2 * (1.0 + (L - 5) * 0.1)
+                sources.append({'name': f'hash_{L}_{depth}', 'p_tai': p,
+                                'total': total, 'weight': w})
+
+    # ===== TẦNG 3: Cầu type =====
+    counts = CAU_DB.get(cau_type)
+    if counts:
+        p, total = _p_tai_from_counts(counts, min_total=8)
+        if p is not None:
+            w = math.sqrt(total) * 0.8
+            sources.append({'name': f'cau_{cau_type}', 'p_tai': p,
+                            'total': total, 'weight': w})
+
+    # ===== TẦNG 4: Cầu + hướng =====
+    if last5:
+        key_dir = f"{cau_type}|{last5[0]}"
+        counts = CAU_DIR_DB.get(key_dir)
+        if counts:
+            p, total = _p_tai_from_counts(counts, min_total=3)
+            if p is not None:
+                w = math.sqrt(total) * 1.0
+                sources.append({'name': f'cau_dir', 'p_tai': p,
+                                'total': total, 'weight': w})
+
+    # ===== TẦNG 5: N-gram con =====
+    for L in (2, 3, 4):
+        if n < L: continue
+        tx = encode_tx(results, L)
+        if not tx: continue
+        counts = NGRAM_DB[L].get(tx)
+        if not counts: continue
+        p, total = _p_tai_from_counts(counts, min_total=5)
+        if p is not None:
+            w = math.sqrt(total) * 1.5
+            sources.append({'name': f'ngram_{L}', 'p_tai': p,
+                            'total': total, 'weight': w})
+
+    # ===== TẦNG 6: Vị trí + giá trị =====
+    for pos in (0, 1, 2, 3, 4):
+        if n < pos + 1: continue
+        val = results[pos]
+        counts = POS_VAL_DB[pos].get(val)
+        if not counts: continue
+        p, total = _p_tai_from_counts(counts, min_total=5)
+        if p is not None:
+            # Vị trí gần hơn → quan trọng hơn
+            pos_weight = 1.0 - pos * 0.1
+            w = math.sqrt(total) * 1.3 * pos_weight
+            sources.append({'name': f'pos_{pos}_{val}', 'p_tai': p,
+                            'total': total, 'weight': w})
+
+    return sources, cau_type, cau
+
+
 def predict_5p(results):
     n = len(results)
     if n < 5:
-        # Fallback cơ bản
         if n == 0: return "Tài", 50, "KHÁC", {}
         if n == 1: return _opp(results[0]), 52, "KHÁC", {}
         if n == 2:
@@ -382,132 +503,98 @@ def predict_5p(results):
             if len(g) == 4: return _opp(results[0]), 55, "KHÁC", {}
             return results[0], 52, "KHÁC", {}
 
-    last5 = results[:5]
-    cau = classify_5p(last5)
-    cau_type = cau['type']
-    groups = cau['groups']
-    tx5 = encode_tx(last5, 5)
+    sources, cau_type, cau = _collect_sources(results)
 
-    # ==== CHIA KẾT QUẢ CŨ — 3 NGUỒN ====
-    pat_counts = PATTERN_DB.get(tx5, {"Tài": 0, "Xỉu": 0})
-    h_key = hash_pattern(tx5, depth=3)
-    hash_counts = HASH_DB.get(h_key, {"Tài": 0, "Xỉu": 0})
-    cau_counts = CAU_DB.get(cau_type, {"Tài": 0, "Xỉu": 0})
-    key_dir = f"{cau_type}|{last5[0]}"
-    cau_dir_counts = CAU_DIR_DB.get(key_dir, {"Tài": 0, "Xỉu": 0})
-
-    pat_total = pat_counts["Tài"] + pat_counts["Xỉu"]
-    hash_total = hash_counts["Tài"] + hash_counts["Xỉu"]
-    cau_total = cau_counts["Tài"] + cau_counts["Xỉu"]
-    cau_dir_total = cau_dir_counts["Tài"] + cau_dir_counts["Xỉu"]
-
-    # ==== TÍNH P(TÀI) TỪNG NGUỒN (Laplace smoothing) ====
-    def _p_tai(counts, total):
-        if total == 0: return 0.5, 0
-        return (counts["Tài"] + 1) / (total + 2), total
-
-    p_pat, t_pat = _p_tai(pat_counts, pat_total)
-    p_hash, t_hash = _p_tai(hash_counts, hash_total)
-    p_cau, t_cau = _p_tai(cau_counts, cau_total)
-    p_dir, t_dir = _p_tai(cau_dir_counts, cau_dir_total)
-
-    # ==== GOM TRỌNG SỐ THEO SỐ MẪU ====
-    # Nguồn nào có nhiều mẫu hơn → tin hơn
-    sources = []
-    if t_pat >= 3: sources.append((p_pat, t_pat, 'pattern'))
-    if t_hash >= 3: sources.append((p_hash, t_hash, 'hash'))
-    if t_cau >= 5: sources.append((p_cau, t_cau, 'cau'))
-    if t_dir >= 3: sources.append((p_dir, t_dir, 'cau_dir'))
-
+    # Fallback nếu chưa đủ nguồn
     if not sources:
-        # Không đủ mẫu → fallback theo lý thuyết cầu
-        return _fallback_by_cau(cau_type, last5, cau, groups)
+        return _fallback_by_cau(cau_type, results, cau)
 
-    # Weighted average theo sqrt(số mẫu)
-    total_w = 0.0
-    weighted_p_tai = 0.0
-    for p, t, name in sources:
-        w = math.sqrt(t)
-        weighted_p_tai += p * w
-        total_w += w
-    p_tai_final = weighted_p_tai / total_w
+    # Weighted average
+    total_w = sum(s['weight'] for s in sources)
+    p_tai_final = sum(s['p_tai'] * s['weight'] for s in sources) / total_w
+    total_samples = sum(s['total'] for s in sources)
 
-    # ==== Z-SCORE cho độ tin cậy ====
-    total_samples = sum(t for _, t, _ in sources)
+    # Z-score
     z = (p_tai_final - 0.5) / math.sqrt(0.25 / (total_samples + 2))
 
     pred = "Tài" if p_tai_final > 0.5 else "Xỉu"
 
-    # ==== CONFIDENCE ====
-    # Base: 50 + strength
-    strength = abs(p_tai_final - 0.5) * 100  # 0-50
-    conf = 50 + strength * 0.8
+    # Agreement
+    layer_preds = ["Tài" if s['p_tai'] > 0.5 else "Xỉu" for s in sources]
+    agree = sum(1 for x in layer_preds if x == pred)
 
-    # Bonus theo số mẫu
-    if total_samples >= 50: conf += 15
-    elif total_samples >= 30: conf += 12
-    elif total_samples >= 20: conf += 9
-    elif total_samples >= 10: conf += 6
-    elif total_samples >= 5: conf += 3
+    # ===== CONFIDENCE =====
+    strength = abs(p_tai_final - 0.5) * 100
+    conf = 50 + strength * 0.9
 
-    # Bonus theo z-score
+    # Bonus theo số mẫu tổng
+    if total_samples >= 200: conf += 16
+    elif total_samples >= 100: conf += 13
+    elif total_samples >= 50: conf += 10
+    elif total_samples >= 25: conf += 7
+    elif total_samples >= 10: conf += 4
+
+    # Bonus z-score
     abs_z = abs(z)
     if abs_z >= 2.5: conf += 12
     elif abs_z >= 2.0: conf += 9
     elif abs_z >= 1.5: conf += 6
     elif abs_z >= 1.0: conf += 3
 
-    # Bonus khi nhiều nguồn đồng thuận
-    preds = []
-    for p, t, name in sources:
-        preds.append("Tài" if p > 0.5 else "Xỉu")
-    agree = sum(1 for x in preds if x == pred)
-    if agree >= 3: conf += 6
-    elif agree == len(preds) and len(preds) >= 2: conf += 4
+    # Bonus đồng thuận
+    n_src = len(sources)
+    if n_src >= 8 and agree >= 7: conf += 10
+    elif n_src >= 6 and agree >= 5: conf += 8
+    elif n_src >= 4 and agree >= n_src - 1: conf += 6
+    elif agree == n_src and n_src >= 2: conf += 4
 
-    # Phạt khi xung đột
-    if agree < len(preds) / 2 + 0.5:
-        conf -= 8
+    # Phạt xung đột mạnh
+    disagree = n_src - agree
+    if disagree >= 5: conf -= 12
+    elif disagree >= 4: conf -= 9
+    elif disagree >= 3: conf -= 6
+
+    # Veto: nếu quá nửa phản đối
+    if disagree > agree and n_src >= 4:
+        conf = min(conf, 58)
 
     conf = int(max(50, min(MAX_CONFIDENCE, round(conf))))
 
     detail = {
         'cau_type': cau_type,
-        'groups': groups,
-        'tx5': tx5,
-        'sources': {
-            'pattern': {'p_tai': round(p_pat, 3), 'total': t_pat},
-            'hash': {'p_tai': round(p_hash, 3), 'total': t_hash},
-            'cau': {'p_tai': round(p_cau, 3), 'total': t_cau},
-            'cau_dir': {'p_tai': round(p_dir, 3), 'total': t_dir},
-        },
+        'groups': cau['groups'] if cau else [],
+        'n_sources': n_src,
+        'agree_count': agree,
+        'disagree_count': disagree,
+        'total_samples': total_samples,
         'p_tai_final': round(p_tai_final, 3),
         'z': round(z, 2),
-        'total_samples': total_samples,
-        'agree_count': agree,
-        'n_sources': len(sources),
+        'sources': [
+            {'name': s['name'], 'p_tai': round(s['p_tai'], 3),
+             'total': s['total'], 'weight': round(s['weight'], 2)}
+            for s in sorted(sources, key=lambda x: -x['weight'])[:10]
+        ],
     }
     return pred, conf, cau_type, detail
 
 
-def _fallback_by_cau(cau_type, last5, cau, groups):
-    """Khi chưa có dữ liệu — dùng lý thuyết cầu"""
+def _fallback_by_cau(cau_type, results, cau):
+    if not results: return "Tài", 50, "KHÁC", {'reason': 'empty'}
+    last0 = results[0]
     if cau_type == 'ĐẢO':
-        return _opp(last5[0]), 58, cau_type, {'reason': 'theory_dao'}
+        return _opp(last0), 58, cau_type, {'reason': 'theory_dao'}
     if cau_type == 'THUẬN':
-        # Bệt 5 → theo lý thuyết thường gãy
+        groups = cau['groups'] if cau else []
         if len(groups) == 1:
-            return _opp(last5[0]), 55, cau_type, {'reason': 'theory_thuan_5'}
-        # 4-1 → theo hướng mới (phiên đầu)
-        return last5[0], 56, cau_type, {'reason': 'theory_thuan_41'}
+            return _opp(last0), 55, cau_type, {'reason': 'theory_thuan_5'}
+        return last0, 56, cau_type, {'reason': 'theory_thuan_41'}
     if cau_type == 'NGHỊCH':
-        return _opp(last5[0]), 56, cau_type, {'reason': 'theory_nghich'}
+        return _opp(last0), 56, cau_type, {'reason': 'theory_nghich'}
     if cau_type == '1-1':
-        return _opp(last5[0]), 55, cau_type, {'reason': 'theory_11'}
-    # KHÁC
-    if len(last5) >= 2 and last5[0] == last5[1]:
-        return _opp(last5[0]), 53, cau_type, {'reason': 'theory_khac_opp'}
-    return last5[0], 52, cau_type, {'reason': 'theory_khac_follow'}
+        return _opp(last0), 55, cau_type, {'reason': 'theory_11'}
+    if len(results) >= 2 and results[0] == results[1]:
+        return _opp(last0), 53, cau_type, {'reason': 'theory_khac_opp'}
+    return last0, 52, cau_type, {'reason': 'theory_khac_follow'}
 
 
 # =====================================================================
@@ -553,10 +640,16 @@ def get_final_prediction(valid):
 def reset_all_databases():
     global LEARNED_PHIEN
     with LEARN_LOCK:
-        PATTERN_DB.clear()
-        HASH_DB.clear()
+        for L in (3, 4, 5, 6, 7):
+            PATTERN_DB[L].clear()
+        for d in (2, 3, 4):
+            HASH_DB[d].clear()
         CAU_DB.clear()
         CAU_DIR_DB.clear()
+        for L in (2, 3, 4):
+            NGRAM_DB[L].clear()
+        for pos in (0, 1, 2, 3, 4):
+            POS_VAL_DB[pos].clear()
         LEARNED_PHIEN = RESET_ID
 
 
@@ -680,13 +773,15 @@ def lc79md5():
 
 @app.route('/api/stats')
 def stats_api():
-    """Xem trạng thái 4 DB chia kết quả"""
+    """Xem trạng thái 6 tầng chia phiên"""
     try:
         return jsonify({
-            'pattern_db_size': len(PATTERN_DB),
-            'hash_db_size': len(HASH_DB),
+            'pattern_db_sizes': {L: len(PATTERN_DB[L]) for L in (3,4,5,6,7)},
+            'hash_db_sizes': {d: len(HASH_DB[d]) for d in (2,3,4)},
             'cau_db': dict(CAU_DB),
             'cau_dir_db_size': len(CAU_DIR_DB),
+            'ngram_db_sizes': {L: len(NGRAM_DB[L]) for L in (2,3,4)},
+            'pos_val_db_sizes': {p: len(POS_VAL_DB[p]) for p in (0,1,2,3,4)},
             'learned_phien': LEARNED_PHIEN,
             'reset_id': RESET_ID,
         })
