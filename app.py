@@ -3,9 +3,8 @@ import math
 import hashlib
 import traceback
 import threading
-import random
 from datetime import datetime
-from collections import defaultdict, Counter
+from collections import defaultdict
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -20,101 +19,20 @@ PREDICTION_CACHE = {}
 NEXT_PREDICTION_CACHE = {}
 MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
-MAX_CONFIDENCE = 92
+MAX_CONFIDENCE = 90
 
 LEARNED_PHIEN = 0
 LEARN_LOCK = threading.Lock()
 
-# ==================== DB V20 ULTIMATE (16 TẦNG) ====================
-HASH_DEEP_DB = {
-    5: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
-    7: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
-}
-MD5_BIT_DB = {bit: {"Tài": 0, "Xỉu": 0} for bit in range(128)}
-MD5_NGRAM_DB = {n: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}) for n in (2, 3, 4, 5, 6)}
-MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
-MARKOV_DB = {order: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}) for order in (1, 2, 3, 4, 5)}
-BAC_NHO_POS_DB = {pos: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}) for pos in (0, 1, 2)}
-CAU_SPECIAL_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
-STREAK_DB = defaultdict(lambda: {"cont": 0, "brk": 0})
-SIG_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
-
-# ===== TẦNG 11: BAYESIAN ONLINE =====
-BAYES_DB = {order: defaultdict(lambda: {"alpha": 1.0, "beta": 1.0}) for order in (2, 3, 4, 5, 6)}
-
-# ===== TẦNG 12: FOURIER CYCLE =====
-FOURIER_HISTORY = []  # list 0/1
-FOURIER_LOCK = threading.Lock()
-
-# ===== TẦNG 13: GENETIC WEIGHTS =====
-GA_WEIGHTS = {
-    'hash5': 1.0, 'hash7': 1.2, 'bit': 1.0, 'ngram': 1.0,
-    'hamming': 1.0, 'markov': 1.5, 'bacnho': 1.3,
-    'cau': 1.4, 'streak': 1.2, 'sig': 1.0,
-    'bayes': 1.6, 'fourier': 1.4, 'nn': 1.8, 'momentum': 1.5,
-}
-GA_PERFORMANCE = defaultdict(lambda: {"correct": 0, "total": 0})
-GA_LOCK = threading.Lock()
-
-# ===== TẦNG 14: NEURAL NETWORK (thuần Python) =====
-class TinyNN:
-    """2-layer perceptron: 16 → 8 → 1 (thuần Python, không numpy)"""
-    def __init__(self, input_dim=16, hidden_dim=8, seed=42):
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-        rnd = random.Random(seed)
-        # Xavier init
-        scale1 = math.sqrt(2.0 / input_dim)
-        scale2 = math.sqrt(2.0 / hidden_dim)
-        self.W1 = [[rnd.gauss(0, scale1) for _ in range(input_dim)] for _ in range(hidden_dim)]
-        self.b1 = [0.0] * hidden_dim
-        self.W2 = [rnd.gauss(0, scale2) for _ in range(hidden_dim)]
-        self.b2 = 0.0
-        self.lr = 0.05
-
-    def _sigmoid(self, x):
-        if x < -30: return 0.0
-        if x > 30: return 1.0
-        return 1.0 / (1.0 + math.exp(-x))
-
-    def forward(self, x):
-        h = []
-        for i in range(self.hidden_dim):
-            s = self.b1[i]
-            Wi = self.W1[i]
-            for j in range(self.input_dim):
-                s += Wi[j] * x[j]
-            h.append(self._sigmoid(s))
-        out = self.b2
-        for i in range(self.hidden_dim):
-            out += self.W2[i] * h[i]
-        return self._sigmoid(out), h
-
-    def train_step(self, x, y):
-        pred, h = self.forward(x)
-        err = pred - y
-        # Backprop
-        d_out = err * pred * (1 - pred)
-        for i in range(self.hidden_dim):
-            grad = d_out * h[i]
-            self.W2[i] -= self.lr * grad
-        self.b2 -= self.lr * d_out
-        for i in range(self.hidden_dim):
-            d_h = d_out * self.W2[i] * h[i] * (1 - h[i])
-            for j in range(self.input_dim):
-                self.W1[i][j] -= self.lr * d_h * x[j]
-            self.b1[i] -= self.lr * d_h
-
-NN_MODEL = TinyNN(input_dim=16, hidden_dim=8, seed=42)
-NN_LOCK = threading.Lock()
-NN_TRAINED = 0
-
-# ===== TẦNG 15: ENTROPY FILTER =====
-ENTROPY_WINDOW = 30
-
-# ===== TẦNG 16: TEMPORAL MOMENTUM =====
-EMA_STATE = {'ema3': 0.5, 'ema7': 0.5, 'ema15': 0.5, 'initialized': False}
-MOMENTUM_LOCK = threading.Lock()
+# ==================== DB 5P THUẦN ====================
+# Chia kết quả cũ theo key pattern 5P (dạng chuỗi TX)
+PATTERN_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+# Chia kết quả cũ theo hash MD5 salted (deep pattern)
+HASH_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+# Chia kết quả cũ theo cầu type (ĐẢO/THUẬN/NGHỊCH/1-1/KHÁC)
+CAU_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+# Chia theo (cầu_type + hướng phiên trước) để dự đoán next
+CAU_DIR_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -122,7 +40,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 V20 ULTIMATE</title>
+<title>LE MINH MD5 V21 — 5P THUẦN</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -185,7 +103,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
 <div class="header">
-    <div class="header-title">LE MINH <span>V20 ULTIMATE</span></div>
+    <div class="header-title">LE MINH <span>V21 5P</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -345,928 +263,268 @@ def encode_tx(results, length):
     if not results or len(results) < length: return None
     return "".join("T" if r == "Tài" else "X" for r in results[:length])
 
-def hash_deep_md5(tx_string, depth_level=2):
+def hash_pattern(tx_string, depth=2):
+    """Hash MD5 salted để phân biệt pattern"""
     if not tx_string: return None
-    salted = f"leminh_deep_{depth_level}|{tx_string}"
-    h = hashlib.md5(salted.encode('utf-8')).hexdigest()
-    for _ in range(depth_level - 1):
-        h = hashlib.md5(f"{h}|salt_{depth_level}".encode('utf-8')).hexdigest()
-    return h
-
-def hash_to_bits(hash_hex):
-    if not hash_hex: return []
-    bits = []
-    for c in hash_hex:
-        v = int(c, 16)
-        for shift in (3, 2, 1, 0):
-            bits.append((v >> shift) & 1)
-    return bits
-
-def hamming_distance(h1, h2):
-    if not h1 or not h2 or len(h1) != len(h2): return 0
-    return sum(a != b for a, b in zip(hash_to_bits(h1), hash_to_bits(h2)))
-
-def rolling_signature(results, length=7):
-    if not results or len(results) < length: return None
-    sig = 0
-    for i in range(length):
-        bit = 1 if results[i] == "Tài" else 0
-        sig = ((sig << 1) | bit) & 0xFFFFFFFF
-    return sig
+    h = hashlib.md5(f"v21_5p_d{depth}|{tx_string}".encode('utf-8')).hexdigest()
+    for _ in range(depth - 1):
+        h = hashlib.md5(f"{h}|salt{depth}".encode('utf-8')).hexdigest()
+    return h[:16]  # Lấy 16 ký tự đủ phân biệt
 
 # =====================================================================
-# HỌC TĂNG CƯỜNG (MỞ RỘNG V20)
+# PHÂN LOẠI CẦU 5P
 # =====================================================================
-def learn_incremental(valid):
-    global LEARNED_PHIEN, NN_TRAINED, FOURIER_HISTORY, EMA_STATE
-    if not valid: return
-    with LEARN_LOCK:
-        new_indices = [idx for idx, v in enumerate(valid) if v['phien'] > LEARNED_PHIEN]
-        if not new_indices: return
-        n = len(valid)
-        if n <= 7:
-            LEARNED_PHIEN = valid[-1]['phien']
-            return
-
-        # ===== TẦNG 1-2: Pattern hash 5p + 7p =====
-        for idx in new_indices:
-            if idx < 5: continue
-            history5 = [v['result'] for v in valid[idx-5:idx]][::-1]
-            tx5 = encode_tx(history5, 5)
-            if tx5:
-                h5 = hash_deep_md5(tx5, depth_level=3)
-                if h5:
-                    HASH_DEEP_DB[5][h5][valid[idx]['result']] += 1
-            if idx >= 7:
-                history7 = [v['result'] for v in valid[idx-7:idx]][::-1]
-                tx7 = encode_tx(history7, 7)
-                if tx7:
-                    h7 = hash_deep_md5(tx7, depth_level=4)
-                    if h7:
-                        HASH_DEEP_DB[7][h7][valid[idx]['result']] += 1
-
-        hash_cache = {}
-        for idx in new_indices:
-            if idx < 5: continue
-            history = [v['result'] for v in valid[idx-5:idx]][::-1]
-            tx = encode_tx(history, 5)
-            if not tx: continue
-            h = hash_deep_md5(tx, depth_level=3)
-            if not h: continue
-            hash_cache[idx] = h
-
-            # Tầng 3: MD5 bit
-            bits = hash_to_bits(h)
-            for bit_idx in range(min(128, len(bits))):
-                if bits[bit_idx] == 1:
-                    MD5_BIT_DB[bit_idx][valid[idx]['result']] += 1
-
-            # Tầng 4: N-gram
-            for ng_size in (2, 3, 4, 5, 6):
-                for start in range(0, len(h) - ng_size + 1):
-                    gram = h[start:start + ng_size]
-                    MD5_NGRAM_DB[ng_size][gram][valid[idx]['result']] += 1
-
-        # Tầng 5: Hamming
-        for idx in new_indices:
-            if idx < 6 or idx not in hash_cache: continue
-            prev_idx = idx - 1
-            if prev_idx not in hash_cache: continue
-            hd = hamming_distance(hash_cache[idx], hash_cache[prev_idx])
-            MD5_HAMMING_DB[hd // 8][valid[idx]['result']] += 1
-
-        # Tầng 6: Markov Chain
-        for idx in new_indices:
-            for order in (1, 2, 3, 4, 5):
-                if idx < order: continue
-                key = tuple(v['result'] for v in valid[idx-order:idx])
-                MARKOV_DB[order][key][valid[idx]['result']] += 1
-
-        # Tầng 7: Bạc nhớ vị trí
-        for idx in new_indices:
-            if idx < 3: continue
-            last3 = [v['result'] for v in valid[idx-3:idx]]
-            for pos in (0, 1, 2):
-                BAC_NHO_POS_DB[pos][last3[pos]][valid[idx]['result']] += 1
-
-        # Tầng 8: Cầu đặc biệt
-        for idx in new_indices:
-            if idx < 6: continue
-            last6 = [v['result'] for v in valid[idx-6:idx]][::-1]
-            groups = get_groups(last6)
-            if len(groups) == 1:
-                key = f"BET_{last6[0]}_{min(groups[0], 6)}"
-                CAU_SPECIAL_DB[key][valid[idx]['result']] += 1
-            elif len(groups) == 2 and groups[0] >= 3:
-                key = f"3X_{last6[0]}_{last6[groups[0]]}"
-                CAU_SPECIAL_DB[key][valid[idx]['result']] += 1
-            elif len(groups) >= 3 and groups[0] == 2 and groups[1] == 2:
-                key = f"221_{last6[0]}_{last6[2]}_{last6[4]}"
-                CAU_SPECIAL_DB[key][valid[idx]['result']] += 1
-
-        # Tầng 9: Streak
-        for idx in new_indices:
-            for streak_len in (3, 4, 5, 6):
-                if idx < streak_len: continue
-                cur = valid[idx-1]['result']
-                if all(valid[idx-1-j]['result'] == cur for j in range(streak_len)):
-                    key = f"{cur}_{streak_len}"
-                    if valid[idx]['result'] == cur:
-                        STREAK_DB[key]['cont'] += 1
-                    else:
-                        STREAK_DB[key]['brk'] += 1
-
-        # Tầng 10: Signature
-        for idx in new_indices:
-            if idx < 7: continue
-            history = [v['result'] for v in valid[idx-7:idx]][::-1]
-            sig = rolling_signature(history, 7)
-            if sig is not None:
-                SIG_DB[sig][valid[idx]['result']] += 1
-
-        # ===== TẦNG 11: BAYESIAN ONLINE (Beta distribution) =====
-        for idx in new_indices:
-            for order in (2, 3, 4, 5, 6):
-                if idx < order: continue
-                key = tuple(v['result'] for v in valid[idx-order:idx])
-                is_tai = (valid[idx]['result'] == "Tài")
-                if is_tai:
-                    BAYES_DB[order][key]["alpha"] += 1
-                else:
-                    BAYES_DB[order][key]["beta"] += 1
-
-        # ===== TẦNG 12: FOURIER HISTORY =====
-        with FOURIER_LOCK:
-            for idx in new_indices:
-                bit = 1 if valid[idx]['result'] == "Tài" else 0
-                FOURIER_HISTORY.append(bit)
-            if len(FOURIER_HISTORY) > 500:
-                FOURIER_HISTORY = FOURIER_HISTORY[-500:]
-
-        # ===== TẦNG 14: NEURAL NETWORK TRAINING =====
-        with NN_LOCK:
-            for idx in new_indices:
-                if idx < 16: continue
-                features = _extract_nn_features(valid, idx)
-                if features is None: continue
-                y = 1.0 if valid[idx]['result'] == "Tài" else 0.0
-                NN_MODEL.train_step(features, y)
-                NN_TRAINED += 1
-
-        # ===== TẦNG 16: EMA STATE UPDATE =====
-        with MOMENTUM_LOCK:
-            if not EMA_STATE['initialized']:
-                _recompute_ema(valid)
-            else:
-                last_result = valid[-1]['result']
-                val = 1.0 if last_result == "Tài" else 0.0
-                for period in (3, 7, 15):
-                    k = 2.0 / (period + 1)
-                    EMA_STATE[f'ema{period}'] = EMA_STATE[f'ema{period}'] * (1 - k) + val * k
-
-        LEARNED_PHIEN = valid[-1]['phien']
-
-
-def _recompute_ema(valid):
-    """Recompute EMA từ toàn bộ history"""
-    n = len(valid)
-    if n < 15: return
-    for period in (3, 7, 15):
-        k = 2.0 / (period + 1)
-        ema = 0.5
-        for i in range(n):
-            val = 1.0 if valid[i]['result'] == "Tài" else 0.0
-            ema = ema * (1 - k) + val * k
-        EMA_STATE[f'ema{period}'] = ema
-    EMA_STATE['initialized'] = True
-
-
-def _extract_nn_features(valid, idx):
-    """Extract 16 features cho NN"""
-    if idx < 16: return None
-    feats = []
-    # 8 features: 8 phiên gần nhất (0/1)
-    for j in range(8):
-        feats.append(1.0 if valid[idx-1-j]['result'] == "Tài" else 0.0)
-    # 4 features: group sizes 4 phiên cuối
-    last8 = [v['result'] for v in valid[idx-8:idx]][::-1]
-    groups = get_groups(last8)
-    for j in range(4):
-        g = groups[j] if j < len(groups) else 0
-        feats.append(min(g, 8) / 8.0)
-    # 4 features: rolling ratios
-    for window in (3, 5, 7, 10):
-        w = min(window, idx)
-        tai_count = sum(1 for v in valid[idx-w:idx] if v['result'] == "Tài")
-        feats.append(tai_count / w)
-    return feats
-
-
-# =====================================================================
-# PATTERN CLASSIFIER
-# =====================================================================
-def classify_5p_pattern(last5):
+def classify_5p(last5):
+    """Trả về (type, groups, hướng)"""
     if len(last5) < 5: return None
     groups = get_groups(last5)
-    alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
-    if alt_count == 4:
-        return {'type': 'ĐẢO', 'groups': groups, 'alt': alt_count}
+    alt = sum(1 for i in range(4) if last5[i] != last5[i+1])
+
+    # ĐẢO: T-X-T-X-T hoặc X-T-X-T-X
+    if alt == 4:
+        return {'type': 'ĐẢO', 'groups': groups}
+
+    # THUẬN: 5 liên tiếp hoặc 4-1 / 1-4
     if len(groups) == 1 and groups[0] == 5:
-        return {'type': 'THUẬN', 'groups': groups, 'alt': alt_count}
+        return {'type': 'THUẬN', 'groups': groups}
     if len(groups) == 2 and (groups[0] == 4 or groups[1] == 4):
-        return {'type': 'THUẬN', 'groups': groups, 'alt': alt_count}
+        return {'type': 'THUẬN', 'groups': groups}
+
+    # NGHỊCH: 3-1-1 / 1-1-3 / 3-2 / 2-3
     if len(groups) == 3 and (
         (groups[0] == 3 and groups[1] == 1 and groups[2] == 1) or
         (groups[0] == 1 and groups[1] == 1 and groups[2] == 3)
     ):
-        return {'type': 'NGHỊCH', 'groups': groups, 'alt': alt_count}
+        return {'type': 'NGHỊCH', 'groups': groups}
     if len(groups) == 2 and (
         (groups[0] == 3 and groups[1] == 2) or
         (groups[0] == 2 and groups[1] == 3)
     ):
-        return {'type': 'NGHỊCH', 'groups': groups, 'alt': alt_count}
+        return {'type': 'NGHỊCH', 'groups': groups}
+
+    # 1-1: 2-2-1 / 1-2-2 / 2-1-2 / 2-2-... / 2-2
     if len(groups) == 3 and (
         (groups[0] == 2 and groups[1] == 2 and groups[2] == 1) or
         (groups[0] == 1 and groups[1] == 2 and groups[2] == 2) or
         (groups[0] == 2 and groups[1] == 1 and groups[2] == 2)
     ):
-        return {'type': '1-1', 'groups': groups, 'alt': alt_count}
+        return {'type': '1-1', 'groups': groups}
     if len(groups) == 4 and (groups[0] == 2 or groups[3] == 2):
-        return {'type': '1-1', 'groups': groups, 'alt': alt_count}
+        return {'type': '1-1', 'groups': groups}
     if len(groups) == 2 and groups[0] == 2 and groups[1] == 2:
-        return {'type': '1-1', 'groups': groups, 'alt': alt_count}
-    return {'type': 'KHÁC', 'groups': groups, 'alt': alt_count}
+        return {'type': '1-1', 'groups': groups}
+
+    return {'type': 'KHÁC', 'groups': groups}
 
 
 # =====================================================================
-# LOOKUP HÀM — 16 TẦNG
+# HỌC: CHIA KẾT QUẢ CŨ THEO KEY 5P
 # =====================================================================
-def lookup_pattern_stats(results, key_len, key_tuple, max_scan=120):
-    n = len(results)
-    tai_next = xiu_next = 0
-    for i in range(min(n - key_len, max_scan)):
-        if tuple(results[i:i+key_len]) == key_tuple:
-            if results[i+key_len] == "Tài": tai_next += 1
-            else: xiu_next += 1
-    total = tai_next + xiu_next
-    if total == 0:
-        return 0.5, 0, 0.0
-    p_tai = (tai_next + 1) / (total + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-    return p_tai, total, z
+def learn_incremental(valid):
+    global LEARNED_PHIEN
+    if not valid: return
+    with LEARN_LOCK:
+        new_indices = [idx for idx, v in enumerate(valid) if v['phien'] > LEARNED_PHIEN]
+        if not new_indices: return
+        n = len(valid)
+        if n <= 5:
+            LEARNED_PHIEN = valid[-1]['phien']
+            return
 
+        for idx in new_indices:
+            if idx < 5: continue
 
-def lookup_hash_deep_5p(results):
-    tx = encode_tx(results, 5)
-    if not tx: return None
-    h = hash_deep_md5(tx, depth_level=3)
-    if not h or h not in HASH_DEEP_DB[5]: return None
-    counts = HASH_DEEP_DB[5][h]
-    total = counts["Tài"] + counts["Xỉu"]
-    if total < 3: return None
-    p_tai = (counts["Tài"] + 1) / (total + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total, z, p_tai
+            # Lấy 5 phiên gần nhất (mới nhất first)
+            last5 = [v['result'] for v in valid[idx-5:idx]][::-1]
+            tx5 = encode_tx(last5, 5)
+            if not tx5: continue
 
+            next_result = valid[idx]['result']
 
-def lookup_hash_deep_7p(results):
-    tx = encode_tx(results, 7)
-    if not tx: return None
-    h = hash_deep_md5(tx, depth_level=4)
-    if not h or h not in HASH_DEEP_DB[7]: return None
-    counts = HASH_DEEP_DB[7][h]
-    total = counts["Tài"] + counts["Xỉu"]
-    if total < 3: return None
-    p_tai = (counts["Tài"] + 1) / (total + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total, z, p_tai
+            # 1. Chia theo pattern TX chuỗi
+            PATTERN_DB[tx5][next_result] += 1
 
+            # 2. Chia theo hash MD5 salted
+            h = hash_pattern(tx5, depth=3)
+            if h:
+                HASH_DB[h][next_result] += 1
 
-def lookup_md5_bit(results):
-    tx = encode_tx(results, 5)
-    if not tx: return None
-    h = hash_deep_md5(tx, depth_level=3)
-    if not h: return None
-    bits = hash_to_bits(h)
-    tai_votes = xiu_votes = 0
-    total_seen = 0
-    for bit_idx in range(min(128, len(bits))):
-        if bits[bit_idx] == 1:
-            counts = MD5_BIT_DB[bit_idx]
-            t = counts["Tài"] + counts["Xỉu"]
-            if t > 0:
-                tai_votes += counts["Tài"]
-                xiu_votes += counts["Xỉu"]
-                total_seen += t
-    if total_seen < 10: return None
-    p_tai = (tai_votes + 1) / (total_seen + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total_seen, z, p_tai
+            # 3. Chia theo cầu type
+            cau = classify_5p(last5)
+            if cau:
+                CAU_DB[cau['type']][next_result] += 1
+                # 4. Chia theo (cầu_type + kết quả phiên đầu của cầu)
+                key_dir = f"{cau['type']}|{last5[0]}"
+                CAU_DIR_DB[key_dir][next_result] += 1
 
-
-def lookup_md5_ngram(results):
-    tx = encode_tx(results, 5)
-    if not tx: return None
-    h = hash_deep_md5(tx, depth_level=3)
-    if not h: return None
-    tai_votes = xiu_votes = 0
-    total_seen = 0
-    for ng_size in (2, 3, 4, 5, 6):
-        weight = 1.0 + (ng_size - 2) * 0.4
-        for start in range(0, len(h) - ng_size + 1):
-            gram = h[start:start + ng_size]
-            counts = MD5_NGRAM_DB[ng_size].get(gram)
-            if not counts: continue
-            t = counts["Tài"] + counts["Xỉu"]
-            if t < 2: continue
-            tai_votes += counts["Tài"] * weight
-            xiu_votes += counts["Xỉu"] * weight
-            total_seen += t * weight
-    if total_seen < 20: return None
-    p_tai = (tai_votes + 1) / (total_seen + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total_seen, z, p_tai
-
-
-def lookup_md5_hamming(results, prev_results):
-    tx = encode_tx(results, 5)
-    tx_prev = encode_tx(prev_results, 5)
-    if not tx or not tx_prev: return None
-    h = hash_deep_md5(tx, depth_level=3)
-    h_prev = hash_deep_md5(tx_prev, depth_level=3)
-    if not h or not h_prev: return None
-    hd = hamming_distance(h, h_prev)
-    bucket = hd // 8
-    counts = MD5_HAMMING_DB.get(bucket)
-    if not counts: return None
-    total = counts["Tài"] + counts["Xỉu"]
-    if total < 5: return None
-    p_tai = (counts["Tài"] + 1) / (total + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total, z, p_tai
-
-
-def lookup_markov(results):
-    if not results or len(results) < 5: return None
-    tai_votes = xiu_votes = 0
-    total_seen = 0
-    for order in (1, 2, 3, 4, 5):
-        if len(results) < order: continue
-        key = tuple(results[:order])
-        counts = MARKOV_DB[order].get(key)
-        if not counts: continue
-        t = counts["Tài"] + counts["Xỉu"]
-        if t < 2: continue
-        weight = 1.0 + (order - 1) * 0.5
-        tai_votes += counts["Tài"] * weight
-        xiu_votes += counts["Xỉu"] * weight
-        total_seen += t * weight
-    if total_seen < 15: return None
-    p_tai = (tai_votes + 1) / (total_seen + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total_seen, z, p_tai
-
-
-def lookup_bac_nho(results):
-    if not results or len(results) < 3: return None
-    tai_votes = xiu_votes = 0
-    total_seen = 0
-    for pos in (0, 1, 2):
-        val = results[pos]
-        counts = BAC_NHO_POS_DB[pos].get(val)
-        if not counts: continue
-        t = counts["Tài"] + counts["Xỉu"]
-        if t < 2: continue
-        weight = 1.0 if pos == 0 else (0.8 if pos == 1 else 0.6)
-        tai_votes += counts["Tài"] * weight
-        xiu_votes += counts["Xỉu"] * weight
-        total_seen += t * weight
-    if total_seen < 10: return None
-    p_tai = (tai_votes + 1) / (total_seen + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total_seen + 2))
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total_seen, z, p_tai
-
-
-def lookup_cau_special(results):
-    if not results or len(results) < 6: return None
-    last6 = results[:6]
-    groups = get_groups(last6)
-    key = None
-    if len(groups) == 1:
-        key = f"BET_{last6[0]}_{min(groups[0], 6)}"
-    elif len(groups) == 2 and groups[0] >= 3:
-        key = f"3X_{last6[0]}_{last6[groups[0]]}"
-    elif len(groups) >= 3 and groups[0] == 2 and groups[1] == 2:
-        key = f"221_{last6[0]}_{last6[2]}_{last6[4]}"
-    if not key: return None
-    counts = CAU_SPECIAL_DB.get(key)
-    if not counts: return None
-    total = counts["Tài"] + counts["Xỉu"]
-    if total < 3: return None
-    p_tai = (counts["Tài"] + 1) / (total + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total, z, p_tai
-
-
-def lookup_streak(results):
-    if not results or len(results) < 3: return None
-    cur = results[0]
-    streak_len = 1
-    for i in range(1, min(len(results), 8)):
-        if results[i] == cur:
-            streak_len += 1
-        else:
-            break
-    if streak_len < 3: return None
-    key = f"{cur}_{min(streak_len, 6)}"
-    counts = STREAK_DB.get(key)
-    if not counts: return None
-    cont = counts['cont']; brk = counts['brk']
-    total = cont + brk
-    if total < 5: return None
-    p_cont = (cont + 1) / (total + 2)
-    z = (p_cont - 0.5) / math.sqrt(0.25 / (total + 2))
-    pred = cur if p_cont > 0.5 else _opp(cur)
-    p_tai = p_cont if cur == "Tài" else (1 - p_cont)
-    return pred, total, z, p_tai
-
-
-def lookup_signature(results):
-    if not results or len(results) < 7: return None
-    sig = rolling_signature(results, 7)
-    if sig is None: return None
-    counts = SIG_DB.get(sig)
-    if not counts: return None
-    total = counts["Tài"] + counts["Xỉu"]
-    if total < 3: return None
-    p_tai = (counts["Tài"] + 1) / (total + 2)
-    z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total, z, p_tai
-
-
-# ===== TẦNG 11: BAYESIAN LOOKUP =====
-def lookup_bayes(results):
-    if not results or len(results) < 2: return None
-    p_tai_weighted = 0.0
-    total_weight = 0.0
-    for order in (2, 3, 4, 5, 6):
-        if len(results) < order: continue
-        key = tuple(results[:order])
-        counts = BAYES_DB[order].get(key)
-        if not counts: continue
-        alpha = counts["alpha"]; beta = counts["beta"]
-        n = alpha + beta - 2
-        if n < 2: continue
-        p = alpha / (alpha + beta)
-        weight = math.log(n + 2) * (1.0 + (order - 2) * 0.3)
-        p_tai_weighted += p * weight
-        total_weight += weight
-    if total_weight < 1.0: return None
-    p_tai = p_tai_weighted / total_weight
-    # Approx confidence z-score
-    z = (p_tai - 0.5) * 4.0
-    total_seen = int(total_weight * 3)
-    if total_seen < 10: return None
-    return ("Tài" if p_tai > 0.5 else "Xỉu"), total_seen, z, p_tai
-
-
-# ===== TẦNG 12: FOURIER CYCLE =====
-def lookup_fourier():
-    with FOURIER_LOCK:
-        if len(FOURIER_HISTORY) < 30: return None
-        data = FOURIER_HISTORY[-40:]
-    n = len(data)
-    # DFT để tìm dominant frequency
-    best_amp = 0.0
-    best_period = 0
-    # Chỉ xét periods 2-15
-    for period in range(2, min(16, n // 2)):
-        real = imag = 0.0
-        for t in range(n):
-            angle = 2 * math.pi * t / period
-            real += data[t] * math.cos(angle)
-            imag -= data[t] * math.sin(angle)
-        amp = math.sqrt(real * real + imag * imag) / n
-        if amp > best_amp:
-            best_amp = amp
-            best_period = period
-    if best_period == 0 or best_amp < 0.15: return None
-    # Predict next bằng phase của dominant frequency
-    real = imag = 0.0
-    for t in range(n):
-        angle = 2 * math.pi * t / best_period
-        real += data[t] * math.cos(angle)
-        imag -= data[t] * math.sin(angle)
-    phase = math.atan2(imag, real)
-    next_angle = 2 * math.pi * n / best_period + phase
-    predicted_val = math.cos(next_angle)
-    if predicted_val > 0.1:
-        pred = "Tài"; p_tai = 0.5 + min(0.35, abs(predicted_val) * 0.4)
-    elif predicted_val < -0.1:
-        pred = "Xỉu"; p_tai = 0.5 - min(0.35, abs(predicted_val) * 0.4)
-    else:
-        return None
-    z = (p_tai - 0.5) * 4.0
-    return pred, 40, z, p_tai
-
-
-# ===== TẦNG 14: NEURAL NETWORK LOOKUP =====
-def lookup_neural(valid_or_results, idx_or_none=None):
-    """Hỗ trợ cả 2 mode: valid+idx hoặc results (list str)"""
-    try:
-        if idx_or_none is not None:
-            # Mode: valid list + idx
-            valid = valid_or_results
-            idx = idx_or_none
-            feats = _extract_nn_features(valid, idx)
-        else:
-            # Mode: results list str (most recent first)
-            results = valid_or_results
-            if len(results) < 16: return None
-            # Build fake valid list
-            fake_valid = [{'result': r, 'phien': 1000-i} for i, r in enumerate(results[::-1])]
-            feats = _extract_nn_features(fake_valid, len(fake_valid))
-        if feats is None: return None
-        with NN_LOCK:
-            p_tai, _ = NN_MODEL.forward(feats)
-        if NN_TRAINED < 100:  # chưa đủ dữ liệu train
-            if NN_TRAINED < 20: return None
-        z = (p_tai - 0.5) * 5.0
-        if abs(z) < 0.6: return None
-        return ("Tài" if p_tai > 0.5 else "Xỉu"), max(16, NN_TRAINED), z, p_tai
-    except Exception as e:
-        return None
-
-
-# ===== TẦNG 15: ENTROPY FILTER =====
-def compute_entropy(results):
-    if not results or len(results) < 10: return 1.0
-    window = results[:min(ENTROPY_WINDOW, len(results))]
-    counts = Counter(window)
-    total = len(window)
-    entropy = 0.0
-    for c in counts.values():
-        p = c / total
-        if p > 0:
-            entropy -= p * math.log2(p)
-    return entropy  # max = 1.0 cho binary
-
-
-def chaos_filter(results):
-    """Trả về (ok, penalty) — nếu entropy cao bất thường → giảm conf"""
-    ent = compute_entropy(results)
-    if len(results) < 20: return True, 0.0
-    # Entropy gần 1.0 = hoàn toàn random → giảm
-    if ent > 0.98:
-        return False, -8.0
-    elif ent > 0.95:
-        return True, -4.0
-    elif ent < 0.70:
-        return True, +3.0
-    return True, 0.0
-
-
-# ===== TẦNG 16: TEMPORAL MOMENTUM =====
-def lookup_momentum():
-    with MOMENTUM_LOCK:
-        if not EMA_STATE['initialized']: return None
-        ema3 = EMA_STATE['ema3']
-        ema7 = EMA_STATE['ema7']
-        ema15 = EMA_STATE['ema15']
-    # Momentum = ema3 - ema7 (tăng tốc)
-    momentum = ema3 - ema7
-    trend = ema7 - ema15
-    # Logic: nếu ema3 đảo chiều mạnh so với ema15 → đảo
-    if abs(momentum) < 0.05 and abs(trend) < 0.05:
-        return None
-    # Kết hợp: momentum + trend
-    signal = momentum * 1.5 + trend * 1.0
-    if signal > 0.08:
-        pred = "Tài"; p_tai = 0.5 + min(0.3, signal)
-    elif signal < -0.08:
-        pred = "Xỉu"; p_tai = 0.5 - min(0.3, abs(signal))
-    else:
-        return None
-    z = signal * 5.0
-    return pred, 20, z, p_tai
+        LEARNED_PHIEN = valid[-1]['phien']
 
 
 # =====================================================================
-# GENETIC WEIGHT OPTIMIZER (Tầng 13)
+# DỰ ĐOÁN 5P THUẦN — CHIA KẾT QUẢ CŨ
 # =====================================================================
-def update_ga_weights():
-    """Cập nhật trọng số dựa trên win-rate tích lũy"""
-    with GA_LOCK:
-        for layer, perf in GA_PERFORMANCE.items():
-            if perf['total'] < 10: continue
-            wr = perf['correct'] / perf['total']
-            # Clamp 0.8 - 2.0
-            new_w = max(0.8, min(2.0, 0.5 + wr * 2.0))
-            GA_WEIGHTS[layer] = new_w
-
-
-def record_layer_result(layer_name, is_correct):
-    with GA_LOCK:
-        GA_PERFORMANCE[layer_name]['total'] += 1
-        if is_correct:
-            GA_PERFORMANCE[layer_name]['correct'] += 1
-
-
-# =====================================================================
-# STABILITY + RECOMMENDATION
-# =====================================================================
-def compute_stability_score(total_pat, z_pat, agreements, cau_type):
-    score = 40.0
-    if total_pat >= 25: score += 22
-    elif total_pat >= 20: score += 20
-    elif total_pat >= 15: score += 16
-    elif total_pat >= 10: score += 12
-    elif total_pat >= 7: score += 8
-    elif total_pat >= 5: score += 4
-    abs_z = abs(z_pat)
-    if abs_z >= 2.5: score += 15
-    elif abs_z >= 2.0: score += 13
-    elif abs_z >= 1.5: score += 11
-    elif abs_z >= 1.0: score += 7
-    elif abs_z >= 0.8: score += 3
-    agrees = [x for x in agreements if x is not None]
-    if agrees:
-        ratio = sum(agrees) / len(agrees)
-        score += ratio * 18
-        if len(agrees) >= 6 and all(agrees):
-            score += 6
-    stable_cau = {'ĐẢO': 5, 'THUẬN': 4, 'NGHỊCH': 3, '1-1': 3, 'KHÁC': 0}
-    score += stable_cau.get(cau_type, 0)
-    return max(0, min(100, round(score, 1)))
-
-
-def _recommendation_from_stability(stability, conf):
-    if stability >= 82 and conf >= 78: return "ULTIMATE"
-    if stability >= 75 and conf >= 72: return "VIP"
-    if stability >= 65 and conf >= 65: return "STRONG"
-    if stability >= 50 and conf >= 58: return "NORMAL"
-    if stability >= 40: return "CAUTION"
-    return "SKIP"
-
-
-# =====================================================================
-# PREDICT CHÍNH — ENSEMBLE 16 TẦNG
-# =====================================================================
-def predict_5p_pattern(results, valid_ref=None, idx_ref=None):
-    """Core prediction — Ensemble 16 tầng."""
+def predict_5p(results):
     n = len(results)
     if n < 5:
-        if n == 0: return "Tài", 50, "KHÁC", _empty_detail(50)
-        if n == 1: return _opp(results[0]), 52, "KHÁC", _empty_detail(52)
+        # Fallback cơ bản
+        if n == 0: return "Tài", 50, "KHÁC", {}
+        if n == 1: return _opp(results[0]), 52, "KHÁC", {}
         if n == 2:
-            if results[0] == results[1]: return _opp(results[0]), 54, "KHÁC", _empty_detail(54)
-            return results[1], 52, "KHÁC", _empty_detail(52)
+            if results[0] == results[1]: return _opp(results[0]), 54, "KHÁC", {}
+            return results[1], 52, "KHÁC", {}
         if n == 3:
             if results[0] == results[1] == results[2]:
-                return _opp(results[0]), 55, "KHÁC", _empty_detail(55)
-            return results[0], 52, "KHÁC", _empty_detail(52)
+                return _opp(results[0]), 55, "KHÁC", {}
+            return results[0], 52, "KHÁC", {}
         if n == 4:
             g = get_groups(results)
-            if len(g) == 1: return _opp(results[0]), 56, "KHÁC", _empty_detail(56)
-            if len(g) == 4: return _opp(results[0]), 55, "KHÁC", _empty_detail(55)
-            return results[0], 52, "KHÁC", _empty_detail(52)
+            if len(g) == 1: return _opp(results[0]), 56, "KHÁC", {}
+            if len(g) == 4: return _opp(results[0]), 55, "KHÁC", {}
+            return results[0], 52, "KHÁC", {}
 
     last5 = results[:5]
-    pattern = classify_5p_pattern(last5)
-    cau_type = pattern['type']
-    groups = pattern['groups']
+    cau = classify_5p(last5)
+    cau_type = cau['type']
+    groups = cau['groups']
+    tx5 = encode_tx(last5, 5)
 
-    key_tuple = tuple(last5)
-    p_tai_pat, total_pat, z_pat = lookup_pattern_stats(results, 5, key_tuple)
+    # ==== CHIA KẾT QUẢ CŨ — 3 NGUỒN ====
+    pat_counts = PATTERN_DB.get(tx5, {"Tài": 0, "Xỉu": 0})
+    h_key = hash_pattern(tx5, depth=3)
+    hash_counts = HASH_DB.get(h_key, {"Tài": 0, "Xỉu": 0})
+    cau_counts = CAU_DB.get(cau_type, {"Tài": 0, "Xỉu": 0})
+    key_dir = f"{cau_type}|{last5[0]}"
+    cau_dir_counts = CAU_DIR_DB.get(key_dir, {"Tài": 0, "Xỉu": 0})
 
-    # ===== Chạy 16 tầng =====
-    hash5_result = lookup_hash_deep_5p(results)
-    hash7_result = lookup_hash_deep_7p(results)
-    bit_result = lookup_md5_bit(results)
-    ngram_result = lookup_md5_ngram(results)
-    hamming_result = lookup_md5_hamming(results, results[1:]) if n >= 6 else None
-    markov_result = lookup_markov(results)
-    bacnho_result = lookup_bac_nho(results)
-    cau_result = lookup_cau_special(results)
-    streak_result = lookup_streak(results)
-    sig_result = lookup_signature(results)
-    bayes_result = lookup_bayes(results)
-    fourier_result = lookup_fourier()
-    nn_result = lookup_neural(valid_ref, idx_ref) if valid_ref else lookup_neural(results)
-    momentum_result = lookup_momentum()
+    pat_total = pat_counts["Tài"] + pat_counts["Xỉu"]
+    hash_total = hash_counts["Tài"] + hash_counts["Xỉu"]
+    cau_total = cau_counts["Tài"] + cau_counts["Xỉu"]
+    cau_dir_total = cau_dir_counts["Tài"] + cau_dir_counts["Xỉu"]
 
-    # Ngưỡng z động
-    if total_pat >= 15: z_threshold = 0.7
-    elif total_pat >= 10: z_threshold = 0.85
-    elif total_pat >= 6: z_threshold = 1.0
-    else: z_threshold = 1.3
+    # ==== TÍNH P(TÀI) TỪNG NGUỒN (Laplace smoothing) ====
+    def _p_tai(counts, total):
+        if total == 0: return 0.5, 0
+        return (counts["Tài"] + 1) / (total + 2), total
 
-    pred = None; conf = 50; reason = ""; extra = {}
+    p_pat, t_pat = _p_tai(pat_counts, pat_total)
+    p_hash, t_hash = _p_tai(hash_counts, hash_total)
+    p_cau, t_cau = _p_tai(cau_counts, cau_total)
+    p_dir, t_dir = _p_tai(cau_dir_counts, cau_dir_total)
 
-    # ===== TẦNG CẦU CHÍNH =====
-    if cau_type == 'ĐẢO':
-        theory_pred = _opp(last5[0])
-        if total_pat >= 5 and abs(z_pat) >= z_threshold:
-            data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
-            if data_pred == theory_pred:
-                pred = data_pred; conf = 62 + min(18, abs(z_pat) * 10)
-                reason = f"dao_data_{total_pat}"
-            else:
-                pred = data_pred; conf = 56 + min(10, abs(z_pat) * 6)
-                reason = f"dao_data_conflict_{total_pat}"
-        else:
-            pred = theory_pred; conf = 60; reason = "dao_theory"
-        extra = {'theory_pred': theory_pred}
+    # ==== GOM TRỌNG SỐ THEO SỐ MẪU ====
+    # Nguồn nào có nhiều mẫu hơn → tin hơn
+    sources = []
+    if t_pat >= 3: sources.append((p_pat, t_pat, 'pattern'))
+    if t_hash >= 3: sources.append((p_hash, t_hash, 'hash'))
+    if t_cau >= 5: sources.append((p_cau, t_cau, 'cau'))
+    if t_dir >= 3: sources.append((p_dir, t_dir, 'cau_dir'))
 
-    elif cau_type == 'THUẬN':
-        current = last5[0]
-        if len(groups) == 1:
-            cont, brk = _count_streak_break_stats(results, current, 5)
-            total_streak = cont + brk
-            if total_streak >= 5:
-                p_cont = (cont + 1) / (total_streak + 2)
-                z_cont = (p_cont - 0.5) / math.sqrt(0.25 / (total_streak + 2))
-                if abs(z_cont) >= z_threshold:
-                    if p_cont >= 0.55:
-                        pred = current; conf = 60 + min(18, abs(z_cont) * 8)
-                        reason = f"thuan_cont_{total_streak}"
-                    else:
-                        pred = _opp(current); conf = 58 + min(15, abs(z_cont) * 7)
-                        reason = f"thuan_break_{total_streak}"
-                else:
-                    pred = current; conf = 57; reason = "thuan_theory"
-            else:
-                pred = current; conf = 57; reason = "thuan_theory"
-            extra = {'cont': cont, 'brk': brk, 'total_streak': total_streak}
-        else:
-            pred = last5[0]; conf = 57; reason = "thuan_4_1"
+    if not sources:
+        # Không đủ mẫu → fallback theo lý thuyết cầu
+        return _fallback_by_cau(cau_type, last5, cau, groups)
 
-    elif cau_type == 'NGHỊCH':
-        theory_pred = _opp(last5[0])
-        if total_pat >= 5 and abs(z_pat) >= z_threshold:
-            data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
-            if data_pred == theory_pred:
-                pred = data_pred; conf = 60 + min(18, abs(z_pat) * 9)
-                reason = f"nghich_data_{total_pat}"
-            else:
-                pred = data_pred; conf = 55 + min(10, abs(z_pat) * 6)
-                reason = f"nghich_data_conflict_{total_pat}"
-        else:
-            pred = theory_pred; conf = 58; reason = "nghich_theory"
-        extra = {'theory_pred': theory_pred}
+    # Weighted average theo sqrt(số mẫu)
+    total_w = 0.0
+    weighted_p_tai = 0.0
+    for p, t, name in sources:
+        w = math.sqrt(t)
+        weighted_p_tai += p * w
+        total_w += w
+    p_tai_final = weighted_p_tai / total_w
 
-    elif cau_type == '1-1':
-        theory_pred = _opp(last5[0])
-        if total_pat >= 5 and abs(z_pat) >= z_threshold:
-            data_pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
-            if data_pred == theory_pred:
-                pred = data_pred; conf = 59 + min(17, abs(z_pat) * 8)
-                reason = f"11_data_{total_pat}"
-            else:
-                pred = data_pred; conf = 55 + min(10, abs(z_pat) * 6)
-                reason = f"11_data_conflict_{total_pat}"
-        else:
-            pred = theory_pred; conf = 57; reason = "11_theory"
-        extra = {'theory_pred': theory_pred}
+    # ==== Z-SCORE cho độ tin cậy ====
+    total_samples = sum(t for _, t, _ in sources)
+    z = (p_tai_final - 0.5) / math.sqrt(0.25 / (total_samples + 2))
 
-    else:
-        if total_pat >= 5 and abs(z_pat) >= z_threshold:
-            pred = "Tài" if p_tai_pat > 0.5 else "Xỉu"
-            conf = 56 + min(15, abs(z_pat) * 8)
-            reason = f"khac_data_{total_pat}"
-        else:
-            if n >= 2 and results[0] == results[1]:
-                pred = _opp(results[0]); conf = 54; reason = "khac_fallback_streak"
-            else:
-                pred = results[0]; conf = 52; reason = "khac_fallback_follow"
+    pred = "Tài" if p_tai_final > 0.5 else "Xỉu"
 
-    # ===== TÍCH HỢP 16 TẦNG VỚI GA WEIGHTS =====
-    layers = {
-        'hash5': hash5_result, 'hash7': hash7_result, 'bit': bit_result,
-        'ngram': ngram_result, 'hamming': hamming_result, 'markov': markov_result,
-        'bacnho': bacnho_result, 'cau': cau_result, 'streak': streak_result,
-        'sig': sig_result, 'bayes': bayes_result, 'fourier': fourier_result,
-        'nn': nn_result, 'momentum': momentum_result,
-    }
-    layer_info = {}
-    agreements = []
-    weighted_bonus = 0.0
-    weighted_penalty = 0.0
+    # ==== CONFIDENCE ====
+    # Base: 50 + strength
+    strength = abs(p_tai_final - 0.5) * 100  # 0-50
+    conf = 50 + strength * 0.8
 
-    for name, res in layers.items():
-        if not res: continue
-        l_pred, l_total, l_z, l_p_tai = res
-        layer_info[name] = {'pred': l_pred, 'total': l_total,
-                            'z': round(l_z, 2), 'p_tai': round(l_p_tai, 3),
-                            'weight': round(GA_WEIGHTS.get(name, 1.0), 2)}
-        if abs(l_z) < 1.0: continue
-        agree = (l_pred == pred)
-        agreements.append(agree)
-        w = GA_WEIGHTS.get(name, 1.0)
-        strength = min(abs(l_z), 2.5)
-        if agree:
-            weighted_bonus += w * strength
-        else:
-            weighted_penalty += w * strength
+    # Bonus theo số mẫu
+    if total_samples >= 50: conf += 15
+    elif total_samples >= 30: conf += 12
+    elif total_samples >= 20: conf += 9
+    elif total_samples >= 10: conf += 6
+    elif total_samples >= 5: conf += 3
 
-    # Áp dụng bonus/penalty
-    conf += min(18.0, weighted_bonus * 1.8)
-    conf -= min(20.0, weighted_penalty * 2.2)
+    # Bonus theo z-score
+    abs_z = abs(z)
+    if abs_z >= 2.5: conf += 12
+    elif abs_z >= 2.0: conf += 9
+    elif abs_z >= 1.5: conf += 6
+    elif abs_z >= 1.0: conf += 3
 
-    agree_count = sum(1 for a in agreements if a)
-    disagree_count = sum(1 for a in agreements if not a)
+    # Bonus khi nhiều nguồn đồng thuận
+    preds = []
+    for p, t, name in sources:
+        preds.append("Tài" if p > 0.5 else "Xỉu")
+    agree = sum(1 for x in preds if x == pred)
+    if agree >= 3: conf += 6
+    elif agree == len(preds) and len(preds) >= 2: conf += 4
 
-    # VETO system
-    if disagree_count >= 6 and agree_count <= 1:
-        conf = min(conf, 52)
-    elif disagree_count >= 5 and agree_count <= 2:
-        conf = min(conf, 56)
-    elif disagree_count >= 4:
-        conf = min(conf, 62)
-    elif disagree_count >= 3:
-        conf = min(conf, 68)
-
-    if agree_count >= 7:
-        conf = min(conf + 8, MAX_CONFIDENCE)
-    elif agree_count >= 5:
-        conf = min(conf + 5, MAX_CONFIDENCE)
-    elif agree_count >= 4:
-        conf = min(conf + 3, MAX_CONFIDENCE)
-
-    # ===== TẦNG 15: ENTROPY FILTER =====
-    chaos_ok, chaos_penalty = chaos_filter(results)
-    conf += chaos_penalty
-    if not chaos_ok:
-        conf = min(conf, 55)
-
-    if total_pat < 8:
-        conf = min(conf, 68)
+    # Phạt khi xung đột
+    if agree < len(preds) / 2 + 0.5:
+        conf -= 8
 
     conf = int(max(50, min(MAX_CONFIDENCE, round(conf))))
 
-    stability = compute_stability_score(total_pat, z_pat, agreements, cau_type)
-    recommendation = _recommendation_from_stability(stability, conf)
-
-    entropy_val = compute_entropy(results)
-
     detail = {
-        'cau_type': cau_type, 'groups': groups,
-        'pattern_total': total_pat, 'pattern_p_tai': round(p_tai_pat, 3),
-        'pattern_z': round(z_pat, 2), 'z_threshold_used': round(z_threshold, 2),
-        'layer_info': layer_info,
-        'agreement': {'agree_count': agree_count, 'disagree_count': disagree_count,
-                      'details': agreements},
-        'reason': reason, 'extra': extra,
-        'stability_score': stability, 'recommendation': recommendation,
-        'entropy': round(entropy_val, 3),
-        'chaos_ok': chaos_ok,
-        'nn_trained': NN_TRAINED,
+        'cau_type': cau_type,
+        'groups': groups,
+        'tx5': tx5,
+        'sources': {
+            'pattern': {'p_tai': round(p_pat, 3), 'total': t_pat},
+            'hash': {'p_tai': round(p_hash, 3), 'total': t_hash},
+            'cau': {'p_tai': round(p_cau, 3), 'total': t_cau},
+            'cau_dir': {'p_tai': round(p_dir, 3), 'total': t_dir},
+        },
+        'p_tai_final': round(p_tai_final, 3),
+        'z': round(z, 2),
+        'total_samples': total_samples,
+        'agree_count': agree,
+        'n_sources': len(sources),
     }
     return pred, conf, cau_type, detail
 
 
-def _count_streak_break_stats(results, current, streak_len, max_scan=80):
-    n = len(results)
-    cont = brk = 0
-    for i in range(min(n - streak_len, max_scan)):
-        if all(results[i+j] == current for j in range(streak_len)):
-            if i + streak_len < n:
-                if results[i+streak_len] == current: cont += 1
-                else: brk += 1
-    return cont, brk
-
-
-def _empty_detail(conf):
-    return {
-        'cau_type': 'KHÁC', 'groups': [], 'pattern_total': 0,
-        'pattern_p_tai': 0.5, 'pattern_z': 0.0, 'z_threshold_used': 1.3,
-        'layer_info': {},
-        'agreement': {'agree_count': 0, 'disagree_count': 0, 'details': []},
-        'reason': 'insufficient_data', 'extra': {},
-        'stability_score': 40.0,
-        'recommendation': _recommendation_from_stability(40.0, conf),
-        'entropy': 1.0, 'chaos_ok': True, 'nn_trained': 0,
-    }
+def _fallback_by_cau(cau_type, last5, cau, groups):
+    """Khi chưa có dữ liệu — dùng lý thuyết cầu"""
+    if cau_type == 'ĐẢO':
+        return _opp(last5[0]), 58, cau_type, {'reason': 'theory_dao'}
+    if cau_type == 'THUẬN':
+        # Bệt 5 → theo lý thuyết thường gãy
+        if len(groups) == 1:
+            return _opp(last5[0]), 55, cau_type, {'reason': 'theory_thuan_5'}
+        # 4-1 → theo hướng mới (phiên đầu)
+        return last5[0], 56, cau_type, {'reason': 'theory_thuan_41'}
+    if cau_type == 'NGHỊCH':
+        return _opp(last5[0]), 56, cau_type, {'reason': 'theory_nghich'}
+    if cau_type == '1-1':
+        return _opp(last5[0]), 55, cau_type, {'reason': 'theory_11'}
+    # KHÁC
+    if len(last5) >= 2 and last5[0] == last5[1]:
+        return _opp(last5[0]), 53, cau_type, {'reason': 'theory_khac_opp'}
+    return last5[0], 52, cau_type, {'reason': 'theory_khac_follow'}
 
 
 # =====================================================================
-# PREDICTION WRAPPER
+# WRAPPER
 # =====================================================================
 def get_prediction_for(valid, i):
     key = valid[i]['phien']
     if key in PREDICTION_CACHE: return PREDICTION_CACHE[key]
+
     hist = [v['result'] for v in valid[:i]][::-1]
     if len(hist) < 5:
         result = ("-", 50, None)
     else:
-        # Gọi với valid ref để NN có context
-        pred, conf, _, _ = predict_5p_pattern(hist, valid_ref=valid[:i], idx_ref=i)
+        pred, conf, _, _ = predict_5p(hist)
         is_correct = (pred == valid[i]['result'])
         result = (pred, conf, is_correct)
-        # Cập nhật GA
-        for layer in GA_WEIGHTS.keys():
-            # Đơn giản: cộng dồn theo kết quả
-            pass
+
     if len(PREDICTION_CACHE) > MAX_PREDICTION_CACHE: PREDICTION_CACHE.clear()
     PREDICTION_CACHE[key] = result
     return result
@@ -1275,12 +533,14 @@ def get_prediction_for(valid, i):
 def get_final_prediction(valid):
     if not valid:
         return {'phien': None, 'prediction': None, 'confidence': 50,
-                'cau_type': None, 'detail': _empty_detail(50)}
+                'cau_type': None, 'detail': {}}
     next_phien = valid[-1]['phien'] + 1
     if next_phien in NEXT_PREDICTION_CACHE:
         return NEXT_PREDICTION_CACHE[next_phien]
+
     results = [v['result'] for v in valid][::-1]
-    pred, conf, cau_type, detail = predict_5p_pattern(results, valid_ref=valid, idx_ref=len(valid))
+    pred, conf, cau_type, detail = predict_5p(results)
+
     result = {'phien': next_phien, 'prediction': pred,
               'confidence': conf, 'cau_type': cau_type, 'detail': detail}
     NEXT_PREDICTION_CACHE[next_phien] = result
@@ -1291,38 +551,12 @@ def get_final_prediction(valid):
 
 
 def reset_all_databases():
-    global LEARNED_PHIEN, NN_TRAINED, FOURIER_HISTORY, EMA_STATE
+    global LEARNED_PHIEN
     with LEARN_LOCK:
-        HASH_DEEP_DB[5].clear()
-        HASH_DEEP_DB[7].clear()
-        for bit in range(128):
-            MD5_BIT_DB[bit]["Tài"] = 0
-            MD5_BIT_DB[bit]["Xỉu"] = 0
-        for ng_size in (2, 3, 4, 5, 6):
-            MD5_NGRAM_DB[ng_size].clear()
-        MD5_HAMMING_DB.clear()
-        for order in (1, 2, 3, 4, 5):
-            MARKOV_DB[order].clear()
-        for pos in (0, 1, 2):
-            BAC_NHO_POS_DB[pos].clear()
-        CAU_SPECIAL_DB.clear()
-        STREAK_DB.clear()
-        SIG_DB.clear()
-        # Reset 6 tầng mới
-        for order in (2, 3, 4, 5, 6):
-            BAYES_DB[order].clear()
-        with FOURIER_LOCK:
-            FOURIER_HISTORY.clear()
-        with GA_LOCK:
-            GA_PERFORMANCE.clear()
-        for k in GA_WEIGHTS:
-            GA_WEIGHTS[k] = 1.0
-        with NN_LOCK:
-            global NN_MODEL
-            NN_MODEL = TinyNN(input_dim=16, hidden_dim=8, seed=42)
-            NN_TRAINED = 0
-        with MOMENTUM_LOCK:
-            EMA_STATE = {'ema3': 0.5, 'ema7': 0.5, 'ema15': 0.5, 'initialized': False}
+        PATTERN_DB.clear()
+        HASH_DB.clear()
+        CAU_DB.clear()
+        CAU_DIR_DB.clear()
         LEARNED_PHIEN = RESET_ID
 
 
@@ -1347,10 +581,6 @@ def history():
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
         learn_incremental(valid)
-
-        # Cập nhật GA mỗi 20 phiên
-        if len(valid) % 20 == 0:
-            update_ga_weights()
 
         final = get_final_prediction(valid)
 
@@ -1408,12 +638,6 @@ def predict():
             'prediction': final['prediction'],
             'confidence': final['confidence'],
             'cau_type': final['cau_type'],
-            'stability_score': detail.get('stability_score', 50),
-            'recommendation': detail.get('recommendation', 'CAUTION'),
-            'agreement': detail.get('agreement', {}),
-            'entropy': detail.get('entropy', 1.0),
-            'nn_trained': detail.get('nn_trained', 0),
-            'ga_weights': {k: round(v, 2) for k, v in GA_WEIGHTS.items()},
             'total_sessions': len(valid),
             'detail': detail,
             'timestamp': datetime.now().isoformat()
@@ -1448,7 +672,6 @@ def lc79md5():
             'ket_qua': f"{last['result'].lower()} {dice_short}",
             'du_doan': final['prediction'],
             'do_tin_cay': f"{final['confidence']}%",
-            'khuynh_huong': final['detail'].get('recommendation', 'NORMAL'),
         })
     except Exception as e:
         traceback.print_exc()
@@ -1457,15 +680,13 @@ def lc79md5():
 
 @app.route('/api/stats')
 def stats_api():
-    """Endpoint mới: xem trạng thái 16 tầng"""
+    """Xem trạng thái 4 DB chia kết quả"""
     try:
         return jsonify({
-            'nn_trained': NN_TRAINED,
-            'fourier_samples': len(FOURIER_HISTORY),
-            'ga_weights': {k: round(v, 3) for k, v in GA_WEIGHTS.items()},
-            'ga_performance': dict(GA_PERFORMANCE),
-            'ema_state': {k: round(v, 4) if isinstance(v, float) else v
-                          for k, v in EMA_STATE.items()},
+            'pattern_db_size': len(PATTERN_DB),
+            'hash_db_size': len(HASH_DB),
+            'cau_db': dict(CAU_DB),
+            'cau_dir_db_size': len(CAU_DIR_DB),
             'learned_phien': LEARNED_PHIEN,
             'reset_id': RESET_ID,
         })
