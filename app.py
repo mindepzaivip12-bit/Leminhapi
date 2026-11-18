@@ -14,24 +14,24 @@ CORS(app)
 API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 
 HISTORY_CACHE = {}
-MAX_CONFIDENCE = 90
+MAX_CONFIDENCE = 88
 RESET_ID = 0
 
 # =====================================================================
-# NÂNG CẤP: TRỌNG SỐ & ADAPTIVE LEARNING
+# TRỌNG SỐ CÂN BẰNG — ưu tiên ổn định dài hạn
 # =====================================================================
 BASE_WEIGHTS = {
-    "md5_deep":        3.5,
-    "5p_dao_thuan":    3.0,
-    "5p_bet":          2.8,
-    "5p_dao_nghich":   2.5,
-    "3p_bet":          2.2,
-    "3p_dao":          1.8,
-    "markov":          1.7,
-    "trend_bounce":    1.6,
-    "3p_gay_bet":      1.5,
-    "3p_dao_moi":      1.5,
-    "trend_continue":  1.4,
+    "md5_deep":        3.0,
+    "5p_dao_thuan":    2.6,
+    "5p_bet":          2.4,
+    "5p_dao_nghich":   2.2,
+    "3p_bet":          2.0,
+    "markov":          1.8,
+    "3p_dao":          1.6,
+    "trend_bounce":    1.4,
+    "3p_gay_bet":      1.3,
+    "3p_dao_moi":      1.3,
+    "trend_continue":  1.2,
 }
 
 ALGO_STATS = defaultdict(lambda: {"win": 0, "lose": 0})
@@ -318,7 +318,7 @@ def learn_md5_db(valid):
     return db
 
 # =====================================================================
-# THUẬT TOÁN PATTERN 3P & 5P
+# ALGO PATTERNS
 # =====================================================================
 def get_status_3p(results):
     if len(results) < 3: return "Chưa đủ"
@@ -380,8 +380,8 @@ def algo_markov(results):
     total = counts["Tài"] + counts["Xỉu"]
     if total < 6: return None
     p_tai = counts["Tài"] / total
-    if p_tai >= 0.65: return ("Tài", 20, "markov")
-    if p_tai <= 0.35: return ("Xỉu", 20, "markov")
+    if p_tai >= 0.62: return ("Tài", 20, "markov")
+    if p_tai <= 0.38: return ("Xỉu", 20, "markov")
     return None
 
 def algo_md5_deep(results, md5_db):
@@ -393,30 +393,32 @@ def algo_md5_deep(results, md5_db):
         total = counts["Tài"] + counts["Xỉu"]
         if total >= 2:
             p_tai = (counts["Tài"] + 1) / (total + 2)
-            if p_tai >= 0.6: return ("Tài", 28, "md5_deep")
-            if p_tai <= 0.4: return ("Xỉu", 28, "md5_deep")
+            if p_tai >= 0.60: return ("Tài", 28, "md5_deep")
+            if p_tai <= 0.40: return ("Xỉu", 28, "md5_deep")
     return None
 
 # =====================================================================
-# WEIGHT + ADAPTIVE LEARNING
+# WEIGHT + ADAPTIVE LEARNING (SMOOTHED)
 # =====================================================================
 def _get_weight(algo_name):
+    """Weight với smoothing — chỉ adaptive khi ≥ 12 mẫu."""
     base = BASE_WEIGHTS.get(algo_name, 1.0)
     stat = ALGO_STATS[algo_name]
     total = stat["win"] + stat["lose"]
-    if total < 8:
+    if total < 12:
         return base
     wr = stat["win"] / total
-    factor = 0.6 + wr * 0.8  # 0.6 → 1.4
+    # smoothing factor — giới hạn 0.7 → 1.3 (bớt biến động)
+    factor = 0.7 + wr * 0.6
+    factor = max(0.7, min(1.3, factor))
     return base * factor
 
 def _update_algo_stats(results):
-    """Backtest 30 phiên gần nhất để cập nhật win/lose."""
     global ALGO_STATS
     ALGO_STATS.clear()
-    if len(results) < 15:
+    if len(results) < 20:
         return
-    limit = min(30, len(results) - 3)
+    limit = min(40, len(results) - 3)
     for i in range(1, limit):
         hist = results[i:]
         actual = results[i - 1]
@@ -433,14 +435,32 @@ def _update_algo_stats(results):
                 pass
 
 # =====================================================================
-# TIE-BREAKER 5 TẦNG — KHÔNG BAO GIỜ RANDOM
+# TIE-BREAKER — ưu tiên ổn định, không gãy
 # =====================================================================
 def _tie_breaker(results, md5_db):
     """
-    Phá hòa theo 5 ưu tiên tuyệt đối — không random.
-    Trả về (pred, conf) với conf phân biệt rõ mạnh/yếu.
+    Phá hòa theo hướng ổn định:
+    1. Streak 2-4 → theo tiếp (cầu ổn định)
+    2. Alternation rõ → đảo
+    3. MD5 deep match mạnh → tin
+    4. Momentum 3 phiên
+    5. Fallback
     """
-    # Ưu tiên 1: MD5 deep với mẫu đủ lớn
+    # Ưu tiên 1: Regime ổn định (streak 2-4)
+    if len(results) >= 5:
+        streak = _count_streak(results)
+        if 2 <= streak <= 4:
+            return results[0], 62
+        if streak >= 5:
+            return results[0], 58
+
+    # Ưu tiên 2: Alternation
+    if len(results) >= 5:
+        alt = sum(1 for i in range(4) if results[i] != results[i+1])
+        if alt >= 3:
+            return _opp(results[0]), 62
+
+    # Ưu tiên 3: MD5 deep mạnh
     if len(results) >= 13:
         tx = encode_tx(results, 13)
         h = hashlib.md5(f"leminh_stable|{tx}".encode()).hexdigest()
@@ -449,51 +469,34 @@ def _tie_breaker(results, md5_db):
             total = c["Tài"] + c["Xỉu"]
             if total >= 3:
                 p_tai = (c["Tài"] + 1) / (total + 2)
-                if p_tai >= 0.62:
-                    return "Tài", 82
-                if p_tai <= 0.38:
-                    return "Xỉu", 82
+                if p_tai >= 0.65: return "Tài", 80
+                if p_tai <= 0.35: return "Xỉu", 80
 
-    # Ưu tiên 2: Regime rõ ràng
-    if len(results) >= 5:
-        regime = _regime(results)
-        if regime == "streak":
-            streak = _count_streak(results)
-            # Streak 2-3: theo tiếp; streak ≥ 5: có thể gãy, nhưng theo tiếp vẫn an toàn hơn
-            if streak >= 6:
-                return results[0], 58  # streak quá dài — conf thấp
-            return results[0], 60
-        if regime == "alternation":
-            return _opp(results[0]), 60
-
-    # Ưu tiên 3: Momentum 3 phiên
+    # Ưu tiên 4: Momentum 3 phiên
     if len(results) >= 3:
         last3 = results[:3]
         t_count = sum(1 for r in last3 if r == "Tài")
-        if t_count == 3:
-            return "Tài", 58
-        if t_count == 0:
-            return "Xỉu", 58
-        if t_count == 2:
-            return "Tài", 54
-        return "Xỉu", 54
+        if t_count == 3: return "Tài", 60
+        if t_count == 0: return "Xỉu", 60
+        if t_count == 2: return "Tài", 56
+        return "Xỉu", 56
 
-    # Fallback cuối cùng — đảo phiên gần nhất
-    return _opp(results[0]), 52
+    return _opp(results[0]), 54
 
 # =====================================================================
-# COMPUTE PREDICTION — WEIGHTED VOTING + 2 VÙNG CONFIDENCE
+# COMPUTE PREDICTION — 3 VÙNG CONFIDENCE CỐ ĐỊNH
 # =====================================================================
 def compute_prediction(results, md5_db):
     """
-    Trả về (pred, conf) với conf chia 2 vùng rõ ràng:
-    - 50-60%: tín hiệu yếu (hòa / tie-breaker)
-    - 80-90%: tín hiệu mạnh (weighted vote áp đảo)
+    Confidence 3 vùng:
+    - 52-58%: tie-breaker yếu
+    - 62-75%: vote vừa
+    - 80-88%: vote áp đảo
     """
     if not results:
         return "Tài", 50
     if len(results) == 1:
-        return _opp(results[0]), 52
+        return _opp(results[0]), 54
 
     _update_algo_stats(results)
 
@@ -510,7 +513,6 @@ def compute_prediction(results, md5_db):
     if not signals:
         return _tie_breaker(results, md5_db)
 
-    # Weighted voting
     score_tai = 0.0
     score_xiu = 0.0
     total_weight = 0.0
@@ -528,8 +530,8 @@ def compute_prediction(results, md5_db):
     diff = abs(score_tai - score_xiu)
     diff_ratio = diff / total_weight
 
-    # Nếu hòa hoặc sát (< 10%) → dùng tie-breaker
-    if diff_ratio < 0.10:
+    # Hòa hoặc sát → tie-breaker (ổn định hơn vote)
+    if diff_ratio < 0.12:
         return _tie_breaker(results, md5_db)
 
     if score_tai > score_xiu:
@@ -541,45 +543,48 @@ def compute_prediction(results, md5_db):
 
     ratio = win_score / total_weight  # 0.5..1.0
 
-    # === 2 VÙNG CONFIDENCE ===
-    # diff_ratio >= 0.30 → tín hiệu rất mạnh → conf 80-90%
-    # diff_ratio 0.10-0.30 → tín hiệu vừa → conf 50-60%
-    if diff_ratio >= 0.40 and ratio >= 0.70:
-        # Rất mạnh
-        conf = int(80 + (diff_ratio - 0.40) * 20 + (ratio - 0.70) * 20)
-        conf = min(MAX_CONFIDENCE, conf)
-    elif diff_ratio >= 0.25 and ratio >= 0.62:
-        # Mạnh
-        conf = int(75 + (diff_ratio - 0.25) * 40)
-        conf = min(85, conf)
-        # Đẩy lên vùng 80 nếu đủ
-        if conf < 78:
-            conf = 78
+    # === 3 VÙNG CONFIDENCE ===
+    if diff_ratio >= 0.35 and ratio >= 0.65:
+        # Rất mạnh: 80-88
+        conf = int(80 + (ratio - 0.65) * 25)
+        conf = min(MAX_CONFIDENCE, max(80, conf))
+    elif diff_ratio >= 0.18 and ratio >= 0.58:
+        # Vừa: 62-75
+        conf = int(62 + (ratio - 0.58) * 60)
+        conf = min(75, max(62, conf))
     else:
-        # Yếu — vùng 50-60%
-        conf = int(50 + diff_ratio * 30)
-        conf = min(60, max(50, conf))
+        # Yếu: 52-58
+        conf = int(52 + diff_ratio * 40)
+        conf = min(58, max(52, conf))
 
     return pred, conf
 
 # =====================================================================
-# RECOVERY THÔNG MINH THEO REGIME
+# RECOVERY — không flip bừa khi đang ổn định
 # =====================================================================
 def apply_recovery(base_pred, conf, loss_streak, results):
+    """
+    Recovery chỉ kích hoạt khi:
+    - loss_streak >= 2
+    - và regime KHÔNG phải alternation (vì alternation tự sửa)
+    """
     if loss_streak < 2:
         return base_pred, conf, False
 
     regime = _regime(results) if results else "balanced"
 
     if loss_streak == 2:
+        # Nếu đang alternation → không flip
         if regime == "alternation":
-            return base_pred, max(55, conf - 3), False
-        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True
+            return base_pred, max(56, conf - 2), False
+        # Flip nhẹ nếu regime streak/balanced
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 76)), True
 
     if loss_streak >= 3:
+        # Đang thua liên tục → flip
         if regime == "alternation":
-            return _opp(base_pred), min(MAX_CONFIDENCE, conf + 10), True
-        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 14), True
+            return _opp(base_pred), min(MAX_CONFIDENCE, conf + 8), True
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 12), True
 
     return base_pred, conf, False
 
@@ -628,14 +633,14 @@ def history():
         if raw_rows:
             for row in raw_rows: HISTORY_CACHE[row['phien']] = row
             for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
-            
+
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
         md5_db = learn_md5_db(valid)
         loss_streak = compute_loss_streak(valid, md5_db)
-        
+
         out = []; correct_count = 0; total_past = 0
         history_for_next = [v['result'] for v in valid][::-1]
 
@@ -643,9 +648,9 @@ def history():
         next_pred, next_conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, history_for_next)
 
         out.append({
-            'phien': valid[-1]['phien'] + 1, 'is_next': True, 
-            'prediction': next_pred, 'result': 'Chờ...', 'dice': "? + ? + ?", 
-            'is_correct': None, 'conf': next_conf, 
+            'phien': valid[-1]['phien'] + 1, 'is_next': True,
+            'prediction': next_pred, 'result': 'Chờ...', 'dice': "? + ? + ?",
+            'is_correct': None, 'conf': next_conf,
             'recovery_flipped': flipped, 'loss_streak': loss_streak
         })
 
@@ -653,13 +658,13 @@ def history():
             hist = [v['result'] for v in valid[:i]][::-1]
             pred, conf = compute_prediction(hist, md5_db) if len(hist) >= 3 else ("-", 50)
             is_correct = (pred == valid[i]['result']) if pred != "-" else None
-            
+
             if is_correct is not None: total_past += 1
             if is_correct: correct_count += 1
-            
+
             out.append({
-                'phien': valid[i]['phien'], 'is_next': False, 'prediction': pred, 
-                'result': valid[i]['result'], 'dice': valid[i]['dice'], 
+                'phien': valid[i]['phien'], 'is_next': False, 'prediction': pred,
+                'result': valid[i]['result'], 'dice': valid[i]['dice'],
                 'is_correct': is_correct, 'conf': conf, 'recovery_flipped': False
             })
 
@@ -675,21 +680,21 @@ def predict():
         if raw_rows:
             for row in raw_rows: HISTORY_CACHE[row['phien']] = row
             for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
-            
+
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'})
 
         results = [v['result'] for v in valid][::-1]
         md5_db = learn_md5_db(valid)
         loss_streak = compute_loss_streak(valid, md5_db)
-        
+
         base_pred, base_conf = compute_prediction(results, md5_db)
         pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
 
         ls_3p = format_tx(results, 3)
         status_3p = get_status_3p(results)
         pred_3p = algo_3p_pattern(results)[0] if algo_3p_pattern(results) else "-"
-        
+
         ls_5p = format_tx(results, 5)
         status_5p = get_status_5p(results)
         pred_5p = algo_5p_pattern(results)[0] if algo_5p_pattern(results) else "-"
@@ -761,7 +766,6 @@ def reset_api():
 
 @app.route('/api/algo-stats')
 def algo_stats_api():
-    """Debug: xem hiệu suất từng algo."""
     stats = {}
     for name, st in ALGO_STATS.items():
         total = st["win"] + st["lose"]
