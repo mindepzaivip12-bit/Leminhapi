@@ -18,6 +18,25 @@ MAX_CONFIDENCE = 90
 RESET_ID = 0
 
 # =====================================================================
+# NÂNG CẤP: TRỌNG SỐ & ADAPTIVE LEARNING
+# =====================================================================
+BASE_WEIGHTS = {
+    "md5_deep":        3.5,
+    "5p_dao_thuan":    3.0,
+    "5p_bet":          2.8,
+    "5p_dao_nghich":   2.5,
+    "3p_bet":          2.2,
+    "3p_dao":          1.8,
+    "markov":          1.7,
+    "trend_bounce":    1.6,
+    "3p_gay_bet":      1.5,
+    "3p_dao_moi":      1.5,
+    "trend_continue":  1.4,
+}
+
+ALGO_STATS = defaultdict(lambda: {"win": 0, "lose": 0})
+
+# =====================================================================
 # HTML TEMPLATE (GIỮ NGUYÊN 100%)
 # =====================================================================
 HTML_TEMPLATE = """
@@ -299,7 +318,7 @@ def learn_md5_db(valid):
     return db
 
 # =====================================================================
-# THUẬT TOÁN PHÂN TÍCH 3P VÀ 5P
+# THUẬT TOÁN PATTERN 3P & 5P
 # =====================================================================
 def get_status_3p(results):
     if len(results) < 3: return "Chưa đủ"
@@ -379,46 +398,189 @@ def algo_md5_deep(results, md5_db):
     return None
 
 # =====================================================================
-# TỔNG HỢP TÍN HIỆU
+# WEIGHT + ADAPTIVE LEARNING
+# =====================================================================
+def _get_weight(algo_name):
+    base = BASE_WEIGHTS.get(algo_name, 1.0)
+    stat = ALGO_STATS[algo_name]
+    total = stat["win"] + stat["lose"]
+    if total < 8:
+        return base
+    wr = stat["win"] / total
+    factor = 0.6 + wr * 0.8  # 0.6 → 1.4
+    return base * factor
+
+def _update_algo_stats(results):
+    """Backtest 30 phiên gần nhất để cập nhật win/lose."""
+    global ALGO_STATS
+    ALGO_STATS.clear()
+    if len(results) < 15:
+        return
+    limit = min(30, len(results) - 3)
+    for i in range(1, limit):
+        hist = results[i:]
+        actual = results[i - 1]
+        for fn in [algo_3p_pattern, algo_5p_pattern, algo_trend_break, algo_markov]:
+            try:
+                s = fn(hist)
+                if s and len(s) >= 3:
+                    algo_name = s[2]
+                    if s[0] == actual:
+                        ALGO_STATS[algo_name]["win"] += 1
+                    else:
+                        ALGO_STATS[algo_name]["lose"] += 1
+            except Exception:
+                pass
+
+# =====================================================================
+# TIE-BREAKER 5 TẦNG — KHÔNG BAO GIỜ RANDOM
+# =====================================================================
+def _tie_breaker(results, md5_db):
+    """
+    Phá hòa theo 5 ưu tiên tuyệt đối — không random.
+    Trả về (pred, conf) với conf phân biệt rõ mạnh/yếu.
+    """
+    # Ưu tiên 1: MD5 deep với mẫu đủ lớn
+    if len(results) >= 13:
+        tx = encode_tx(results, 13)
+        h = hashlib.md5(f"leminh_stable|{tx}".encode()).hexdigest()
+        if h in md5_db:
+            c = md5_db[h]
+            total = c["Tài"] + c["Xỉu"]
+            if total >= 3:
+                p_tai = (c["Tài"] + 1) / (total + 2)
+                if p_tai >= 0.62:
+                    return "Tài", 82
+                if p_tai <= 0.38:
+                    return "Xỉu", 82
+
+    # Ưu tiên 2: Regime rõ ràng
+    if len(results) >= 5:
+        regime = _regime(results)
+        if regime == "streak":
+            streak = _count_streak(results)
+            # Streak 2-3: theo tiếp; streak ≥ 5: có thể gãy, nhưng theo tiếp vẫn an toàn hơn
+            if streak >= 6:
+                return results[0], 58  # streak quá dài — conf thấp
+            return results[0], 60
+        if regime == "alternation":
+            return _opp(results[0]), 60
+
+    # Ưu tiên 3: Momentum 3 phiên
+    if len(results) >= 3:
+        last3 = results[:3]
+        t_count = sum(1 for r in last3 if r == "Tài")
+        if t_count == 3:
+            return "Tài", 58
+        if t_count == 0:
+            return "Xỉu", 58
+        if t_count == 2:
+            return "Tài", 54
+        return "Xỉu", 54
+
+    # Fallback cuối cùng — đảo phiên gần nhất
+    return _opp(results[0]), 52
+
+# =====================================================================
+# COMPUTE PREDICTION — WEIGHTED VOTING + 2 VÙNG CONFIDENCE
 # =====================================================================
 def compute_prediction(results, md5_db):
-    if not results: return "Tài", 50
-    if len(results) == 1: return _opp(results[0]), 52
-    
+    """
+    Trả về (pred, conf) với conf chia 2 vùng rõ ràng:
+    - 50-60%: tín hiệu yếu (hòa / tie-breaker)
+    - 80-90%: tín hiệu mạnh (weighted vote áp đảo)
+    """
+    if not results:
+        return "Tài", 50
+    if len(results) == 1:
+        return _opp(results[0]), 52
+
+    _update_algo_stats(results)
+
     signals = []
     for fn in [algo_3p_pattern, algo_5p_pattern, algo_trend_break, algo_markov]:
         s = fn(results)
-        if s: signals.append(s[:3])
-    
+        if s:
+            signals.append({"pred": s[0], "name": s[2]})
+
     s = algo_md5_deep(results, md5_db)
-    if s: signals.append(s)
+    if s:
+        signals.append({"pred": s[0], "name": s[2]})
 
-    if not signals: return results[0], 52
+    if not signals:
+        return _tie_breaker(results, md5_db)
 
-    st = sum(w for p, w, _ in signals if p == "Tài")
-    sx = sum(w for p, w, _ in signals if p == "Xỉu")
-    total = st + sx
-    if total == 0: return results[0], 50
+    # Weighted voting
+    score_tai = 0.0
+    score_xiu = 0.0
+    total_weight = 0.0
+    for sig in signals:
+        w = _get_weight(sig["name"])
+        total_weight += w
+        if sig["pred"] == "Tài":
+            score_tai += w
+        else:
+            score_xiu += w
 
-    if st > sx: pred = "Tài"
-    elif sx > st: pred = "Xỉu"
-    else: return _opp(results[0]), 50
+    if total_weight == 0:
+        return _tie_breaker(results, md5_db)
 
-    ratio = max(st, sx) / total
-    conf = 50 + (ratio - 0.5) * 100
-    conf = int(max(50, min(MAX_CONFIDENCE, conf)))
+    diff = abs(score_tai - score_xiu)
+    diff_ratio = diff / total_weight
+
+    # Nếu hòa hoặc sát (< 10%) → dùng tie-breaker
+    if diff_ratio < 0.10:
+        return _tie_breaker(results, md5_db)
+
+    if score_tai > score_xiu:
+        pred = "Tài"
+        win_score = score_tai
+    else:
+        pred = "Xỉu"
+        win_score = score_xiu
+
+    ratio = win_score / total_weight  # 0.5..1.0
+
+    # === 2 VÙNG CONFIDENCE ===
+    # diff_ratio >= 0.30 → tín hiệu rất mạnh → conf 80-90%
+    # diff_ratio 0.10-0.30 → tín hiệu vừa → conf 50-60%
+    if diff_ratio >= 0.40 and ratio >= 0.70:
+        # Rất mạnh
+        conf = int(80 + (diff_ratio - 0.40) * 20 + (ratio - 0.70) * 20)
+        conf = min(MAX_CONFIDENCE, conf)
+    elif diff_ratio >= 0.25 and ratio >= 0.62:
+        # Mạnh
+        conf = int(75 + (diff_ratio - 0.25) * 40)
+        conf = min(85, conf)
+        # Đẩy lên vùng 80 nếu đủ
+        if conf < 78:
+            conf = 78
+    else:
+        # Yếu — vùng 50-60%
+        conf = int(50 + diff_ratio * 30)
+        conf = min(60, max(50, conf))
+
     return pred, conf
 
+# =====================================================================
+# RECOVERY THÔNG MINH THEO REGIME
+# =====================================================================
 def apply_recovery(base_pred, conf, loss_streak, results):
-    if loss_streak < 2: return base_pred, conf, False
+    if loss_streak < 2:
+        return base_pred, conf, False
+
     regime = _regime(results) if results else "balanced"
-    
+
     if loss_streak == 2:
-        if regime == "alternation": return base_pred, max(55, conf - 5), False
-        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True
-        
+        if regime == "alternation":
+            return base_pred, max(55, conf - 3), False
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True
+
     if loss_streak >= 3:
-        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 12), True
+        if regime == "alternation":
+            return _opp(base_pred), min(MAX_CONFIDENCE, conf + 10), True
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 14), True
+
     return base_pred, conf, False
 
 def compute_loss_streak(valid, md5_db):
@@ -543,19 +705,8 @@ def predict():
     except Exception as e:
         return jsonify({'error': str(e)})
 
-# =====================================================================
-# CHỈ CÒN /lc79md5 — FORMAT GỌN
-# =====================================================================
 @app.route('/lc79md5')
 def lc79md5_api():
-    """
-    API gọn:
-    - id: @cskhleminh
-    - phien: phiên kế tiếp
-    - ket_qua: kết quả phiên vừa rồi (tài/xỉu + dice)
-    - du_doan: dự đoán phiên tới
-    - do_tin_cay: % tin cậy
-    """
     global RESET_ID
     try:
         raw_rows, _ = fetch_sessions()
@@ -566,11 +717,8 @@ def lc79md5_api():
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
             return jsonify({
-                'id': '@cskhleminh',
-                'phien': '-',
-                'ket_qua': '-',
-                'du_doan': '-',
-                'do_tin_cay': '50%'
+                'id': '@cskhleminh', 'phien': '-', 'ket_qua': '-',
+                'du_doan': '-', 'do_tin_cay': '50%'
             })
 
         results = [v['result'] for v in valid][::-1]
@@ -592,12 +740,8 @@ def lc79md5_api():
         })
     except Exception as e:
         return jsonify({
-            'id': '@cskhleminh',
-            'phien': '-',
-            'ket_qua': '-',
-            'du_doan': '-',
-            'do_tin_cay': '50%',
-            'error': str(e)
+            'id': '@cskhleminh', 'phien': '-', 'ket_qua': '-',
+            'du_doan': '-', 'do_tin_cay': '50%', 'error': str(e)
         })
 
 @app.route('/api/reset', methods=['POST'])
@@ -615,9 +759,24 @@ def reset_api():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
+@app.route('/api/algo-stats')
+def algo_stats_api():
+    """Debug: xem hiệu suất từng algo."""
+    stats = {}
+    for name, st in ALGO_STATS.items():
+        total = st["win"] + st["lose"]
+        wr = (st["win"] / total * 100) if total > 0 else 0
+        stats[name] = {
+            "win": st["win"], "lose": st["lose"],
+            "win_rate": round(wr, 1),
+            "weight_now": round(_get_weight(name), 2),
+            "base_weight": BASE_WEIGHTS.get(name, 1.0),
+        }
+    return jsonify(stats)
+
 
 # =====================================================================
-# ================== MODULE M5 CANDLE ANALYSIS ========================
+# MODULE M5 CANDLE ANALYSIS
 # =====================================================================
 M5_CACHE = {}
 M5_CACHE_TTL = 30
@@ -942,10 +1101,8 @@ def m5_classify_state(candles, trend):
         xuhuong_score += 1; reasons.append("macd_aligned")
 
     scores = {
-        "DAO": dao_score,
-        "THUAN": thuan_score,
-        "NGHICH": nghich_score,
-        "XUHUONG": xuhuong_score,
+        "DAO": dao_score, "THUAN": thuan_score,
+        "NGHICH": nghich_score, "XUHUONG": xuhuong_score,
     }
     best_state = max(scores, key=scores.get)
     best_score = scores[best_state]
@@ -1000,17 +1157,11 @@ def m5_analyze(symbol="BTCUSDT", timeframe="5m", limit=200):
             seen.add(r); reasons_dedup.append(r)
 
     result = {
-        "symbol": symbol.upper(),
-        "timeframe": timeframe,
-        "timestamp": int(last["t"]),
-        "price": round(last["c"], 6),
-        "trend": trend,
-        "state": state,
-        "signal": signal,
-        "confidence": conf,
-        "reasons": reasons_dedup,
-        "exchange": exchange,
-        "candle_count": len(candles),
+        "symbol": symbol.upper(), "timeframe": timeframe,
+        "timestamp": int(last["t"]), "price": round(last["c"], 6),
+        "trend": trend, "state": state, "signal": signal,
+        "confidence": conf, "reasons": reasons_dedup,
+        "exchange": exchange, "candle_count": len(candles),
         "generated_at": datetime.now().isoformat(),
     }
     M5_CACHE[key] = (now, result)
@@ -1025,14 +1176,9 @@ def m5_api(symbol, timeframe="5m"):
         return jsonify(result)
     except Exception as e:
         return jsonify({
-            "symbol": symbol.upper(),
-            "timeframe": timeframe,
-            "error": str(e),
-            "trend": "SIDEWAY",
-            "state": "XUHUONG",
-            "signal": "WAIT",
-            "confidence": 0,
-            "reasons": [f"error: {e}"],
+            "symbol": symbol.upper(), "timeframe": timeframe,
+            "error": str(e), "trend": "SIDEWAY", "state": "XUHUONG",
+            "signal": "WAIT", "confidence": 0, "reasons": [f"error: {e}"],
         })
 
 
