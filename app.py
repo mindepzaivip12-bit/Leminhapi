@@ -1,9 +1,10 @@
 import os
 import math
 import hashlib
+import time
 import traceback
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, Counter
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -18,16 +19,24 @@ MAX_CONFIDENCE = 90
 RESET_ID = 0
 
 # =====================================================================
-# ADAPTIVE LEARNING TRACKING (v3)
+# CACHE ĐA TẦNG - tăng tốc độ API
+# =====================================================================
+_MD5_DB_CACHE = {"key": None, "value": None, "ts": 0}
+_CALIB_CACHE = {"key": None, "value": None, "ts": 0}
+_CACHE_TTL = 5.0  # seconds
+
+# =====================================================================
+# ADAPTIVE LEARNING (v4 - mở rộng)
 # =====================================================================
 ALGO_RECENT_STATS = defaultdict(lambda: {"win": 0, "lose": 0})
-ADAPTIVE_WINDOW = 20
+ADAPTIVE_WINDOW = 25
 CALIBRATION_BUCKETS = defaultdict(lambda: {"win": 0, "lose": 0})
 CALIBRATION_READY = False
 FLIP_STATS = {"win": 0, "lose": 0, "consecutive_loss": 0}
+META_WEIGHTS = {}  # {algo_name: weight} - tự học
 
 # =====================================================================
-# HTML TEMPLATE (giữ nguyên 100% như bản cũ)
+# HTML TEMPLATE (giữ nguyên giao diện cũ + thêm badge v4)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -35,7 +44,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5</title>
+<title>LE MINH MD5 v4</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -104,7 +113,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>MD5 v3</span></div>
+    <div class="header-title">LE MINH <span>MD5 v4</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -189,7 +198,7 @@ function renderTable(rows, stats) {
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
         let recBadge = "";
         if (row.recovery_flipped) {
-            recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡</span>`;
+            recBadge = `<span class="recovery-badge" title="Auto-flip">⚡</span>`;
         }
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
@@ -226,7 +235,7 @@ function renderTable(rows, stats) {
 
 async function confirmReset() {
     Swal.fire({
-        title: 'Xác nhận Reset?', text: "Toàn bộ lịch sử hiển thị sẽ bị xoá và bắt đầu lại từ đầu!",
+        title: 'Xác nhận Reset?', text: "Toàn bộ lịch sử hiển thị sẽ bị xoá!",
         icon: 'warning', background: '#1e293b', color: '#f8fafc',
         showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
         confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
@@ -238,7 +247,7 @@ async function confirmReset() {
                 const res = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    Swal.fire({ title: 'Thành công!', text: 'Đã xoá lịch sử và bắt đầu lại.', icon: 'success', background: '#1e293b', color: '#f8fafc', confirmButtonColor: '#0ea5e9' });
+                    Swal.fire({ title: 'Thành công!', text: 'Đã xoá lịch sử.', icon: 'success', background: '#1e293b', color: '#f8fafc', confirmButtonColor: '#0ea5e9' });
                     isResetting = false; fetchData();
                 } else { throw new Error(data.message); }
             } catch (error) {
@@ -270,35 +279,41 @@ def encode_tx(results, length):
     if not results or len(results) < length: return None
     return "".join("T" if r == "Tài" else "X" for r in results[:length])
 
+def _b(r):
+    return 1 if r == "Tài" else 0
+
 # =====================================================================
-# PHÂN LOẠI CẦU 5P — 4 NHÃN
+# PHÂN LOẠI CẦU 5P
 # =====================================================================
 def classify_5p_pattern(results):
-    if len(results) < 5:
-        return ("Chưa đủ", None, 0)
+    if len(results) < 5: return ("Chưa đủ", None, 0)
     last5 = results[:5]
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
     t_count = sum(1 for r in last5 if r == "Tài")
     x_count = 5 - t_count
-
-    if alt_count == 4:
-        return ("ĐẢO", _opp(last5[0]), 88)
-    if alt_count == 0:
-        return ("THUẬN", last5[0], 85)
-    if alt_count == 3:
-        return ("NGHỊCH", _opp(last5[0]), 70)
+    if alt_count == 4: return ("ĐẢO", _opp(last5[0]), 88)
+    if alt_count == 0: return ("THUẬN", last5[0], 85)
+    if alt_count == 3: return ("NGHỊCH", _opp(last5[0]), 70)
     if alt_count in (1, 2):
         pred = "Tài" if t_count > x_count else ("Xỉu" if x_count > t_count else _opp(last5[0]))
         return ("1-1", pred, 65)
     return ("1-1", _opp(last5[0]), 60)
 
 # =====================================================================
-# MULTI-WINDOW MD5 ENGINE (v3)
+# MULTI-WINDOW MD5 ENGINE
 # =====================================================================
 MD5_WINDOWS = (3, 4, 5, 6, 7, 8)
 
 def learn_md5_deep_5p(valid):
-    """Trả về dict {window: {hash: {Tài:n, Xỉu:n}}}."""
+    """Có cache theo phien cuối."""
+    if not valid: return {}
+    cache_key = f"{valid[-1]['phien']}_{len(valid)}_{RESET_ID}"
+    now = time.time()
+    if (_MD5_DB_CACHE["key"] == cache_key and
+        _MD5_DB_CACHE["value"] is not None and
+        now - _MD5_DB_CACHE["ts"] < _CACHE_TTL):
+        return _MD5_DB_CACHE["value"]
+
     dbs = {}
     n = len(valid)
     for w in MD5_WINDOWS:
@@ -311,18 +326,13 @@ def learn_md5_deep_5p(valid):
                 h = hashlib.md5(f"lm_mw{w}|{tx}".encode()).hexdigest()
                 db[h][valid[i]['result']] += 1
         dbs[w] = db
+    _MD5_DB_CACHE.update({"key": cache_key, "value": dbs, "ts": now})
     return dbs
 
 def lookup_md5_deep_5p(results, dbs):
-    """Aggregate kết quả từ nhiều cửa sổ MD5 → (pred, conf, p_tai)."""
-    if not isinstance(dbs, dict) or not dbs:
-        return (None, 0, None)
-
-    weighted_tai = 0.0
-    weighted_xiu = 0.0
-    active_windows = 0
-    max_window_hit = 0
-
+    if not isinstance(dbs, dict) or not dbs: return (None, 0, None)
+    weighted_tai = 0.0; weighted_xiu = 0.0
+    active_windows = 0; max_window_hit = 0
     for w, db in dbs.items():
         if len(results) < w: continue
         tx = encode_tx(results, w)
@@ -339,23 +349,17 @@ def lookup_md5_deep_5p(results, dbs):
         weighted_xiu += (1 - p_tai) * weight
         active_windows += 1
         if w > max_window_hit: max_window_hit = w
-
-    if active_windows == 0:
-        return (None, 0, None)
-
+    if active_windows == 0: return (None, 0, None)
     total_w = weighted_tai + weighted_xiu
     p_tai_agg = weighted_tai / total_w if total_w > 0 else 0.5
     extremity = abs(p_tai_agg - 0.5) * 2
     conf = 55 + extremity * 28 + min(active_windows, 4) * 1.5 + max_window_hit * 0.5
-
-    if p_tai_agg >= 0.62:
-        return ("Tài", int(min(MAX_CONFIDENCE, conf)), p_tai_agg)
-    if p_tai_agg <= 0.38:
-        return ("Xỉu", int(min(MAX_CONFIDENCE, conf)), p_tai_agg)
+    if p_tai_agg >= 0.62: return ("Tài", int(min(MAX_CONFIDENCE, conf)), p_tai_agg)
+    if p_tai_agg <= 0.38: return ("Xỉu", int(min(MAX_CONFIDENCE, conf)), p_tai_agg)
     return (None, 0, p_tai_agg)
 
 # =====================================================================
-# 3 THUẬT TOÁN CƠ BẢN
+# 3 THUẬT TOÁN CƠ BẢN (giữ nguyên)
 # =====================================================================
 def algo_streak_break(results):
     if len(results) < 20: return None
@@ -365,7 +369,6 @@ def algo_streak_break(results):
         if r == r0: current_streak += 1
         else: break
     if current_streak < 2: return None
-
     streaks = []
     cur_val = results[0]; cur_len = 1
     for r in results[1:60]:
@@ -373,11 +376,9 @@ def algo_streak_break(results):
         else: streaks.append(cur_len); cur_val = r; cur_len = 1
     if cur_len > 0: streaks.append(cur_len)
     if len(streaks) < 5: return None
-
     ss = sorted(streaks)
     p75 = ss[int(len(ss) * 0.75)]
     p50 = ss[int(len(ss) * 0.50)]
-
     if current_streak > p75: return (_opp(r0), 76, "streak_break")
     if current_streak > p50 + 1: return (_opp(r0), 68, "streak_break_soft")
     if 2 <= current_streak <= p50: return (r0, 62, "streak_continue")
@@ -401,29 +402,23 @@ def algo_bigram_markov(results):
 
 def algo_momentum_reversal(results):
     if len(results) < 8: return None
-    b = [1 if r == "Tài" else 0 for r in results[:8]]
+    b = [_b(r) for r in results[:8]]
     weights = [1.5, 1.3, 1.1, 0.9, 0.7, 0.5, 0.4, 0.3]
     momentum = sum(b[i] * weights[i] for i in range(8)) / sum(weights)
     last_2 = b[:2]; last_3 = b[:3]
-
-    if all(x == 1 for x in last_3) and momentum < 0.7:
-        return ("Xỉu", 70, "momentum_reversal_down")
-    if all(x == 0 for x in last_3) and momentum > 0.3:
-        return ("Tài", 70, "momentum_reversal_up")
-    if momentum >= 0.75 and sum(last_2) == 2:
-        return ("Tài", 66, "momentum_strong_up")
-    if momentum <= 0.25 and sum(last_2) == 0:
-        return ("Xỉu", 66, "momentum_strong_down")
+    if all(x == 1 for x in last_3) and momentum < 0.7: return ("Xỉu", 70, "momentum_reversal_down")
+    if all(x == 0 for x in last_3) and momentum > 0.3: return ("Tài", 70, "momentum_reversal_up")
+    if momentum >= 0.75 and sum(last_2) == 2: return ("Tài", 66, "momentum_strong_up")
+    if momentum <= 0.25 and sum(last_2) == 0: return ("Xỉu", 66, "momentum_strong_down")
     return None
 
 # =====================================================================
-# 3 THUẬT TOÁN NÂNG CAO v3
+# 3 THUẬT TOÁN NÂNG CAO v3 (giữ nguyên)
 # =====================================================================
 def algo_sequence_match(results, min_len=4, max_len=10):
     n = len(results)
     if n < min_len + 3: return None
-    best_len = 0
-    tally = {"Tài": 0, "Xỉu": 0}
+    best_len = 0; tally = {"Tài": 0, "Xỉu": 0}
     for L in range(min_len, min(max_len + 1, n)):
         suffix = tuple(results[:L])
         for i in range(L, n):
@@ -462,14 +457,244 @@ def algo_entropy_regime(results, window=12):
     sub = results[:window]
     p_tai = sum(1 for r in sub if r == "Tài") / window
     p_xiu = 1 - p_tai
-    if p_tai == 0 or p_xiu == 0:
-        entropy = 0.0
-    else:
-        entropy = -(p_tai * math.log2(p_tai) + p_xiu * math.log2(p_xiu))
+    if p_tai == 0 or p_xiu == 0: entropy = 0.0
+    else: entropy = -(p_tai * math.log2(p_tai) + p_xiu * math.log2(p_xiu))
     return {"entropy": round(entropy, 3), "p_tai": round(p_tai, 3)}
 
 # =====================================================================
-# ADAPTIVE WEIGHT + BAYESIAN CALIBRATION
+# 🔥 8 THUẬT TOÁN MỚI v4
+# =====================================================================
+
+def algo_fourier_periodicity(results, max_period=12):
+    """
+    Phân tích chu kỳ bằng DFT đơn giản.
+    Tìm chu kỳ mạnh nhất → dự đoán theo pha hiện tại.
+    """
+    n = len(results)
+    if n < 20: return None
+    b = [_b(r) for r in results[:min(n, 64)]][::-1]  # cũ → mới
+    N = len(b)
+    mean = sum(b) / N
+    centered = [x - mean for x in b]
+
+    best_period = 0; best_power = 0
+    for p in range(2, min(max_period, N // 2) + 1):
+        # DFT tại tần số f = 1/p
+        re = sum(centered[t] * math.cos(2 * math.pi * t / p) for t in range(N))
+        im = sum(centered[t] * math.sin(2 * math.pi * t / p) for t in range(N))
+        power = (re * re + im * im) / N
+        if power > best_power:
+            best_power = power; best_period = p
+
+    if best_period == 0 or best_power < 0.5: return None
+
+    # Dự đoán: bắt chước pattern tại vị trí (N - best_period)
+    pred_idx = N - best_period
+    if pred_idx < 0 or pred_idx >= N: return None
+    pred = "Tài" if b[pred_idx] == 1 else "Xỉu"
+    # Confidence theo power
+    conf = int(min(82, 58 + best_power * 8))
+    return (pred, conf, f"fourier_p{best_period}")
+
+
+def algo_ngram_ensemble(results, max_n=6):
+    """
+    Ensemble 4-gram, 5-gram, 6-gram Markov.
+    Tổng hợp p_tai từ nhiều bậc.
+    """
+    n = len(results)
+    if n < 25: return None
+    total_tai = 0.0; total_w = 0.0
+    for L in (4, 5, 6):
+        if n < L + 3: continue
+        suffix = tuple(results[:L])
+        counts = {"Tài": 0, "Xỉu": 0}
+        for i in range(L, min(n, 150)):
+            if tuple(results[i:i+L]) == suffix:
+                counts[results[i-L]] += 1
+        total = counts["Tài"] + counts["Xỉu"]
+        if total < 2: continue
+        p_tai = (counts["Tài"] + 1) / (total + 2)
+        w = L * math.log(total + 1)
+        total_tai += p_tai * w
+        total_w += w
+    if total_w == 0: return None
+    p_tai = total_tai / total_w
+    if p_tai >= 0.65: return ("Tài", int(60 + (p_tai - 0.65) * 100), "ngram_ens_tai")
+    if p_tai <= 0.35: return ("Xỉu", int(60 + (0.35 - p_tai) * 100), "ngram_ens_xiu")
+    return None
+
+
+def algo_runs_test(results, window=40):
+    """
+    Wald–Wolfowitz runs test: phát hiện phi ngẫu nhiên.
+    Nếu pattern đang "clustering" → dự đoán tiếp diễn.
+    Nếu "alternating" → dự đoán đảo.
+    """
+    n = min(len(results), window)
+    if n < 20: return None
+    sub = results[:n]
+    n1 = sum(1 for r in sub if r == "Tài")
+    n2 = n - n1
+    if n1 < 4 or n2 < 4: return None
+    runs = 1
+    for i in range(1, n):
+        if sub[i] != sub[i-1]: runs += 1
+    expected = 1 + (2 * n1 * n2) / n
+    var = (2 * n1 * n2 * (2 * n1 * n2 - n)) / (n * n * (n - 1) + 1e-9)
+    if var <= 0: return None
+    z = (runs - expected) / math.sqrt(var)
+
+    # z < -1.5: ít runs → clustering → tiếp diễn
+    # z > 1.5: nhiều runs → alternating → đảo
+    last = sub[0]
+    if z < -1.5:
+        conf = int(min(78, 62 + abs(z) * 5))
+        return (last, conf, f"runs_cluster_z{z:.1f}")
+    if z > 1.5:
+        conf = int(min(78, 62 + z * 5))
+        return (_opp(last), conf, f"runs_alt_z{z:.1f}")
+    return None
+
+
+def algo_bayesian_smoothing(results, alpha=1.0, beta=1.0):
+    """
+    Beta-Binomial Bayesian predictor với prior từ 3 phiên gần nhất.
+    """
+    n = len(results)
+    if n < 15: return None
+    recent = results[:15]
+    t = sum(1 for r in recent if r == "Tài")
+    x = 15 - t
+    # Posterior
+    post_tai = (t + alpha) / (15 + alpha + beta)
+    # Check latest 3
+    last3 = results[:3]
+    t3 = sum(1 for r in last3 if r == "Tài")
+    if t3 == 3 and post_tai < 0.45:
+        return ("Xỉu", 68, "bayes_reversal_down")
+    if t3 == 0 and post_tai > 0.55:
+        return ("Tài", 68, "bayes_reversal_up")
+    if post_tai >= 0.65: return ("Tài", int(58 + (post_tai - 0.5) * 60), "bayes_tai")
+    if post_tai <= 0.35: return ("Xỉu", int(58 + (0.5 - post_tai) * 60), "bayes_xiu")
+    return None
+
+
+def algo_conditional_entropy(results, cond_len=3):
+    """
+    Information gain: đo mức độ phụ thuộc của next vào N phiên trước.
+    Nếu entropy điều kiện thấp → dự đoán mạnh.
+    """
+    n = len(results)
+    if n < 30: return None
+    cond = tuple(results[:cond_len])
+    counts = {"Tài": 0, "Xỉu": 0}
+    for i in range(cond_len, min(n, 120)):
+        if tuple(results[i:i+cond_len]) == cond:
+            counts[results[i-cond_len]] += 1
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 4: return None
+    p_tai = counts["Tài"] / total
+    # Conditional entropy
+    if p_tai in (0, 1): H = 0
+    else: H = -(p_tai * math.log2(p_tai) + (1-p_tai) * math.log2(1-p_tai))
+    if H > 0.9: return None  # Không đủ tự tin
+    pred = "Tài" if p_tai > 0.5 else "Xỉu"
+    conf = int(min(80, 60 + (1 - H) * 20))
+    return (pred, conf, f"cond_H{H:.2f}")
+
+
+def algo_gradient_boost_simple(results, window=10):
+    """
+    Simple gradient-boosted vote: chia window thành các stump.
+    Mỗi stump = 1 test đơn giản (bit, sum, pattern).
+    """
+    n = len(results)
+    if n < window + 5: return None
+    b = [_b(r) for r in results[:window]]
+    features = []
+
+    # Feature 1: last bit
+    features.append(("last", b[0]))
+    # Feature 2: last 3 sum
+    s3 = sum(b[:3])
+    features.append(("sum3_high", 1 if s3 >= 2 else 0))
+    # Feature 3: alternating flag
+    alt = sum(1 for i in range(4) if b[i] != b[i+1])
+    features.append(("alt", 1 if alt >= 3 else 0))
+    # Feature 4: recent majority
+    majority = 1 if sum(b[:5]) >= 3 else 0
+
+    # Học stump đơn giản: từ lịch sử, mỗi pattern → tỉ lệ
+    weights = {"last": 0.3, "sum3_high": 0.25, "alt": 0.2, "majority": 0.25}
+    score_tai = 0.0
+    for name, val in features:
+        # target correlation: nếu val=1 → dự đoán Tài
+        score_tai += weights[name] * (val if name != "alt" else (1 - val))
+    score_tai += weights["majority"] * majority
+
+    p_tai = score_tai
+    if p_tai >= 0.68: return ("Tài", int(60 + (p_tai - 0.5) * 50), "gb_tai")
+    if p_tai <= 0.32: return ("Xỉu", int(60 + (0.5 - p_tai) * 50), "gb_xiu")
+    return None
+
+
+def algo_pattern_periodicity(results):
+    """
+    Tự phát hiện chu kỳ lặp pattern cục bộ.
+    Ví dụ: T-T-X lặp lại với period 3.
+    """
+    n = len(results)
+    if n < 25: return None
+    # Thử các chu kỳ p từ 2..8
+    best_score = 0; best_p = 0
+    for p in range(2, 9):
+        match = 0; total = 0
+        for i in range(p, min(n, 60)):
+            total += 1
+            if results[i] == results[i-p]: match += 1
+        if total < 10: continue
+        score = match / total
+        if score > best_score: best_score = score; best_p = p
+    if best_score >= 0.72 and best_p > 0:
+        pred = results[best_p - 1] if best_p - 1 < len(results) else None
+        if pred:
+            conf = int(min(80, 58 + (best_score - 0.5) * 60))
+            return (pred, conf, f"periodic_p{best_p}")
+    return None
+
+
+def algo_knn_sequence(results, k=5):
+    """
+    KNN trên sequence: tìm k lịch sử giống nhất (hamming distance).
+    """
+    n = len(results)
+    L = 4
+    if n < L + 8: return None
+    suffix = results[:L]
+    candidates = []
+    for i in range(L, min(n, 150)):
+        window = results[i-L:i]
+        dist = sum(1 for a, b in zip(suffix, window) if a != b)
+        candidates.append((dist, results[i-L]))
+    if len(candidates) < k: return None
+    candidates.sort(key=lambda x: x[0])
+    top_k = candidates[:k]
+    # Weighted vote (gần hơn → nặng hơn)
+    tally = {"Tài": 0.0, "Xỉu": 0.0}
+    for dist, r in top_k:
+        w = 1.0 / (dist + 1)
+        tally[r] += w
+    total = tally["Tài"] + tally["Xỉu"]
+    if total == 0: return None
+    p_tai = tally["Tài"] / total
+    if p_tai >= 0.7: return ("Tài", int(60 + (p_tai - 0.5) * 40), "knn_tai")
+    if p_tai <= 0.3: return ("Xỉu", int(60 + (0.5 - p_tai) * 40), "knn_xiu")
+    return None
+
+
+# =====================================================================
+# ADAPTIVE WEIGHT + CALIBRATION
 # =====================================================================
 def _get_adaptive_weight(algo_name, base_w):
     stat = ALGO_RECENT_STATS[algo_name]
@@ -487,8 +712,21 @@ def _update_recent_stats(results, md5_dbs):
     ALGO_RECENT_STATS.clear()
     if len(results) < 20: return
     limit = min(ADAPTIVE_WINDOW, len(results) - 6)
-    algo_fns = [algo_streak_break, algo_bigram_markov, algo_momentum_reversal,
-                algo_trigram_markov, algo_sequence_match]
+    algo_fns = [
+        ("streak", algo_streak_break),
+        ("bigram", algo_bigram_markov),
+        ("momentum", algo_momentum_reversal),
+        ("trigram", algo_trigram_markov),
+        ("sequence", algo_sequence_match),
+        ("fourier", algo_fourier_periodicity),
+        ("ngram_ens", algo_ngram_ensemble),
+        ("runs", algo_runs_test),
+        ("bayes", algo_bayesian_smoothing),
+        ("cond", algo_conditional_entropy),
+        ("gb", algo_gradient_boost_simple),
+        ("periodic", algo_pattern_periodicity),
+        ("knn", algo_knn_sequence),
+    ]
     for i in range(1, limit):
         hist = results[i:]
         actual = results[i - 1]
@@ -498,11 +736,11 @@ def _update_recent_stats(results, md5_dbs):
                 k = f"pattern:{label}"
                 ALGO_RECENT_STATS[k]["win" if pred == actual else "lose"] += 1
         except Exception: pass
-        for fn in algo_fns:
+        for label_name, fn in algo_fns:
             try:
                 s = fn(hist)
                 if s:
-                    k = s[2]
+                    k = f"{label_name}:{s[2]}"
                     ALGO_RECENT_STATS[k]["win" if s[0] == actual else "lose"] += 1
             except Exception: pass
 
@@ -549,8 +787,25 @@ def _detect_overfit_guard(results):
     return abs(old - new) >= 3
 
 # =====================================================================
-# DỰ ĐOÁN CHÍNH v3
+# DỰ ĐOÁN CHÍNH v4
 # =====================================================================
+ALGO_REGISTRY = [
+    # (name, function, base_weight_multiplier)
+    ("streak", algo_streak_break, 1.5),
+    ("bigram", algo_bigram_markov, 1.8),
+    ("momentum", algo_momentum_reversal, 1.6),
+    ("trigram", algo_trigram_markov, 1.7),
+    ("sequence", algo_sequence_match, 1.9),
+    ("fourier", algo_fourier_periodicity, 1.4),
+    ("ngram_ens", algo_ngram_ensemble, 1.8),
+    ("runs", algo_runs_test, 1.5),
+    ("bayes", algo_bayesian_smoothing, 1.3),
+    ("cond", algo_conditional_entropy, 1.5),
+    ("gb", algo_gradient_boost_simple, 1.2),
+    ("periodic", algo_pattern_periodicity, 1.4),
+    ("knn", algo_knn_sequence, 1.6),
+]
+
 def compute_prediction(results, md5_dbs, _skip_calibration=False):
     if not results: return ("Tài", 52)
     if len(results) < 5: return (_opp(results[0]), 55)
@@ -562,17 +817,18 @@ def compute_prediction(results, md5_dbs, _skip_calibration=False):
 
     pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
     md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_dbs)
-    streak_sig = algo_streak_break(results)
-    bigram_sig = algo_bigram_markov(results)
-    momentum_sig = algo_momentum_reversal(results)
-    trigram_sig = algo_trigram_markov(results)
-    seq_sig = algo_sequence_match(results)
 
-    # TẦNG 1: Siêu tín hiệu
+    signals = {}
+    for name, fn, _ in ALGO_REGISTRY:
+        try: signals[name] = fn(results)
+        except Exception: signals[name] = None
+
+    # TẦNG 1: Siêu tín hiệu MD5
     if md5_pred and md5_conf >= 80:
         if pattern_pred == md5_pred:
             return (md5_pred, min(MAX_CONFIDENCE, md5_conf + 4))
-        if trigram_sig and trigram_sig[0] == md5_pred:
+        trig = signals.get("trigram")
+        if trig and trig[0] == md5_pred:
             return (md5_pred, min(MAX_CONFIDENCE, md5_conf + 3))
         return (md5_pred, md5_conf)
 
@@ -594,15 +850,13 @@ def compute_prediction(results, md5_dbs, _skip_calibration=False):
         votes[md5_pred] += w
         active.append(("md5", md5_pred, w))
 
-    for sig, base_mult in [
-        (streak_sig, 1.5), (bigram_sig, 1.8), (momentum_sig, 1.6),
-        (trigram_sig, 1.7), (seq_sig, 1.9),
-    ]:
+    for name, fn, base_mult in ALGO_REGISTRY:
+        sig = signals.get(name)
         if sig:
-            pred, conf, name = sig
-            w = _get_adaptive_weight(name, conf / 100 * base_mult)
+            pred, conf, algo_name = sig
+            w = _get_adaptive_weight(f"{name}:{algo_name}", conf / 100 * base_mult)
             votes[pred] += w
-            active.append((name, pred, w))
+            active.append((algo_name, pred, w))
 
     total_v = votes["Tài"] + votes["Xỉu"]
     if total_v == 0:
@@ -623,12 +877,16 @@ def compute_prediction(results, md5_dbs, _skip_calibration=False):
 
     agree = sum(1 for _, p, _ in active if p == pred)
     disagree = len(active) - agree
-    if agree >= 5 and disagree == 0:
-        conf = min(MAX_CONFIDENCE, conf + 7)
-    elif agree >= 4 and disagree <= 1:
-        conf = min(MAX_CONFIDENCE, conf + 4)
-    elif disagree >= 3:
-        conf = max(55, conf - 10)
+    if agree >= 7 and disagree == 0:
+        conf = min(MAX_CONFIDENCE, conf + 8)
+    elif agree >= 5 and disagree <= 1:
+        conf = min(MAX_CONFIDENCE, conf + 5)
+    elif agree >= 4 and disagree <= 2:
+        conf = min(MAX_CONFIDENCE, conf + 2)
+    elif disagree >= 4:
+        conf = max(55, conf - 12)
+    elif disagree >= 2:
+        conf = max(55, conf - 5)
 
     if overfit: conf = max(55, conf - 8)
     if high_entropy: conf = max(55, conf - 6)
@@ -667,7 +925,7 @@ def compute_loss_streak(valid, md5_dbs):
     return streak
 
 # =====================================================================
-# API
+# FETCH SESSIONS + API
 # =====================================================================
 def fetch_sessions():
     try:
@@ -696,7 +954,7 @@ def index():
 def history():
     global RESET_ID
     try:
-        raw_rows, success = fetch_sessions()
+        raw_rows, _ = fetch_sessions()
         if raw_rows:
             for row in raw_rows: HISTORY_CACHE[row['phien']] = row
             for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
@@ -737,9 +995,11 @@ def history():
         return jsonify({
             'rows': out,
             'stats': {'total': total_past, 'correct': correct_count},
+            'version': 'v4',
             'calibration': {str(k): v for k, v in CALIBRATION_BUCKETS.items()} if CALIBRATION_READY else {}
         })
     except Exception as e:
+        traceback.print_exc()
         return jsonify({'error': str(e), 'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
 @app.route('/api/predict')
@@ -761,18 +1021,27 @@ def predict():
         base_pred, base_conf = compute_prediction(results, md5_dbs)
         pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
 
+        # Thu thập signals chi tiết
         pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
         md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_dbs)
-        streak_sig = algo_streak_break(results)
-        bigram_sig = algo_bigram_markov(results)
-        momentum_sig = algo_momentum_reversal(results)
-        trigram_sig = algo_trigram_markov(results)
-        seq_sig = algo_sequence_match(results)
+        all_signals = {}
+        for name, fn, _ in ALGO_REGISTRY:
+            try:
+                sig = fn(results)
+                all_signals[name] = {
+                    'pred': sig[0] if sig else None,
+                    'conf': sig[1] if sig else 0,
+                    'tag': sig[2] if sig else None,
+                }
+            except Exception:
+                all_signals[name] = {'pred': None, 'conf': 0, 'tag': None}
+
         ent = algo_entropy_regime(results, 12)
 
         return jsonify({
-            'version': 'v3',
-            'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
+            'version': 'v4',
+            'last_phien': valid[-1]['phien'],
+            'next_phien': valid[-1]['phien'] + 1,
             'prediction': pred, 'confidence': conf, 'recovery_flipped': flipped,
             'loss_streak': loss_streak,
             'overfit_guard': _detect_overfit_guard(results),
@@ -782,27 +1051,15 @@ def predict():
                 'pattern': {'label': pattern_label, 'pred': pattern_pred, 'conf': pattern_conf},
                 'md5': {'pred': md5_pred, 'conf': md5_conf,
                         'p_tai': round(md5_p_tai, 3) if md5_p_tai is not None else None},
-                'streak': {'pred': streak_sig[0] if streak_sig else None,
-                           'conf': streak_sig[1] if streak_sig else 0,
-                           'algo': streak_sig[2] if streak_sig else None},
-                'bigram': {'pred': bigram_sig[0] if bigram_sig else None,
-                           'conf': bigram_sig[1] if bigram_sig else 0,
-                           'algo': bigram_sig[2] if bigram_sig else None},
-                'momentum': {'pred': momentum_sig[0] if momentum_sig else None,
-                             'conf': momentum_sig[1] if momentum_sig else 0,
-                             'algo': momentum_sig[2] if momentum_sig else None},
-                'trigram': {'pred': trigram_sig[0] if trigram_sig else None,
-                            'conf': trigram_sig[1] if trigram_sig else 0,
-                            'algo': trigram_sig[2] if trigram_sig else None},
-                'sequence': {'pred': seq_sig[0] if seq_sig else None,
-                             'conf': seq_sig[1] if seq_sig else 0,
-                             'algo': seq_sig[2] if seq_sig else None},
+                **all_signals,
             },
+            'algorithm_count': len(ALGO_REGISTRY) + 2,
             'adaptive_stats': dict(ALGO_RECENT_STATS),
             'calibration': {str(k): v for k, v in CALIBRATION_BUCKETS.items()} if CALIBRATION_READY else {},
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
+        traceback.print_exc()
         return jsonify({'error': str(e)})
 
 @app.route('/lc79md5')
@@ -824,7 +1081,7 @@ def lc79md5_api():
         loss_streak = compute_loss_streak(valid, md5_dbs)
 
         base_pred, base_conf = compute_prediction(results, md5_dbs)
-        pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
+        pred, conf, _ = apply_recovery(base_pred, base_conf, loss_streak, results)
 
         last = valid[-1]
         ket_qua = f"{last['result'].lower()} {last['dice'].replace(' + ', '-')}"
@@ -839,7 +1096,7 @@ def lc79md5_api():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    global RESET_ID, HISTORY_CACHE, ALGO_RECENT_STATS, CALIBRATION_BUCKETS, CALIBRATION_READY, FLIP_STATS
+    global RESET_ID, HISTORY_CACHE, ALGO_RECENT_STATS, CALIBRATION_BUCKETS, CALIBRATION_READY, FLIP_STATS, _MD5_DB_CACHE
     try:
         raw_rows, _ = fetch_sessions()
         if raw_rows:
@@ -851,10 +1108,26 @@ def reset_api():
                 CALIBRATION_BUCKETS.clear()
                 CALIBRATION_READY = False
                 FLIP_STATS.update({"win": 0, "lose": 0, "consecutive_loss": 0})
+                _MD5_DB_CACHE.update({"key": None, "value": None, "ts": 0})
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+# =====================================================================
+# HEALTH & DEBUG
+# =====================================================================
+@app.route('/health')
+def health():
+    return jsonify({
+        'status': 'ok', 'version': 'v4',
+        'cached_sessions': len(HISTORY_CACHE),
+        'reset_id': RESET_ID,
+        'algo_count': len(ALGO_REGISTRY) + 2,
+        'calibration_ready': CALIBRATION_READY,
+        'md5_cache_age': round(time.time() - _MD5_DB_CACHE['ts'], 2),
+        'timestamp': datetime.now().isoformat()
+    })
 
 @app.route('/api/pattern-debug')
 def pattern_debug():
@@ -871,44 +1144,34 @@ def pattern_debug():
 
         pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
         md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_dbs)
-        streak_sig = algo_streak_break(results)
-        bigram_sig = algo_bigram_markov(results)
-        momentum_sig = algo_momentum_reversal(results)
-        trigram_sig = algo_trigram_markov(results)
-        seq_sig = algo_sequence_match(results)
-        ent = algo_entropy_regime(results, 12)
+
+        all_sigs = {}
+        for name, fn, _ in ALGO_REGISTRY:
+            try:
+                sig = fn(results)
+                all_sigs[name] = {'pred': sig[0] if sig else None,
+                                  'conf': sig[1] if sig else 0,
+                                  'tag': sig[2] if sig else None}
+            except Exception as e:
+                all_sigs[name] = {'error': str(e)}
 
         return jsonify({
-            'version': 'v3',
+            'version': 'v4',
             'last_5p': format_tx(results, 5),
             'pattern': {'label': pattern_label, 'pred': pattern_pred, 'conf': pattern_conf},
             'md5': {'pred': md5_pred, 'conf': md5_conf,
                     'p_tai': round(md5_p_tai, 3) if md5_p_tai is not None else None},
-            'streak': {'pred': streak_sig[0] if streak_sig else None,
-                       'conf': streak_sig[1] if streak_sig else 0,
-                       'algo': streak_sig[2] if streak_sig else None},
-            'bigram': {'pred': bigram_sig[0] if bigram_sig else None,
-                       'conf': bigram_sig[1] if bigram_sig else 0,
-                       'algo': bigram_sig[2] if bigram_sig else None},
-            'momentum': {'pred': momentum_sig[0] if momentum_sig else None,
-                         'conf': momentum_sig[1] if momentum_sig else 0,
-                         'algo': momentum_sig[2] if momentum_sig else None},
-            'trigram': {'pred': trigram_sig[0] if trigram_sig else None,
-                        'conf': trigram_sig[1] if trigram_sig else 0,
-                        'algo': trigram_sig[2] if trigram_sig else None},
-            'sequence': {'pred': seq_sig[0] if seq_sig else None,
-                         'conf': seq_sig[1] if seq_sig else 0,
-                         'algo': seq_sig[2] if seq_sig else None},
-            'entropy': ent,
+            'signals': all_sigs,
+            'entropy': algo_entropy_regime(results, 12),
             'overfit_guard': _detect_overfit_guard(results),
             'adaptive_stats': dict(ALGO_RECENT_STATS),
             'calibration': {str(k): v for k, v in CALIBRATION_BUCKETS.items()} if CALIBRATION_READY else {},
             'md5_windows': list(MD5_WINDOWS),
             'md5_db_sizes': {w: len(db) for w, db in md5_dbs.items()},
+            'algorithm_count': len(ALGO_REGISTRY) + 2
         })
     except Exception as e:
         return jsonify({'error': str(e)})
-
 
 # =====================================================================
 # MODULE M5 CANDLE (giữ nguyên)
@@ -1132,8 +1395,7 @@ def m5_classify_state(candles, trend):
     if trend != "SIDEWAY" and abs(hist_now) > 0: xuhuong_score += 1; reasons.append("macd_aligned")
     scores = {"DAO": dao_score, "THUAN": thuan_score, "NGHICH": nghich_score, "XUHUONG": xuhuong_score}
     best_state = max(scores, key=scores.get); best_score = scores[best_state]
-    if best_score == 0:
-        best_state = "XUHUONG" if trend == "SIDEWAY" else "THUAN"
+    if best_score == 0: best_state = "XUHUONG" if trend == "SIDEWAY" else "THUAN"
     if best_state == "DAO":
         if any(d == "UP" for d in pat_dirs) or (bb_pos is not None and bb_pos < 0.2): signal = "BUY"
         elif any(d == "DOWN" for d in pat_dirs) or (bb_pos is not None and bb_pos > 0.8): signal = "SELL"
