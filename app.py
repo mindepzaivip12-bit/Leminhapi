@@ -266,87 +266,56 @@ def encode_tx(results, length):
 # =====================================================================
 def classify_5p_pattern(results):
     """
-    Phân loại 5 phiên gần nhất thành 4 nhãn:
-    - ĐẢO: 5 phiên đảo hoàn toàn (T-X-T-X-T hoặc X-T-X-T-X)
-    - THUẬN: 5 phiên cùng chiều (bệt)
-    - NGHỊCH: 4/5 đảo (có 1 cặp trùng, đảo chiều không hoàn hảo)
-    - 1-1: 3/5 cùng chiều (đa số nhẹ)
-    
-    Trả về: (label, prediction, confidence)
+    4 nhãn:
+    - ĐẢO: 4 lần đảo (T-X-T-X-T)
+    - THUẬN: 0 lần đảo (bệt)
+    - NGHỊCH: 3 lần đảo (4/5 đảo)
+    - 1-1: 1-2 lần đảo (đa số nhẹ)
     """
     if len(results) < 5:
         return ("Chưa đủ", None, 0)
-    
+
     last5 = results[:5]
-    
-    # Đếm số lần đảo (chuyển màu) giữa các phiên liên tiếp
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
-    
-    # Đếm số Tài trong 5 phiên
     t_count = sum(1 for r in last5 if r == "Tài")
     x_count = 5 - t_count
-    
-    # === ĐẢO: 4 lần đảo (T-X-T-X-T hoặc X-T-X-T-X) ===
+
     if alt_count == 4:
-        # Dự đoán: đảo phiên cuối
-        pred = _opp(last5[0])
-        return ("ĐẢO", pred, 88)
-    
-    # === THUẬN: 0 lần đảo (bệt hoàn toàn) ===
+        return ("ĐẢO", _opp(last5[0]), 88)
+
     if alt_count == 0:
-        # Dự đoán: theo tiếp
-        pred = last5[0]
-        return ("THUẬN", pred, 85)
-    
-    # === NGHỊCH: 3 lần đảo (4/5 đảo — có 1 cặp trùng) ===
+        return ("THUẬN", last5[0], 85)
+
     if alt_count == 3:
-        # Đảo không hoàn hảo → cầu sắp đảo lại
-        # Nếu phiên cuối cùng chiều với phiên đầu → đảo
-        # Nếu phiên cuối khác phiên đầu → có thể theo
-        # Ưu tiên: đảo phiên cuối (vì 4/5 đảo thì xu hướng đảo mạnh)
-        pred = _opp(last5[0])
-        return ("NGHỊCH", pred, 70)
-    
-    # === 1-1: 1-2 lần đảo (đa số nhẹ) ===
+        return ("NGHỊCH", _opp(last5[0]), 70)
+
     if alt_count in (1, 2):
-        # Theo đa số (Tài hay Xỉu nhiều hơn)
         if t_count > x_count:
             pred = "Tài"
         elif x_count > t_count:
             pred = "Xỉu"
         else:
-            # 5 phiên không thể hòa chẵn, nhưng đề phòng
             pred = _opp(last5[0])
         return ("1-1", pred, 65)
-    
-    # Fallback (không xảy ra)
+
     return ("1-1", _opp(last5[0]), 60)
 
 # =====================================================================
-# MD5 DEEP HASH — dựa trên 5 phiên (ngắn gọn, không quá khớp)
+# MD5 DEEP HASH 5P
 # =====================================================================
 def learn_md5_deep_5p(valid):
-    """
-    Học bảng hash từ 5 phiên liên tiếp → kết quả phiên tiếp theo.
-    Dùng MD5 hash của chuỗi 5 ký tự T/X.
-    """
     db = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
     n = len(valid)
     if n < 8:
         return db
-    # Duyệt từ phiên thứ 5 trở đi
     for i in range(5, n):
-        hist = [v['result'] for v in valid[i-5:i]][::-1]  # 5 phiên gần nhất (mới nhất trước)
+        hist = [v['result'] for v in valid[i-5:i]][::-1]
         tx = encode_tx(hist, 5)
         h = hashlib.md5(f"leminh_md5_v2|{tx}".encode()).hexdigest()
         db[h][valid[i]['result']] += 1
     return db
 
 def lookup_md5_deep_5p(results, md5_db):
-    """
-    Tra cứu hash của 5 phiên gần nhất trong md5_db.
-    Trả về (pred, conf, p_tai) hoặc (None, 0, None) nếu không có.
-    """
     if len(results) < 5:
         return (None, 0, None)
     tx = encode_tx(results, 5)
@@ -357,7 +326,6 @@ def lookup_md5_deep_5p(results, md5_db):
     total = counts["Tài"] + counts["Xỉu"]
     if total < 2:
         return (None, 0, None)
-    # Laplace smoothing
     p_tai = (counts["Tài"] + 1) / (total + 2)
     if p_tai >= 0.70:
         return ("Tài", 85, p_tai)
@@ -370,61 +338,252 @@ def lookup_md5_deep_5p(results, md5_db):
     return (None, 0, p_tai)
 
 # =====================================================================
-# DỰ ĐOÁN CHÍNH — KẾT HỢP 5P + MD5 DEEP
+# NÂNG CẤP: 3 THUẬT TOÁN BỔ SUNG
+# =====================================================================
+
+def algo_streak_break(results):
+    """
+    Phát hiện điểm gãy streak dựa trên phân phối lịch sử.
+    - Đếm streak hiện tại
+    - Đếm phân phối độ dài streak trong 60 phiên
+    - Nếu streak hiện tại > percentile 75% → dự đoán gãy
+    """
+    if len(results) < 20:
+        return None
+
+    current_streak = 1
+    r0 = results[0]
+    for r in results[1:]:
+        if r == r0:
+            current_streak += 1
+        else:
+            break
+
+    if current_streak < 2:
+        return None
+
+    # Phân phối streak trong 60 phiên gần
+    streaks = []
+    cur_val = results[0]
+    cur_len = 1
+    for r in results[1:60]:
+        if r == cur_val:
+            cur_len += 1
+        else:
+            streaks.append(cur_len)
+            cur_val = r
+            cur_len = 1
+    if cur_len > 0:
+        streaks.append(cur_len)
+
+    if len(streaks) < 5:
+        return None
+
+    streaks_sorted = sorted(streaks)
+    p75 = streaks_sorted[int(len(streaks_sorted) * 0.75)]
+    p50 = streaks_sorted[int(len(streaks_sorted) * 0.50)]
+
+    if current_streak > p75:
+        # Streak đã dài hơn 75% phân phối → dự đoán gãy
+        return (_opp(r0), 76, "streak_break")
+
+    if current_streak > p50 + 1:
+        # Streak vừa dài → có thể gãy sắp tới
+        return (_opp(r0), 68, "streak_break_soft")
+
+    # Streak còn trong vùng an toàn → theo tiếp
+    if current_streak >= 2 and current_streak <= p50:
+        return (r0, 62, "streak_continue")
+
+    return None
+
+
+def algo_bigram_markov(results):
+    """
+    Markov bậc 2: P(next | last2_results).
+    Chỉ tin khi mẫu đủ lớn (>= 8 lần xuất hiện).
+    """
+    if len(results) < 20:
+        return None
+
+    key = (results[1], results[0])
+    counts = {"Tài": 0, "Xỉu": 0}
+
+    for i in range(min(len(results) - 2, 80)):
+        if (results[i+2], results[i+1]) == key:
+            counts[results[i]] += 1
+
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 8:
+        return None
+
+    p_tai = counts["Tài"] / total
+    if p_tai >= 0.65:
+        return ("Tài", 74, "bigram_markov")
+    if p_tai <= 0.35:
+        return ("Xỉu", 74, "bigram_markov")
+    if p_tai >= 0.58:
+        return ("Tài", 62, "bigram_markov_soft")
+    if p_tai <= 0.42:
+        return ("Xỉu", 62, "bigram_markov_soft")
+    return None
+
+
+def algo_momentum_reversal(results):
+    """
+    Đo lực 3 phiên gần:
+    - Nếu momentum đang mạnh nhưng phiên cuối yếu đi → divergence → đảo
+    - Nếu momentum đều → theo tiếp
+    """
+    if len(results) < 8:
+        return None
+
+    b = [1 if r == "Tài" else 0 for r in results[:8]]
+    # Momentum weighted: 3 phiên gần nặng hơn
+    weights = [1.5, 1.3, 1.1, 0.9, 0.7, 0.5, 0.4, 0.3]
+    momentum = sum(b[i] * weights[i] for i in range(8)) / sum(weights)
+    # momentum trong [0, 1] — > 0.5 = Tài, < 0.5 = Xỉu
+
+    # Momentum phiên cuối
+    last_dir = b[0]
+    last_2 = b[:2]
+    last_3 = b[:3]
+
+    # Divergence: 3 phiên cùng Tài nhưng momentum giảm
+    if all(x == 1 for x in last_3) and momentum < 0.7:
+        return ("Xỉu", 70, "momentum_reversal_down")
+    if all(x == 0 for x in last_3) and momentum > 0.3:
+        return ("Tài", 70, "momentum_reversal_up")
+
+    # Momentum mạnh rõ ràng
+    if momentum >= 0.75 and sum(last_2) == 2:
+        return ("Tài", 66, "momentum_strong_up")
+    if momentum <= 0.25 and sum(last_2) == 0:
+        return ("Xỉu", 66, "momentum_strong_down")
+
+    return None
+
+# =====================================================================
+# DỰ ĐOÁN CHÍNH — KẾT HỢP 5 NGUỒN
 # =====================================================================
 def compute_prediction(results, md5_db):
     """
-    Ưu tiên:
-    1. MD5 deep hash match mạnh → dùng (vì học từ chính lịch sử)
-    2. Nếu không match → dùng 5P pattern
-    3. Nếu cả 2 đồng thuận → tăng conf
-    4. Nếu xung đột → ưu tiên MD5 nếu conf cao, ngược lại 5P
+    Pipeline quyết định:
+    1. MD5 deep match mạnh (85%) → dùng
+    2. ĐẢO/THUẬN pattern (88/85%) → dùng
+    3. Kết hợp tất cả tín hiệu còn lại → vote có trọng số
+    4. Xung đột → ưu tiên theo thứ tự độ tin cậy
     """
     if not results:
         return ("Tài", 52)
     if len(results) < 5:
-        # Chưa đủ 5 phiên → đảo phiên cuối (an toàn)
         return (_opp(results[0]), 55)
-    
-    # Lấy cả 2 tín hiệu
+
+    # === Lấy tất cả tín hiệu ===
     pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
     md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_db)
-    
-    # === TRƯỜNG HỢP 1: MD5 khớp mạnh ===
-    if md5_pred and md5_conf >= 80:
+    streak_sig = algo_streak_break(results)
+    bigram_sig = algo_bigram_markov(results)
+    momentum_sig = algo_momentum_reversal(results)
+
+    # === TẦNG 1: Tín hiệu cực mạnh → quyết luôn ===
+    if md5_pred and md5_conf >= 85:
         return (md5_pred, md5_conf)
-    
-    # === TRƯỜNG HỢP 2: MD5 khớp vừa ===
-    if md5_pred and md5_conf >= 70:
-        # Nếu pattern đồng thuận → tăng conf
-        if pattern_pred == md5_pred:
-            return (md5_pred, min(88, md5_conf + 5))
-        # Xung đột → theo pattern (5P ổn định hơn)
-        return (pattern_pred, pattern_conf)
-    
-    # === TRƯỜNG HỢP 3: Không có MD5 match → dùng pattern ===
+
+    if pattern_label in ("ĐẢO", "THUẬN") and pattern_conf >= 85:
+        # Nếu MD5 đồng thuận → tăng nhẹ
+        if md5_pred == pattern_pred:
+            return (pattern_pred, min(88, pattern_conf + 2))
+        # Nếu MD5 xung đột nhưng yếu hơn → vẫn theo pattern
+        if not md5_pred or md5_conf < 72:
+            return (pattern_pred, pattern_conf)
+
+    # === TẦNG 2: Kết hợp tín hiệu vừa ===
+    # Thu thập phiếu
+    votes = {"Tài": 0.0, "Xỉu": 0.0}
+    total_votes = 0.0
+    signals = []
+
+    # Pattern (weight theo conf)
     if pattern_pred:
-        return (pattern_pred, pattern_conf)
-    
-    # === FALLBACK ===
-    return (_opp(results[0]), 55)
+        w = pattern_conf / 100 * 2.0  # tối đa 2.0
+        votes[pattern_pred] += w
+        total_votes += w
+        signals.append(f"pattern:{pattern_label}")
+
+    # MD5 (nếu có match)
+    if md5_pred and md5_conf >= 60:
+        w = md5_conf / 100 * 2.2
+        votes[md5_pred] += w
+        total_votes += w
+        signals.append("md5")
+
+    # Streak
+    if streak_sig:
+        pred, conf, _ = streak_sig
+        w = conf / 100 * 1.5
+        votes[pred] += w
+        total_votes += w
+        signals.append("streak")
+
+    # Bigram Markov
+    if bigram_sig:
+        pred, conf, _ = bigram_sig
+        w = conf / 100 * 1.8
+        votes[pred] += w
+        total_votes += w
+        signals.append("bigram")
+
+    # Momentum
+    if momentum_sig:
+        pred, conf, _ = momentum_sig
+        w = conf / 100 * 1.6
+        votes[pred] += w
+        total_votes += w
+        signals.append("momentum")
+
+    if total_votes == 0:
+        return (_opp(results[0]), 55)
+
+    # So sánh
+    diff = abs(votes["Tài"] - votes["Xỉu"])
+    diff_ratio = diff / total_votes
+
+    if votes["Tài"] > votes["Xỉu"]:
+        pred = "Tài"
+        win = votes["Tài"]
+    else:
+        pred = "Xỉu"
+        win = votes["Xỉu"]
+
+    ratio = win / total_votes
+
+    # === TẦNG 3: Confidence theo độ đồng thuận ===
+    if diff_ratio >= 0.50 and ratio >= 0.75:
+        # Áp đảo
+        conf = int(80 + ratio * 8)
+        conf = min(88, conf)
+    elif diff_ratio >= 0.25 and ratio >= 0.62:
+        # Vừa
+        conf = int(68 + diff_ratio * 20)
+        conf = min(78, conf)
+    else:
+        # Yếu / xung đột
+        conf = int(58 + diff_ratio * 30)
+        conf = min(66, max(58, conf))
+
+    return (pred, conf)
 
 # =====================================================================
-# RECOVERY — flip khi thua liên tiếp (đơn giản, chắc chắn)
+# RECOVERY
 # =====================================================================
 def apply_recovery(base_pred, conf, loss_streak, results):
-    """
-    Recovery đơn giản:
-    - loss 0-1: giữ nguyên
-    - loss 2: flip nhẹ (conf giảm)
-    - loss >= 3: flip mạnh (conf tăng)
-    """
     if loss_streak < 2:
         return (base_pred, conf, False)
-    
+
     if loss_streak == 2:
         return (_opp(base_pred), max(62, conf - 5), True)
-    
+
     return (_opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True)
 
 def compute_loss_streak(valid, md5_db):
@@ -530,21 +689,32 @@ def predict():
         base_pred, base_conf = compute_prediction(results, md5_db)
         pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
 
-        # Chi tiết 5P
+        # Chi tiết từng nguồn
         pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
         md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_db)
+        streak_sig = algo_streak_break(results)
+        bigram_sig = algo_bigram_markov(results)
+        momentum_sig = algo_momentum_reversal(results)
 
         return jsonify({
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
             'prediction': pred, 'confidence': conf, 'recovery_flipped': flipped,
             'loss_streak': loss_streak,
             'ls_5p': format_tx(results, 5),
-            'pattern_label': pattern_label,
-            'pattern_pred': pattern_pred,
-            'pattern_conf': pattern_conf,
-            'md5_match': md5_pred,
-            'md5_conf': md5_conf,
-            'md5_p_tai': round(md5_p_tai, 3) if md5_p_tai is not None else None,
+            'signals': {
+                'pattern': {'label': pattern_label, 'pred': pattern_pred, 'conf': pattern_conf},
+                'md5': {'pred': md5_pred, 'conf': md5_conf,
+                        'p_tai': round(md5_p_tai, 3) if md5_p_tai is not None else None},
+                'streak': {'pred': streak_sig[0] if streak_sig else None,
+                           'conf': streak_sig[1] if streak_sig else 0,
+                           'algo': streak_sig[2] if streak_sig else None},
+                'bigram': {'pred': bigram_sig[0] if bigram_sig else None,
+                           'conf': bigram_sig[1] if bigram_sig else 0,
+                           'algo': bigram_sig[2] if bigram_sig else None},
+                'momentum': {'pred': momentum_sig[0] if momentum_sig else None,
+                             'conf': momentum_sig[1] if momentum_sig else 0,
+                             'algo': momentum_sig[2] if momentum_sig else None},
+            },
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
@@ -606,7 +776,6 @@ def reset_api():
 
 @app.route('/api/pattern-debug')
 def pattern_debug():
-    """Debug: xem 5P pattern gần nhất."""
     global RESET_ID
     try:
         raw_rows, _ = fetch_sessions()
@@ -618,21 +787,27 @@ def pattern_debug():
             return jsonify({'error': 'No data'})
         results = [v['result'] for v in valid][::-1]
         md5_db = learn_md5_deep_5p(valid)
+
         pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
         md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_db)
-        last5 = results[:5]
-        alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
+        streak_sig = algo_streak_break(results)
+        bigram_sig = algo_bigram_markov(results)
+        momentum_sig = algo_momentum_reversal(results)
+
         return jsonify({
             'last_5p': format_tx(results, 5),
-            'alt_count': alt_count,
-            't_count': sum(1 for r in last5 if r == 'Tài'),
-            'x_count': sum(1 for r in last5 if r == 'Xỉu'),
-            'pattern_label': pattern_label,
-            'pattern_pred': pattern_pred,
-            'pattern_conf': pattern_conf,
-            'md5_pred': md5_pred,
-            'md5_conf': md5_conf,
-            'md5_p_tai': round(md5_p_tai, 3) if md5_p_tai is not None else None,
+            'pattern': {'label': pattern_label, 'pred': pattern_pred, 'conf': pattern_conf},
+            'md5': {'pred': md5_pred, 'conf': md5_conf,
+                    'p_tai': round(md5_p_tai, 3) if md5_p_tai is not None else None},
+            'streak': {'pred': streak_sig[0] if streak_sig else None,
+                       'conf': streak_sig[1] if streak_sig else 0,
+                       'algo': streak_sig[2] if streak_sig else None},
+            'bigram': {'pred': bigram_sig[0] if bigram_sig else None,
+                       'conf': bigram_sig[1] if bigram_sig else 0,
+                       'algo': bigram_sig[2] if bigram_sig else None},
+            'momentum': {'pred': momentum_sig[0] if momentum_sig else None,
+                         'conf': momentum_sig[1] if momentum_sig else 0,
+                         'algo': momentum_sig[2] if momentum_sig else None},
             'md5_db_size': len(md5_db),
         })
     except Exception as e:
