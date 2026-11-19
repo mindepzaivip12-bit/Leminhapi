@@ -14,8 +14,14 @@ CORS(app)
 API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 
 HISTORY_CACHE = {}
-MAX_CONFIDENCE = 88
+MAX_CONFIDENCE = 90
 RESET_ID = 0
+
+# =====================================================================
+# ADAPTIVE LEARNING TRACKING
+# =====================================================================
+ALGO_RECENT_STATS = defaultdict(lambda: {"win": 0, "lose": 0})
+ADAPTIVE_WINDOW = 20  # số phiên gần để đánh giá algo
 
 # =====================================================================
 # HTML TEMPLATE (GIỮ NGUYÊN 100%)
@@ -262,16 +268,9 @@ def encode_tx(results, length):
     return "".join("T" if r == "Tài" else "X" for r in results[:length])
 
 # =====================================================================
-# PHÂN LOẠI CẦU 5 PHIÊN — 4 NHÃN
+# PHÂN LOẠI CẦU 5P — 4 NHÃN
 # =====================================================================
 def classify_5p_pattern(results):
-    """
-    4 nhãn:
-    - ĐẢO: 4 lần đảo (T-X-T-X-T)
-    - THUẬN: 0 lần đảo (bệt)
-    - NGHỊCH: 3 lần đảo (4/5 đảo)
-    - 1-1: 1-2 lần đảo (đa số nhẹ)
-    """
     if len(results) < 5:
         return ("Chưa đủ", None, 0)
 
@@ -282,13 +281,10 @@ def classify_5p_pattern(results):
 
     if alt_count == 4:
         return ("ĐẢO", _opp(last5[0]), 88)
-
     if alt_count == 0:
         return ("THUẬN", last5[0], 85)
-
     if alt_count == 3:
         return ("NGHỊCH", _opp(last5[0]), 70)
-
     if alt_count in (1, 2):
         if t_count > x_count:
             pred = "Tài"
@@ -297,7 +293,6 @@ def classify_5p_pattern(results):
         else:
             pred = _opp(last5[0])
         return ("1-1", pred, 65)
-
     return ("1-1", _opp(last5[0]), 60)
 
 # =====================================================================
@@ -338,19 +333,11 @@ def lookup_md5_deep_5p(results, md5_db):
     return (None, 0, p_tai)
 
 # =====================================================================
-# NÂNG CẤP: 3 THUẬT TOÁN BỔ SUNG
+# 3 THUẬT TOÁN BỔ SUNG
 # =====================================================================
-
 def algo_streak_break(results):
-    """
-    Phát hiện điểm gãy streak dựa trên phân phối lịch sử.
-    - Đếm streak hiện tại
-    - Đếm phân phối độ dài streak trong 60 phiên
-    - Nếu streak hiện tại > percentile 75% → dự đoán gãy
-    """
     if len(results) < 20:
         return None
-
     current_streak = 1
     r0 = results[0]
     for r in results[1:]:
@@ -358,11 +345,9 @@ def algo_streak_break(results):
             current_streak += 1
         else:
             break
-
     if current_streak < 2:
         return None
 
-    # Phân phối streak trong 60 phiên gần
     streaks = []
     cur_val = results[0]
     cur_len = 1
@@ -384,39 +369,24 @@ def algo_streak_break(results):
     p50 = streaks_sorted[int(len(streaks_sorted) * 0.50)]
 
     if current_streak > p75:
-        # Streak đã dài hơn 75% phân phối → dự đoán gãy
         return (_opp(r0), 76, "streak_break")
-
     if current_streak > p50 + 1:
-        # Streak vừa dài → có thể gãy sắp tới
         return (_opp(r0), 68, "streak_break_soft")
-
-    # Streak còn trong vùng an toàn → theo tiếp
-    if current_streak >= 2 and current_streak <= p50:
+    if 2 <= current_streak <= p50:
         return (r0, 62, "streak_continue")
-
     return None
 
-
 def algo_bigram_markov(results):
-    """
-    Markov bậc 2: P(next | last2_results).
-    Chỉ tin khi mẫu đủ lớn (>= 8 lần xuất hiện).
-    """
     if len(results) < 20:
         return None
-
     key = (results[1], results[0])
     counts = {"Tài": 0, "Xỉu": 0}
-
     for i in range(min(len(results) - 2, 80)):
         if (results[i+2], results[i+1]) == key:
             counts[results[i]] += 1
-
     total = counts["Tài"] + counts["Xỉu"]
     if total < 8:
         return None
-
     p_tai = counts["Tài"] / total
     if p_tai >= 0.65:
         return ("Tài", 74, "bigram_markov")
@@ -428,119 +398,212 @@ def algo_bigram_markov(results):
         return ("Xỉu", 62, "bigram_markov_soft")
     return None
 
-
 def algo_momentum_reversal(results):
-    """
-    Đo lực 3 phiên gần:
-    - Nếu momentum đang mạnh nhưng phiên cuối yếu đi → divergence → đảo
-    - Nếu momentum đều → theo tiếp
-    """
     if len(results) < 8:
         return None
-
     b = [1 if r == "Tài" else 0 for r in results[:8]]
-    # Momentum weighted: 3 phiên gần nặng hơn
     weights = [1.5, 1.3, 1.1, 0.9, 0.7, 0.5, 0.4, 0.3]
     momentum = sum(b[i] * weights[i] for i in range(8)) / sum(weights)
-    # momentum trong [0, 1] — > 0.5 = Tài, < 0.5 = Xỉu
 
-    # Momentum phiên cuối
-    last_dir = b[0]
     last_2 = b[:2]
     last_3 = b[:3]
 
-    # Divergence: 3 phiên cùng Tài nhưng momentum giảm
     if all(x == 1 for x in last_3) and momentum < 0.7:
         return ("Xỉu", 70, "momentum_reversal_down")
     if all(x == 0 for x in last_3) and momentum > 0.3:
         return ("Tài", 70, "momentum_reversal_up")
-
-    # Momentum mạnh rõ ràng
     if momentum >= 0.75 and sum(last_2) == 2:
         return ("Tài", 66, "momentum_strong_up")
     if momentum <= 0.25 and sum(last_2) == 0:
         return ("Xỉu", 66, "momentum_strong_down")
-
     return None
 
 # =====================================================================
-# DỰ ĐOÁN CHÍNH — KẾT HỢP 5 NGUỒN
+# NÂNG CẤP: ADAPTIVE WEIGHT + ANTI-OVERFIT + AGREEMENT BONUS
+# =====================================================================
+def _get_adaptive_weight(algo_name, base_w):
+    """Weight = base * adaptive_factor (0.6 → 1.4) dựa trên recent stats."""
+    stat = ALGO_RECENT_STATS[algo_name]
+    total = stat["win"] + stat["lose"]
+    if total < 8:
+        return base_w
+    wr = stat["win"] / total
+    # wr=0.5 → 1.0; wr=0.7 → 1.28; wr=0.3 → 0.72
+    factor = 0.6 + wr * 0.8
+    factor = max(0.6, min(1.4, factor))
+    return base_w * factor
+
+def _update_recent_stats(results, md5_db):
+    """Đánh giá 20 phiên gần nhất cho từng algo → cập nhật recent stats."""
+    global ALGO_RECENT_STATS
+    ALGO_RECENT_STATS.clear()
+    if len(results) < 20:
+        return
+    limit = min(ADAPTIVE_WINDOW, len(results) - 6)
+    for i in range(1, limit):
+        hist = results[i:]
+        actual = results[i - 1]
+
+        # 5P Pattern
+        try:
+            label, pred, conf = classify_5p_pattern(hist)
+            if pred:
+                key = f"pattern:{label}"
+                if pred == actual:
+                    ALGO_RECENT_STATS[key]["win"] += 1
+                else:
+                    ALGO_RECENT_STATS[key]["lose"] += 1
+        except Exception:
+            pass
+
+        # Streak break
+        try:
+            s = algo_streak_break(hist)
+            if s:
+                key = s[2]
+                if s[0] == actual:
+                    ALGO_RECENT_STATS[key]["win"] += 1
+                else:
+                    ALGO_RECENT_STATS[key]["lose"] += 1
+        except Exception:
+            pass
+
+        # Bigram
+        try:
+            s = algo_bigram_markov(hist)
+            if s:
+                key = s[2]
+                if s[0] == actual:
+                    ALGO_RECENT_STATS[key]["win"] += 1
+                else:
+                    ALGO_RECENT_STATS[key]["lose"] += 1
+        except Exception:
+            pass
+
+        # Momentum
+        try:
+            s = algo_momentum_reversal(hist)
+            if s:
+                key = s[2]
+                if s[0] == actual:
+                    ALGO_RECENT_STATS[key]["win"] += 1
+                else:
+                    ALGO_RECENT_STATS[key]["lose"] += 1
+        except Exception:
+            pass
+
+def _detect_overfit_guard(results):
+    """
+    Phát hiện cầu gãy: so sánh regime của 5 phiên cũ vs 5 phiên mới.
+    Nếu khác → cầu đang chuyển → giảm conf.
+    """
+    if len(results) < 10:
+        return False
+
+    def _classify_5p_internal(sub):
+        if len(sub) < 5:
+            return None
+        alt = sum(1 for i in range(4) if sub[i] != sub[i+1])
+        return alt  # 0=THUẬN, 4=ĐẢO, 1-3=khác
+
+    old = _classify_5p_internal(results[5:10])
+    new = _classify_5p_internal(results[:5])
+
+    if old is None or new is None:
+        return False
+
+    # Gãy rõ: THUẬN (0) ↔ ĐẢO (4)
+    if abs(old - new) >= 3:
+        return True
+    return False
+
+# =====================================================================
+# DỰ ĐOÁN CHÍNH — MULTI-WINDOW + ADAPTIVE + ANTI-OVERFIT
 # =====================================================================
 def compute_prediction(results, md5_db):
     """
-    Pipeline quyết định:
-    1. MD5 deep match mạnh (85%) → dùng
-    2. ĐẢO/THUẬN pattern (88/85%) → dùng
-    3. Kết hợp tất cả tín hiệu còn lại → vote có trọng số
-    4. Xung đột → ưu tiên theo thứ tự độ tin cậy
+    Pipeline 4 tầng:
+    1. Adaptive weight update
+    2. Multi-window vote (5P + 8P + 12P)
+    3. Signal agreement bonus
+    4. Anti-overfit guard
     """
     if not results:
         return ("Tài", 52)
     if len(results) < 5:
         return (_opp(results[0]), 55)
 
-    # === Lấy tất cả tín hiệu ===
+    # === CẬP NHẬT ADAPTIVE ===
+    _update_recent_stats(results, md5_db)
+    overfit = _detect_overfit_guard(results)
+
+    # === LẤY TẤT CẢ TÍN HIỆU ===
     pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
     md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_db)
     streak_sig = algo_streak_break(results)
     bigram_sig = algo_bigram_markov(results)
     momentum_sig = algo_momentum_reversal(results)
 
-    # === TẦNG 1: Tín hiệu cực mạnh → quyết luôn ===
+    # === TẦNG 1: Tín hiệu cực mạnh → quyết ===
     if md5_pred and md5_conf >= 85:
+        # Nếu pattern cũng đồng thuận → thêm bonus
+        if pattern_pred == md5_pred:
+            return (md5_pred, min(MAX_CONFIDENCE, md5_conf + 3))
         return (md5_pred, md5_conf)
 
     if pattern_label in ("ĐẢO", "THUẬN") and pattern_conf >= 85:
-        # Nếu MD5 đồng thuận → tăng nhẹ
         if md5_pred == pattern_pred:
-            return (pattern_pred, min(88, pattern_conf + 2))
-        # Nếu MD5 xung đột nhưng yếu hơn → vẫn theo pattern
+            return (pattern_pred, min(MAX_CONFIDENCE, pattern_conf + 2))
         if not md5_pred or md5_conf < 72:
             return (pattern_pred, pattern_conf)
 
-    # === TẦNG 2: Kết hợp tín hiệu vừa ===
-    # Thu thập phiếu
+    # === TẦNG 2: Vote có trọng số adaptive ===
     votes = {"Tài": 0.0, "Xỉu": 0.0}
     total_votes = 0.0
-    signals = []
+    active_signals = []
 
-    # Pattern (weight theo conf)
+    # Pattern
     if pattern_pred:
-        w = pattern_conf / 100 * 2.0  # tối đa 2.0
+        base_w = pattern_conf / 100 * 2.0
+        w = _get_adaptive_weight(f"pattern:{pattern_label}", base_w)
         votes[pattern_pred] += w
         total_votes += w
-        signals.append(f"pattern:{pattern_label}")
+        active_signals.append(("pattern", pattern_pred, w))
 
-    # MD5 (nếu có match)
+    # MD5
     if md5_pred and md5_conf >= 60:
-        w = md5_conf / 100 * 2.2
+        base_w = md5_conf / 100 * 2.2
+        w = _get_adaptive_weight("md5_deep", base_w)
         votes[md5_pred] += w
         total_votes += w
-        signals.append("md5")
+        active_signals.append(("md5", md5_pred, w))
 
     # Streak
     if streak_sig:
-        pred, conf, _ = streak_sig
-        w = conf / 100 * 1.5
+        pred, conf, name = streak_sig
+        base_w = conf / 100 * 1.5
+        w = _get_adaptive_weight(name, base_w)
         votes[pred] += w
         total_votes += w
-        signals.append("streak")
+        active_signals.append(("streak", pred, w))
 
-    # Bigram Markov
+    # Bigram
     if bigram_sig:
-        pred, conf, _ = bigram_sig
-        w = conf / 100 * 1.8
+        pred, conf, name = bigram_sig
+        base_w = conf / 100 * 1.8
+        w = _get_adaptive_weight(name, base_w)
         votes[pred] += w
         total_votes += w
-        signals.append("bigram")
+        active_signals.append(("bigram", pred, w))
 
     # Momentum
     if momentum_sig:
-        pred, conf, _ = momentum_sig
-        w = conf / 100 * 1.6
+        pred, conf, name = momentum_sig
+        base_w = conf / 100 * 1.6
+        w = _get_adaptive_weight(name, base_w)
         votes[pred] += w
         total_votes += w
-        signals.append("momentum")
+        active_signals.append(("momentum", pred, w))
 
     if total_votes == 0:
         return (_opp(results[0]), 55)
@@ -558,19 +621,39 @@ def compute_prediction(results, md5_db):
 
     ratio = win / total_votes
 
-    # === TẦNG 3: Confidence theo độ đồng thuận ===
+    # === TẦNG 3: TÍNH CONFIDENCE ===
     if diff_ratio >= 0.50 and ratio >= 0.75:
-        # Áp đảo
-        conf = int(80 + ratio * 8)
-        conf = min(88, conf)
+        conf = int(80 + ratio * 10)
+        conf = min(MAX_CONFIDENCE, conf)
     elif diff_ratio >= 0.25 and ratio >= 0.62:
-        # Vừa
-        conf = int(68 + diff_ratio * 20)
-        conf = min(78, conf)
+        conf = int(68 + diff_ratio * 24)
+        conf = min(80, conf)
     else:
-        # Yếu / xung đột
         conf = int(58 + diff_ratio * 30)
-        conf = min(66, max(58, conf))
+        conf = min(68, max(58, conf))
+
+    # === TẦNG 4: SIGNAL AGREEMENT BONUS ===
+    # Đếm số algo cùng dự đoán với pred
+    agree_count = sum(1 for _, p, _ in active_signals if p == pred)
+    disagree_count = len(active_signals) - agree_count
+
+    if agree_count >= 4 and disagree_count == 0:
+        # 100% đồng thuận → bonus mạnh
+        conf = min(MAX_CONFIDENCE, conf + 6)
+    elif agree_count >= 3 and disagree_count <= 1:
+        # Đa số mạnh → bonus vừa
+        conf = min(MAX_CONFIDENCE, conf + 3)
+    elif disagree_count >= 3:
+        # Xung đột mạnh → giảm conf
+        conf = max(55, conf - 8)
+
+    # === TẦNG 5: ANTI-OVERFIT GUARD ===
+    if overfit:
+        conf = max(55, conf - 10)
+
+    # === TẦNG 6: MD5 đồng thuận nhưng conf trung bình → nâng lên ===
+    if md5_pred == pred and md5_conf >= 72 and conf < 76:
+        conf = min(80, conf + 4)
 
     return (pred, conf)
 
@@ -581,9 +664,12 @@ def apply_recovery(base_pred, conf, loss_streak, results):
     if loss_streak < 2:
         return (base_pred, conf, False)
 
+    # Nếu đang overfit (cầu gãy) → không flip
+    if _detect_overfit_guard(results):
+        return (base_pred, max(55, conf - 5), False)
+
     if loss_streak == 2:
         return (_opp(base_pred), max(62, conf - 5), True)
-
     return (_opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True)
 
 def compute_loss_streak(valid, md5_db):
@@ -689,7 +775,6 @@ def predict():
         base_pred, base_conf = compute_prediction(results, md5_db)
         pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
 
-        # Chi tiết từng nguồn
         pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
         md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_db)
         streak_sig = algo_streak_break(results)
@@ -700,6 +785,7 @@ def predict():
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
             'prediction': pred, 'confidence': conf, 'recovery_flipped': flipped,
             'loss_streak': loss_streak,
+            'overfit_guard': _detect_overfit_guard(results),
             'ls_5p': format_tx(results, 5),
             'signals': {
                 'pattern': {'label': pattern_label, 'pred': pattern_pred, 'conf': pattern_conf},
@@ -715,6 +801,7 @@ def predict():
                              'conf': momentum_sig[1] if momentum_sig else 0,
                              'algo': momentum_sig[2] if momentum_sig else None},
             },
+            'adaptive_stats': dict(ALGO_RECENT_STATS),
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
@@ -761,7 +848,7 @@ def lc79md5_api():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
-    global RESET_ID, HISTORY_CACHE
+    global RESET_ID, HISTORY_CACHE, ALGO_RECENT_STATS
     try:
         raw_rows, _ = fetch_sessions()
         if raw_rows:
@@ -769,6 +856,7 @@ def reset_api():
             if valid:
                 RESET_ID = valid[-1]['phien']
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
+                ALGO_RECENT_STATS.clear()
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng'})
     except Exception as e:
@@ -808,6 +896,8 @@ def pattern_debug():
             'momentum': {'pred': momentum_sig[0] if momentum_sig else None,
                          'conf': momentum_sig[1] if momentum_sig else 0,
                          'algo': momentum_sig[2] if momentum_sig else None},
+            'overfit_guard': _detect_overfit_guard(results),
+            'adaptive_stats': dict(ALGO_RECENT_STATS),
             'md5_db_size': len(md5_db),
         })
     except Exception as e:
