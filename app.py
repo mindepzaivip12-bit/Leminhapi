@@ -39,7 +39,7 @@ FLIP_STATS = {"win": 0, "lose": 0, "consecutive_loss": 0}
 META_WEIGHTS = {}
 
 # =====================================================================
-# HTML TEMPLATE (giữ nguyên giao diện v4)
+# HTML TEMPLATE
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -635,14 +635,10 @@ def algo_knn_sequence(results, k=5):
 # ⭐ 3 THUẬT TOÁN MỚI v5
 # =====================================================================
 def algo_hurst_exponent(results, window=50):
-    """
-    Hurst exponent: H > 0.5 → trending (dự đoán tiếp diễn),
-    H < 0.5 → mean-reverting (dự đoán đảo).
-    """
+    """Hurst exponent: H > 0.5 → trending, H < 0.5 → mean-reverting."""
     n = min(len(results), window)
     if n < 24: return None
     b = [_b(r) for r in results[:n]][::-1]
-    # R/S analysis trên các chunk
     rs_values = []
     for size in (8, 12, 16, 24):
         if n < size * 2: continue
@@ -677,13 +673,11 @@ def algo_hurst_exponent(results, window=50):
     return None
 
 def algo_markov_high_order(results, max_order=8, min_samples=3):
-    """
-    Markov bậc cao (4..8) — chọn bậc cao nhất có đủ mẫu.
-    """
+    """Markov bậc cao (4..8) — chọn bậc cao nhất có đủ mẫu."""
     n = len(results)
     if n < 30: return None
     best = None
-    for order in range(min_order := 4, max_order + 1):
+    for order in range(4, max_order + 1):
         if n < order + min_samples: continue
         suffix = tuple(results[:order])
         counts = {"Tài": 0, "Xỉu": 0}
@@ -704,11 +698,7 @@ def algo_markov_high_order(results, max_order=8, min_samples=3):
     return None
 
 def algo_volatility_regime(results, window=20):
-    """
-    Đo 'volatility' của chuỗi (số lần đổi) so với trung bình dài hạn.
-    Volatility cao đột biến → sắp đảo (mean reversion).
-    Volatility thấp đột biến → sắp breakout (tiếp diễn).
-    """
+    """Volatility cao đột biến → sắp đảo; thấp đột biến → sắp breakout."""
     n = len(results)
     if n < window + 10: return None
     def _changes(sub):
@@ -739,7 +729,6 @@ def _get_adaptive_weight(algo_name, base_w):
     return base_w * factor
 
 def _update_recent_stats(results, md5_dbs):
-    """v5: chỉ chạy khi fingerprint thay đổi — tránh lặp vô ích."""
     global ALGO_RECENT_STATS
     if not results: return
     fp = (tuple(results[:10]), len(results))
@@ -786,7 +775,6 @@ def _update_recent_stats(results, md5_dbs):
             except Exception: pass
 
 def _update_calibration(valid, md5_dbs):
-    """v5: cache theo số phiên + reset id."""
     global CALIBRATION_BUCKETS, CALIBRATION_READY
     if not valid: return
     cache_key = f"{len(valid)}_{valid[-1]['phien']}_{RESET_ID}"
@@ -861,7 +849,6 @@ ALGO_REGISTRY = [
     ("gb", algo_gradient_boost_simple, 1.2),
     ("periodic", algo_pattern_periodicity, 1.4),
     ("knn", algo_knn_sequence, 1.6),
-    # ⭐ v5
     ("hurst", algo_hurst_exponent, 1.7),
     ("markov_ho", algo_markov_high_order, 1.9),
     ("volatility", algo_volatility_regime, 1.4),
@@ -970,18 +957,15 @@ def apply_recovery(base_pred, conf, loss_streak, results):
         return (base_pred, max(55, conf - 5), False)
     if FLIP_STATS["consecutive_loss"] >= 2:
         return (base_pred, max(55, conf - 3), False)
-    # v5: kiểm tra entropy trước khi flip
     ent = algo_entropy_regime(results, 12)
     high_ent = ent is not None and ent["entropy"] > 0.90
     if loss_streak == 2:
         new_conf = max(62, conf - (2 if high_ent else 5))
         return (_opp(base_pred), new_conf, True)
-    # loss_streak >= 3
     new_conf = min(MAX_CONFIDENCE, max(conf, 78 if not high_ent else 72))
     return (_opp(base_pred), new_conf, True)
 
 def compute_loss_streak(valid, md5_dbs):
-    """v5: cache loss_streak, dùng prediction cache."""
     if len(valid) < 5: return 0
     cache_key = f"{len(valid)}_{valid[-1]['phien']}_{RESET_ID}"
     now = time.time()
