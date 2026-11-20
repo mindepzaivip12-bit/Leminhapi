@@ -39,7 +39,7 @@ FLIP_STATS = {"win": 0, "lose": 0, "consecutive_loss": 0}
 META_WEIGHTS = {}
 
 # =====================================================================
-# HTML TEMPLATE
+# HTML TEMPLATE — ĐÃ ẨN THUẬT TOÁN
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -47,7 +47,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 v5</title>
+<title>LE MINH MD5</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -116,7 +116,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>MD5 v5</span></div>
+    <div class="header-title">LE MINH <span>MD5</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -286,21 +286,95 @@ def _b(r):
     return 1 if r == "Tài" else 0
 
 # =====================================================================
-# PHÂN LOẠI CẦU 5P
+# PHÂN LOẠI CẦU 5P — NÂNG CẤP (chống nghiêng 1 phiên)
 # =====================================================================
 def classify_5p_pattern(results):
-    if len(results) < 5: return ("Chưa đủ", None, 0)
+    """
+    Phân tích 5 phiên gần nhất:
+      - ĐẢO:    alt=4 (T-X-T-X-T / X-T-X-T-X) → dự đoán phiên kế theo nhịp đảo
+      - THUẬN:  alt=0 (T-T-T-T-T / X-X-X-X-X) → dự đoán tiếp tục
+      - NGHỊCH: alt=3 (mạnh) hoặc alt=1 (yếu) → dự đoán đảo nhịp
+      - 1-1:    alt=2 → dùng tie-break theo xu hướng dài hạn + entropy
+    Không quá nghiêng về 1 phiên: nếu tín hiệu yếu → trả pred=None.
+    """
+    if len(results) < 5:
+        return ("Chưa đủ", None, 0)
+
     last5 = results[:5]
-    alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
+    alt_count = sum(1 for i in range(4) if last5[i] != last5[i + 1])
     t_count = sum(1 for r in last5 if r == "Tài")
     x_count = 5 - t_count
-    if alt_count == 4: return ("ĐẢO", _opp(last5[0]), 88)
-    if alt_count == 0: return ("THUẬN", last5[0], 85)
-    if alt_count == 3: return ("NGHỊCH", _opp(last5[0]), 70)
-    if alt_count in (1, 2):
-        pred = "Tài" if t_count > x_count else ("Xỉu" if x_count > t_count else _opp(last5[0]))
-        return ("1-1", pred, 65)
-    return ("1-1", _opp(last5[0]), 60)
+
+    # Xu hướng dài hạn (10 phiên) để tie-break chống nghiêng
+    long_term = results[:min(len(results), 10)]
+    long_t = sum(1 for r in long_term if r == "Tài")
+    long_ratio = long_t / len(long_term) if long_term else 0.5
+
+    # ----- ĐẢO: nhịp hoàn hảo -----
+    if alt_count == 4:
+        pred = _opp(last5[0])
+        # nếu xu hướng dài hạn rất lệch về 1 phía, giảm conf nhẹ để tránh bias
+        conf = 88
+        if long_ratio >= 0.8 or long_ratio <= 0.2:
+            conf -= 4
+        return ("ĐẢO", pred, conf)
+
+    # ----- THUẬN: 5 phiên liên tiếp -----
+    if alt_count == 0:
+        pred = last5[0]
+        conf = 85
+        # chuỗi quá dài + xu hướng dài hạn đã ngược → giảm conf
+        if len(results) >= 8:
+            same_7 = sum(1 for r in results[:7] if r == last5[0])
+            if same_7 >= 7:
+                conf -= 6  # 7 phiên giống nhau → rủi ro đảo cao
+        return ("THUẬN", pred, conf)
+
+    # ----- NGHỊCH: alt=3 (mạnh) -----
+    if alt_count == 3:
+        pred = _opp(last5[0])
+        conf = 72
+        # tie-break nhẹ với long-term
+        if long_ratio > 0.65 and pred == "Tài":
+            conf += 2
+        elif long_ratio < 0.35 and pred == "Xỉu":
+            conf += 2
+        return ("NGHỊCH", pred, conf)
+
+    # ----- NGHỊCH YẾU: alt=1 -----
+    if alt_count == 1:
+        # 1 lần đổi nhịp trong 5 phiên → có xu hướng tiếp diễn nhịp mới
+        pred = _opp(last5[0])
+        conf = 63
+        return ("NGHỊCH", pred, conf)
+
+    # ----- 1-1: alt=2 (pha trộn) → KHÔNG NGHIÊNG -----
+    # Logic: đếm cặp gần nhất, nếu 2 phiên cuối giống nhau → ưu tiên đảo nhẹ
+    #        nếu lệch 3-2 → dự đoán theo phía thiểu số (mean-reversion)
+    #        + tie-break bằng long-term nếu hoà
+    if alt_count == 2:
+        last2_same = (last5[0] == last5[1])
+        if t_count == 3 and x_count == 2:
+            pred = "Xỉu"
+            conf = 62
+        elif x_count == 3 and t_count == 2:
+            pred = "Tài"
+            conf = 62
+        else:
+            # hiếm khi xảy ra với 5 phiên, nhưng fallback
+            pred = _opp(last5[0]) if last2_same else last5[0]
+            conf = 58
+        # tie-break chống nghiêng: nếu long-term ngược mạnh → đổi hướng + tăng nhẹ conf
+        if long_ratio >= 0.75 and pred == "Xỉu":
+            pred = "Tài"
+            conf = max(conf, 60)
+        elif long_ratio <= 0.25 and pred == "Tài":
+            pred = "Xỉu"
+            conf = max(conf, 60)
+        return ("1-1", pred, conf)
+
+    # fallback (không xảy ra)
+    return ("1-1", _opp(last5[0]), 55)
 
 # =====================================================================
 # MULTI-WINDOW MD5 ENGINE
@@ -632,7 +706,7 @@ def algo_knn_sequence(results, k=5):
     return None
 
 # =====================================================================
-# ⭐ 3 THUẬT TOÁN MỚI v5
+# 3 THUẬT TOÁN MỚI v5
 # =====================================================================
 def algo_hurst_exponent(results, window=50):
     """Hurst exponent: H > 0.5 → trending, H < 0.5 → mean-reverting."""
@@ -833,7 +907,7 @@ def _detect_overfit_guard(results):
     return abs(old - new) >= 3
 
 # =====================================================================
-# DỰ ĐOÁN CHÍNH v5
+# DỰ ĐOÁN CHÍNH v5.1
 # =====================================================================
 ALGO_REGISTRY = [
     ("streak", algo_streak_break, 1.5),
@@ -938,6 +1012,23 @@ def compute_prediction(results, md5_dbs, _skip_calibration=False):
 
     if overfit: conf = max(55, conf - 8)
     if high_entropy: conf = max(55, conf - 6)
+
+    # --- ANTI-BIAS GUARD (chống nghiêng 1 phiên) ---
+    # Nếu vote quá lệch (> 0.85) => giảm conf để tránh cực đoan
+    if diff_ratio > 0.85:
+        conf = max(55, conf - 10)
+    elif diff_ratio > 0.75:
+        conf = max(55, conf - 5)
+
+    # Nếu pattern ngược chiều với đa số thuật toán khác → giảm conf
+    if pattern_pred and pattern_pred != pred and agree >= 5:
+        conf = max(55, conf - 4)
+
+    # Nếu độ lệch vote nhỏ nhưng pattern khẳng định mạnh → vẫn ưu tiên pattern
+    if pattern_label in ("ĐẢO", "THUẬN") and pattern_conf >= 85:
+        if pattern_pred and votes[pattern_pred] > 0:
+            # đảm bảo pattern mạnh không bị "hoà loãng"
+            pass
 
     if md5_pred == pred and md5_conf >= 70 and conf < 78:
         conf = min(80, conf + 4)
@@ -1053,8 +1144,7 @@ def history():
         return jsonify({
             'rows': out,
             'stats': {'total': total_past, 'correct': correct_count},
-            'version': 'v5',
-            'calibration': {str(k): v for k, v in CALIBRATION_BUCKETS.items()} if CALIBRATION_READY else {}
+            'version': 'v5.1'
         })
     except Exception as e:
         traceback.print_exc()
@@ -1081,38 +1171,17 @@ def predict():
 
         pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
         md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_dbs)
-        all_signals = {}
-        for name, fn, _ in ALGO_REGISTRY:
-            try:
-                sig = fn(results)
-                all_signals[name] = {
-                    'pred': sig[0] if sig else None,
-                    'conf': sig[1] if sig else 0,
-                    'tag': sig[2] if sig else None,
-                }
-            except Exception:
-                all_signals[name] = {'pred': None, 'conf': 0, 'tag': None}
-
-        ent = algo_entropy_regime(results, 12)
 
         return jsonify({
-            'version': 'v5',
+            'version': 'v5.1',
             'last_phien': valid[-1]['phien'],
             'next_phien': valid[-1]['phien'] + 1,
             'prediction': pred, 'confidence': conf, 'recovery_flipped': flipped,
             'loss_streak': loss_streak,
-            'overfit_guard': _detect_overfit_guard(results),
-            'entropy': ent,
+            'pattern': {'label': pattern_label, 'pred': pattern_pred, 'conf': pattern_conf},
+            'md5': {'pred': md5_pred, 'conf': md5_conf,
+                    'p_tai': round(md5_p_tai, 3) if md5_p_tai is not None else None},
             'ls_5p': format_tx(results, 5),
-            'signals': {
-                'pattern': {'label': pattern_label, 'pred': pattern_pred, 'conf': pattern_conf},
-                'md5': {'pred': md5_pred, 'conf': md5_conf,
-                        'p_tai': round(md5_p_tai, 3) if md5_p_tai is not None else None},
-                **all_signals,
-            },
-            'algorithm_count': len(ALGO_REGISTRY) + 2,
-            'adaptive_stats': dict(ALGO_RECENT_STATS),
-            'calibration': {str(k): v for k, v in CALIBRATION_BUCKETS.items()} if CALIBRATION_READY else {},
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
@@ -1178,7 +1247,7 @@ def reset_api():
 @app.route('/health')
 def health():
     return jsonify({
-        'status': 'ok', 'version': 'v5',
+        'status': 'ok', 'version': 'v5.1',
         'cached_sessions': len(HISTORY_CACHE),
         'reset_id': RESET_ID,
         'algo_count': len(ALGO_REGISTRY) + 2,
@@ -1215,7 +1284,7 @@ def pattern_debug():
                 all_sigs[name] = {'error': str(e)}
 
         return jsonify({
-            'version': 'v5',
+            'version': 'v5.1',
             'last_5p': format_tx(results, 5),
             'pattern': {'label': pattern_label, 'pred': pattern_pred, 'conf': pattern_conf},
             'md5': {'pred': md5_pred, 'conf': md5_conf,
