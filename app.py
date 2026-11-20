@@ -4,7 +4,7 @@ import hashlib
 import time
 import traceback
 from datetime import datetime
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, deque
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -19,24 +19,27 @@ MAX_CONFIDENCE = 90
 RESET_ID = 0
 
 # =====================================================================
-# CACHE ĐA TẦNG - tăng tốc độ API
+# CACHE ĐA TẦNG
 # =====================================================================
 _MD5_DB_CACHE = {"key": None, "value": None, "ts": 0}
 _CALIB_CACHE = {"key": None, "value": None, "ts": 0}
-_CACHE_TTL = 5.0  # seconds
+_PRED_CACHE = {"key": None, "value": None, "ts": 0}
+_LOSS_STREAK_CACHE = {"key": None, "value": 0, "ts": 0}
+_CACHE_TTL = 5.0
+_PRED_CACHE_TTL = 4.0
 
 # =====================================================================
-# ADAPTIVE LEARNING (v4 - mở rộng)
+# ADAPTIVE LEARNING
 # =====================================================================
 ALGO_RECENT_STATS = defaultdict(lambda: {"win": 0, "lose": 0})
 ADAPTIVE_WINDOW = 25
 CALIBRATION_BUCKETS = defaultdict(lambda: {"win": 0, "lose": 0})
 CALIBRATION_READY = False
 FLIP_STATS = {"win": 0, "lose": 0, "consecutive_loss": 0}
-META_WEIGHTS = {}  # {algo_name: weight} - tự học
+META_WEIGHTS = {}
 
 # =====================================================================
-# HTML TEMPLATE (giữ nguyên giao diện cũ + thêm badge v4)
+# HTML TEMPLATE (giữ nguyên giao diện v4)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -44,7 +47,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 v4</title>
+<title>LE MINH MD5 v5</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -113,7 +116,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>MD5 v4</span></div>
+    <div class="header-title">LE MINH <span>MD5 v5</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -305,7 +308,6 @@ def classify_5p_pattern(results):
 MD5_WINDOWS = (3, 4, 5, 6, 7, 8)
 
 def learn_md5_deep_5p(valid):
-    """Có cache theo phien cuối."""
     if not valid: return {}
     cache_key = f"{valid[-1]['phien']}_{len(valid)}_{RESET_ID}"
     now = time.time()
@@ -359,7 +361,7 @@ def lookup_md5_deep_5p(results, dbs):
     return (None, 0, p_tai_agg)
 
 # =====================================================================
-# 3 THUẬT TOÁN CƠ BẢN (giữ nguyên)
+# 3 THUẬT TOÁN CƠ BẢN
 # =====================================================================
 def algo_streak_break(results):
     if len(results) < 20: return None
@@ -413,7 +415,7 @@ def algo_momentum_reversal(results):
     return None
 
 # =====================================================================
-# 3 THUẬT TOÁN NÂNG CAO v3 (giữ nguyên)
+# THUẬT TOÁN NÂNG CAO v3
 # =====================================================================
 def algo_sequence_match(results, min_len=4, max_len=10):
     n = len(results)
@@ -462,46 +464,30 @@ def algo_entropy_regime(results, window=12):
     return {"entropy": round(entropy, 3), "p_tai": round(p_tai, 3)}
 
 # =====================================================================
-# 🔥 8 THUẬT TOÁN MỚI v4
+# v4 ALGOS
 # =====================================================================
-
 def algo_fourier_periodicity(results, max_period=12):
-    """
-    Phân tích chu kỳ bằng DFT đơn giản.
-    Tìm chu kỳ mạnh nhất → dự đoán theo pha hiện tại.
-    """
     n = len(results)
     if n < 20: return None
-    b = [_b(r) for r in results[:min(n, 64)]][::-1]  # cũ → mới
+    b = [_b(r) for r in results[:min(n, 64)]][::-1]
     N = len(b)
     mean = sum(b) / N
     centered = [x - mean for x in b]
-
     best_period = 0; best_power = 0
     for p in range(2, min(max_period, N // 2) + 1):
-        # DFT tại tần số f = 1/p
         re = sum(centered[t] * math.cos(2 * math.pi * t / p) for t in range(N))
         im = sum(centered[t] * math.sin(2 * math.pi * t / p) for t in range(N))
         power = (re * re + im * im) / N
         if power > best_power:
             best_power = power; best_period = p
-
     if best_period == 0 or best_power < 0.5: return None
-
-    # Dự đoán: bắt chước pattern tại vị trí (N - best_period)
     pred_idx = N - best_period
     if pred_idx < 0 or pred_idx >= N: return None
     pred = "Tài" if b[pred_idx] == 1 else "Xỉu"
-    # Confidence theo power
     conf = int(min(82, 58 + best_power * 8))
     return (pred, conf, f"fourier_p{best_period}")
 
-
 def algo_ngram_ensemble(results, max_n=6):
-    """
-    Ensemble 4-gram, 5-gram, 6-gram Markov.
-    Tổng hợp p_tai từ nhiều bậc.
-    """
     n = len(results)
     if n < 25: return None
     total_tai = 0.0; total_w = 0.0
@@ -524,13 +510,7 @@ def algo_ngram_ensemble(results, max_n=6):
     if p_tai <= 0.35: return ("Xỉu", int(60 + (0.35 - p_tai) * 100), "ngram_ens_xiu")
     return None
 
-
 def algo_runs_test(results, window=40):
-    """
-    Wald–Wolfowitz runs test: phát hiện phi ngẫu nhiên.
-    Nếu pattern đang "clustering" → dự đoán tiếp diễn.
-    Nếu "alternating" → dự đoán đảo.
-    """
     n = min(len(results), window)
     if n < 20: return None
     sub = results[:n]
@@ -544,9 +524,6 @@ def algo_runs_test(results, window=40):
     var = (2 * n1 * n2 * (2 * n1 * n2 - n)) / (n * n * (n - 1) + 1e-9)
     if var <= 0: return None
     z = (runs - expected) / math.sqrt(var)
-
-    # z < -1.5: ít runs → clustering → tiếp diễn
-    # z > 1.5: nhiều runs → alternating → đảo
     last = sub[0]
     if z < -1.5:
         conf = int(min(78, 62 + abs(z) * 5))
@@ -556,19 +533,12 @@ def algo_runs_test(results, window=40):
         return (_opp(last), conf, f"runs_alt_z{z:.1f}")
     return None
 
-
 def algo_bayesian_smoothing(results, alpha=1.0, beta=1.0):
-    """
-    Beta-Binomial Bayesian predictor với prior từ 3 phiên gần nhất.
-    """
     n = len(results)
     if n < 15: return None
     recent = results[:15]
     t = sum(1 for r in recent if r == "Tài")
-    x = 15 - t
-    # Posterior
     post_tai = (t + alpha) / (15 + alpha + beta)
-    # Check latest 3
     last3 = results[:3]
     t3 = sum(1 for r in last3 if r == "Tài")
     if t3 == 3 and post_tai < 0.45:
@@ -579,12 +549,7 @@ def algo_bayesian_smoothing(results, alpha=1.0, beta=1.0):
     if post_tai <= 0.35: return ("Xỉu", int(58 + (0.5 - post_tai) * 60), "bayes_xiu")
     return None
 
-
 def algo_conditional_entropy(results, cond_len=3):
-    """
-    Information gain: đo mức độ phụ thuộc của next vào N phiên trước.
-    Nếu entropy điều kiện thấp → dự đoán mạnh.
-    """
     n = len(results)
     if n < 30: return None
     cond = tuple(results[:cond_len])
@@ -595,58 +560,37 @@ def algo_conditional_entropy(results, cond_len=3):
     total = counts["Tài"] + counts["Xỉu"]
     if total < 4: return None
     p_tai = counts["Tài"] / total
-    # Conditional entropy
     if p_tai in (0, 1): H = 0
     else: H = -(p_tai * math.log2(p_tai) + (1-p_tai) * math.log2(1-p_tai))
-    if H > 0.9: return None  # Không đủ tự tin
+    if H > 0.9: return None
     pred = "Tài" if p_tai > 0.5 else "Xỉu"
     conf = int(min(80, 60 + (1 - H) * 20))
     return (pred, conf, f"cond_H{H:.2f}")
 
-
 def algo_gradient_boost_simple(results, window=10):
-    """
-    Simple gradient-boosted vote: chia window thành các stump.
-    Mỗi stump = 1 test đơn giản (bit, sum, pattern).
-    """
     n = len(results)
     if n < window + 5: return None
     b = [_b(r) for r in results[:window]]
     features = []
-
-    # Feature 1: last bit
     features.append(("last", b[0]))
-    # Feature 2: last 3 sum
     s3 = sum(b[:3])
     features.append(("sum3_high", 1 if s3 >= 2 else 0))
-    # Feature 3: alternating flag
     alt = sum(1 for i in range(4) if b[i] != b[i+1])
     features.append(("alt", 1 if alt >= 3 else 0))
-    # Feature 4: recent majority
     majority = 1 if sum(b[:5]) >= 3 else 0
-
-    # Học stump đơn giản: từ lịch sử, mỗi pattern → tỉ lệ
     weights = {"last": 0.3, "sum3_high": 0.25, "alt": 0.2, "majority": 0.25}
     score_tai = 0.0
     for name, val in features:
-        # target correlation: nếu val=1 → dự đoán Tài
         score_tai += weights[name] * (val if name != "alt" else (1 - val))
     score_tai += weights["majority"] * majority
-
     p_tai = score_tai
     if p_tai >= 0.68: return ("Tài", int(60 + (p_tai - 0.5) * 50), "gb_tai")
     if p_tai <= 0.32: return ("Xỉu", int(60 + (0.5 - p_tai) * 50), "gb_xiu")
     return None
 
-
 def algo_pattern_periodicity(results):
-    """
-    Tự phát hiện chu kỳ lặp pattern cục bộ.
-    Ví dụ: T-T-X lặp lại với period 3.
-    """
     n = len(results)
     if n < 25: return None
-    # Thử các chu kỳ p từ 2..8
     best_score = 0; best_p = 0
     for p in range(2, 9):
         match = 0; total = 0
@@ -663,11 +607,7 @@ def algo_pattern_periodicity(results):
             return (pred, conf, f"periodic_p{best_p}")
     return None
 
-
 def algo_knn_sequence(results, k=5):
-    """
-    KNN trên sequence: tìm k lịch sử giống nhất (hamming distance).
-    """
     n = len(results)
     L = 4
     if n < L + 8: return None
@@ -680,7 +620,6 @@ def algo_knn_sequence(results, k=5):
     if len(candidates) < k: return None
     candidates.sort(key=lambda x: x[0])
     top_k = candidates[:k]
-    # Weighted vote (gần hơn → nặng hơn)
     tally = {"Tài": 0.0, "Xỉu": 0.0}
     for dist, r in top_k:
         w = 1.0 / (dist + 1)
@@ -692,6 +631,98 @@ def algo_knn_sequence(results, k=5):
     if p_tai <= 0.3: return ("Xỉu", int(60 + (0.5 - p_tai) * 40), "knn_xiu")
     return None
 
+# =====================================================================
+# ⭐ 3 THUẬT TOÁN MỚI v5
+# =====================================================================
+def algo_hurst_exponent(results, window=50):
+    """
+    Hurst exponent: H > 0.5 → trending (dự đoán tiếp diễn),
+    H < 0.5 → mean-reverting (dự đoán đảo).
+    """
+    n = min(len(results), window)
+    if n < 24: return None
+    b = [_b(r) for r in results[:n]][::-1]
+    # R/S analysis trên các chunk
+    rs_values = []
+    for size in (8, 12, 16, 24):
+        if n < size * 2: continue
+        chunks = n // size
+        rs_chunk = []
+        for c in range(chunks):
+            seg = b[c*size:(c+1)*size]
+            m = sum(seg) / size
+            dev = [x - m for x in seg]
+            cum = []
+            s = 0
+            for d in dev:
+                s += d
+                cum.append(s)
+            R = max(cum) - min(cum)
+            S = math.sqrt(sum((x - m) ** 2 for x in seg) / size) + 1e-9
+            rs_chunk.append(R / S)
+        if rs_chunk:
+            rs_values.append((math.log(size), math.log(sum(rs_chunk) / len(rs_chunk) + 1e-9)))
+    if len(rs_values) < 2: return None
+    xs = [v[0] for v in rs_values]; ys = [v[1] for v in rs_values]
+    xm = sum(xs) / len(xs); ym = sum(ys) / len(ys)
+    num = sum((xs[i] - xm) * (ys[i] - ym) for i in range(len(xs)))
+    den = sum((xs[i] - xm) ** 2 for i in range(len(xs)))
+    if den == 0: return None
+    H = num / den
+    last = results[0]
+    if H > 0.62:
+        return (last, int(min(78, 60 + (H - 0.5) * 40)), f"hurst_trend_H{H:.2f}")
+    if H < 0.38:
+        return (_opp(last), int(min(78, 60 + (0.5 - H) * 40)), f"hurst_revert_H{H:.2f}")
+    return None
+
+def algo_markov_high_order(results, max_order=8, min_samples=3):
+    """
+    Markov bậc cao (4..8) — chọn bậc cao nhất có đủ mẫu.
+    """
+    n = len(results)
+    if n < 30: return None
+    best = None
+    for order in range(min_order := 4, max_order + 1):
+        if n < order + min_samples: continue
+        suffix = tuple(results[:order])
+        counts = {"Tài": 0, "Xỉu": 0}
+        for i in range(order, n):
+            if tuple(results[i:i+order]) == suffix:
+                counts[results[i-order]] += 1
+        total = counts["Tài"] + counts["Xỉu"]
+        if total < min_samples: continue
+        p_tai = (counts["Tài"] + 1) / (total + 2)
+        extremity = abs(p_tai - 0.5) * 2
+        if extremity < 0.3: continue
+        pred = "Tài" if p_tai > 0.5 else "Xỉu"
+        conf = int(min(82, 58 + extremity * 30 + order * 1.5))
+        score = extremity * math.log(total + 1)
+        if best is None or score > best[0]:
+            best = (score, pred, conf, f"mkov{order}_n{total}")
+    if best: return (best[1], best[2], best[3])
+    return None
+
+def algo_volatility_regime(results, window=20):
+    """
+    Đo 'volatility' của chuỗi (số lần đổi) so với trung bình dài hạn.
+    Volatility cao đột biến → sắp đảo (mean reversion).
+    Volatility thấp đột biến → sắp breakout (tiếp diễn).
+    """
+    n = len(results)
+    if n < window + 10: return None
+    def _changes(sub):
+        return sum(1 for i in range(1, len(sub)) if sub[i] != sub[i-1]) / max(1, len(sub) - 1)
+    recent = _changes(results[:window])
+    long_term = _changes(results[:min(n, 80)])
+    if long_term == 0: return None
+    ratio = recent / long_term
+    last = results[0]
+    if ratio >= 1.4:
+        return (_opp(last), int(min(74, 60 + (ratio - 1) * 25)), f"vol_high_{ratio:.2f}")
+    if ratio <= 0.6:
+        return (last, int(min(74, 60 + (1 - ratio) * 25)), f"vol_low_{ratio:.2f}")
+    return None
 
 # =====================================================================
 # ADAPTIVE WEIGHT + CALIBRATION
@@ -708,7 +739,14 @@ def _get_adaptive_weight(algo_name, base_w):
     return base_w * factor
 
 def _update_recent_stats(results, md5_dbs):
+    """v5: chỉ chạy khi fingerprint thay đổi — tránh lặp vô ích."""
     global ALGO_RECENT_STATS
+    if not results: return
+    fp = (tuple(results[:10]), len(results))
+    if _update_recent_stats.__dict__.get("_fp") == fp:
+        return
+    _update_recent_stats.__dict__["_fp"] = fp
+
     ALGO_RECENT_STATS.clear()
     if len(results) < 20: return
     limit = min(ADAPTIVE_WINDOW, len(results) - 6)
@@ -726,6 +764,9 @@ def _update_recent_stats(results, md5_dbs):
         ("gb", algo_gradient_boost_simple),
         ("periodic", algo_pattern_periodicity),
         ("knn", algo_knn_sequence),
+        ("hurst", algo_hurst_exponent),
+        ("markov_ho", algo_markov_high_order),
+        ("volatility", algo_volatility_regime),
     ]
     for i in range(1, limit):
         hist = results[i:]
@@ -745,7 +786,19 @@ def _update_recent_stats(results, md5_dbs):
             except Exception: pass
 
 def _update_calibration(valid, md5_dbs):
+    """v5: cache theo số phiên + reset id."""
     global CALIBRATION_BUCKETS, CALIBRATION_READY
+    if not valid: return
+    cache_key = f"{len(valid)}_{valid[-1]['phien']}_{RESET_ID}"
+    now = time.time()
+    if (_CALIB_CACHE["key"] == cache_key and
+        _CALIB_CACHE["value"] is not None and
+        now - _CALIB_CACHE["ts"] < _CACHE_TTL):
+        CALIBRATION_BUCKETS.clear()
+        CALIBRATION_BUCKETS.update(_CALIB_CACHE["value"]["buckets"])
+        CALIBRATION_READY = _CALIB_CACHE["value"]["ready"]
+        return
+
     CALIBRATION_BUCKETS.clear()
     n = len(valid)
     if n < 30:
@@ -764,6 +817,11 @@ def _update_calibration(valid, md5_dbs):
         bucket = (conf // 5) * 5
         CALIBRATION_BUCKETS[bucket]["win" if pred == actual else "lose"] += 1
     CALIBRATION_READY = True
+    _CALIB_CACHE.update({
+        "key": cache_key,
+        "value": {"buckets": dict(CALIBRATION_BUCKETS), "ready": True},
+        "ts": now
+    })
 
 def _calibrate_confidence(conf):
     if not CALIBRATION_READY: return conf
@@ -787,10 +845,9 @@ def _detect_overfit_guard(results):
     return abs(old - new) >= 3
 
 # =====================================================================
-# DỰ ĐOÁN CHÍNH v4
+# DỰ ĐOÁN CHÍNH v5
 # =====================================================================
 ALGO_REGISTRY = [
-    # (name, function, base_weight_multiplier)
     ("streak", algo_streak_break, 1.5),
     ("bigram", algo_bigram_markov, 1.8),
     ("momentum", algo_momentum_reversal, 1.6),
@@ -804,6 +861,10 @@ ALGO_REGISTRY = [
     ("gb", algo_gradient_boost_simple, 1.2),
     ("periodic", algo_pattern_periodicity, 1.4),
     ("knn", algo_knn_sequence, 1.6),
+    # ⭐ v5
+    ("hurst", algo_hurst_exponent, 1.7),
+    ("markov_ho", algo_markov_high_order, 1.9),
+    ("volatility", algo_volatility_regime, 1.4),
 ]
 
 def compute_prediction(results, md5_dbs, _skip_calibration=False):
@@ -877,9 +938,9 @@ def compute_prediction(results, md5_dbs, _skip_calibration=False):
 
     agree = sum(1 for _, p, _ in active if p == pred)
     disagree = len(active) - agree
-    if agree >= 7 and disagree == 0:
+    if agree >= 8 and disagree == 0:
         conf = min(MAX_CONFIDENCE, conf + 8)
-    elif agree >= 5 and disagree <= 1:
+    elif agree >= 6 and disagree <= 1:
         conf = min(MAX_CONFIDENCE, conf + 5)
     elif agree >= 4 and disagree <= 2:
         conf = min(MAX_CONFIDENCE, conf + 2)
@@ -900,7 +961,7 @@ def compute_prediction(results, md5_dbs, _skip_calibration=False):
     return (pred, conf)
 
 # =====================================================================
-# RECOVERY
+# RECOVERY v5
 # =====================================================================
 def apply_recovery(base_pred, conf, loss_streak, results):
     if loss_streak < 2:
@@ -909,19 +970,32 @@ def apply_recovery(base_pred, conf, loss_streak, results):
         return (base_pred, max(55, conf - 5), False)
     if FLIP_STATS["consecutive_loss"] >= 2:
         return (base_pred, max(55, conf - 3), False)
+    # v5: kiểm tra entropy trước khi flip
+    ent = algo_entropy_regime(results, 12)
+    high_ent = ent is not None and ent["entropy"] > 0.90
     if loss_streak == 2:
-        return (_opp(base_pred), max(62, conf - 5), True)
-    return (_opp(base_pred), min(MAX_CONFIDENCE, max(conf, 78)), True)
+        new_conf = max(62, conf - (2 if high_ent else 5))
+        return (_opp(base_pred), new_conf, True)
+    # loss_streak >= 3
+    new_conf = min(MAX_CONFIDENCE, max(conf, 78 if not high_ent else 72))
+    return (_opp(base_pred), new_conf, True)
 
 def compute_loss_streak(valid, md5_dbs):
+    """v5: cache loss_streak, dùng prediction cache."""
     if len(valid) < 5: return 0
+    cache_key = f"{len(valid)}_{valid[-1]['phien']}_{RESET_ID}"
+    now = time.time()
+    if (_LOSS_STREAK_CACHE["key"] == cache_key and
+        now - _LOSS_STREAK_CACHE["ts"] < _CACHE_TTL):
+        return _LOSS_STREAK_CACHE["value"]
+
     streak = 0
-    for i in range(len(valid) - 1, len(valid) - 10, -1):
-        if i < 5: break
+    for i in range(len(valid) - 1, max(4, len(valid) - 10), -1):
         hist = [v['result'] for v in valid[:i]][::-1]
         pred, _ = compute_prediction(hist, md5_dbs)
         if pred == valid[i]['result']: break
         streak += 1
+    _LOSS_STREAK_CACHE.update({"key": cache_key, "value": streak, "ts": now})
     return streak
 
 # =====================================================================
@@ -995,7 +1069,7 @@ def history():
         return jsonify({
             'rows': out,
             'stats': {'total': total_past, 'correct': correct_count},
-            'version': 'v4',
+            'version': 'v5',
             'calibration': {str(k): v for k, v in CALIBRATION_BUCKETS.items()} if CALIBRATION_READY else {}
         })
     except Exception as e:
@@ -1021,7 +1095,6 @@ def predict():
         base_pred, base_conf = compute_prediction(results, md5_dbs)
         pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
 
-        # Thu thập signals chi tiết
         pattern_label, pattern_pred, pattern_conf = classify_5p_pattern(results)
         md5_pred, md5_conf, md5_p_tai = lookup_md5_deep_5p(results, md5_dbs)
         all_signals = {}
@@ -1039,7 +1112,7 @@ def predict():
         ent = algo_entropy_regime(results, 12)
 
         return jsonify({
-            'version': 'v4',
+            'version': 'v5',
             'last_phien': valid[-1]['phien'],
             'next_phien': valid[-1]['phien'] + 1,
             'prediction': pred, 'confidence': conf, 'recovery_flipped': flipped,
@@ -1109,23 +1182,25 @@ def reset_api():
                 CALIBRATION_READY = False
                 FLIP_STATS.update({"win": 0, "lose": 0, "consecutive_loss": 0})
                 _MD5_DB_CACHE.update({"key": None, "value": None, "ts": 0})
+                _CALIB_CACHE.update({"key": None, "value": None, "ts": 0})
+                _PRED_CACHE.update({"key": None, "value": None, "ts": 0})
+                _LOSS_STREAK_CACHE.update({"key": None, "value": 0, "ts": 0})
+                _update_recent_stats.__dict__.pop("_fp", None)
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
-# =====================================================================
-# HEALTH & DEBUG
-# =====================================================================
 @app.route('/health')
 def health():
     return jsonify({
-        'status': 'ok', 'version': 'v4',
+        'status': 'ok', 'version': 'v5',
         'cached_sessions': len(HISTORY_CACHE),
         'reset_id': RESET_ID,
         'algo_count': len(ALGO_REGISTRY) + 2,
         'calibration_ready': CALIBRATION_READY,
         'md5_cache_age': round(time.time() - _MD5_DB_CACHE['ts'], 2),
+        'loss_streak_cache_age': round(time.time() - _LOSS_STREAK_CACHE['ts'], 2),
         'timestamp': datetime.now().isoformat()
     })
 
@@ -1156,7 +1231,7 @@ def pattern_debug():
                 all_sigs[name] = {'error': str(e)}
 
         return jsonify({
-            'version': 'v4',
+            'version': 'v5',
             'last_5p': format_tx(results, 5),
             'pattern': {'label': pattern_label, 'pred': pattern_pred, 'conf': pattern_conf},
             'md5': {'pred': md5_pred, 'conf': md5_conf,
@@ -1172,289 +1247,6 @@ def pattern_debug():
         })
     except Exception as e:
         return jsonify({'error': str(e)})
-
-# =====================================================================
-# MODULE M5 CANDLE (giữ nguyên)
-# =====================================================================
-M5_CACHE = {}
-M5_CACHE_TTL = 30
-
-EXCHANGE_ENDPOINTS = [
-    {"name": "binance", "url": "https://api.binance.com/api/v3/klines",
-     "params": lambda sym, tf, lim: {"symbol": sym.upper(), "interval": tf, "limit": lim},
-     "parse": lambda raw: [{"t": int(k[0]), "o": float(k[1]), "h": float(k[2]),
-                            "l": float(k[3]), "c": float(k[4]), "v": float(k[5])} for k in raw]},
-    {"name": "bybit", "url": "https://api.bybit.com/v5/market/kline",
-     "params": lambda sym, tf, lim: {"category": "spot", "symbol": sym.upper(),
-                                     "interval": tf.replace("m", ""), "limit": min(lim, 1000)},
-     "parse": lambda raw: [{"t": int(k[0]), "o": float(k[1]), "h": float(k[2]),
-                            "l": float(k[3]), "c": float(k[4]), "v": float(k[5])}
-                           for k in reversed(raw["result"]["list"])]},
-    {"name": "okx", "url": "https://www.okx.com/api/v5/market/candles",
-     "params": lambda sym, tf, lim: {"instId": sym.upper().replace("USDT", "-USDT"),
-                                     "bar": tf, "limit": min(lim, 300)},
-     "parse": lambda raw: [{"t": int(k[0]), "o": float(k[1]), "h": float(k[2]),
-                            "l": float(k[3]), "c": float(k[4]), "v": float(k[5])}
-                           for k in reversed(raw["data"])]},
-]
-
-def m5_fetch_klines(symbol="BTCUSDT", timeframe="5m", limit=200):
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-    last_err = None
-    for ep in EXCHANGE_ENDPOINTS:
-        try:
-            r = requests.get(ep["url"], params=ep["params"](symbol, timeframe, limit),
-                             headers=headers, timeout=8)
-            if r.status_code == 200:
-                candles = ep["parse"](r.json())
-                if candles and len(candles) >= 20:
-                    return candles, ep["name"]
-            last_err = f"{ep['name']}: HTTP {r.status_code}"
-        except Exception as e:
-            last_err = f"{ep['name']}: {e}"
-    raise RuntimeError(f"Không lấy được nến: {last_err}")
-
-def m5_ema(values, period):
-    if len(values) < period: return [None] * len(values)
-    k = 2 / (period + 1)
-    out = [None] * (period - 1)
-    s = sum(values[:period]) / period
-    out.append(s); prev = s
-    for v in values[period:]:
-        prev = v * k + prev * (1 - k)
-        out.append(prev)
-    return out
-
-def m5_sma(values, period):
-    if len(values) < period: return [None] * len(values)
-    out = [None] * (period - 1)
-    s = sum(values[:period]); out.append(s / period)
-    for i in range(period, len(values)):
-        s += values[i] - values[i - period]
-        out.append(s / period)
-    return out
-
-def m5_rsi(closes, period=14):
-    if len(closes) < period + 1: return [None] * len(closes)
-    gains, losses = [], []
-    for i in range(1, len(closes)):
-        d = closes[i] - closes[i - 1]
-        gains.append(max(d, 0)); losses.append(max(-d, 0))
-    avg_g = sum(gains[:period]) / period
-    avg_l = sum(losses[:period]) / period
-    out = [None] * period
-    rs = avg_g / avg_l if avg_l else 999
-    out.append(100 - 100 / (1 + rs))
-    for i in range(period, len(gains)):
-        avg_g = (avg_g * (period - 1) + gains[i]) / period
-        avg_l = (avg_l * (period - 1) + losses[i]) / period
-        rs = avg_g / avg_l if avg_l else 999
-        out.append(100 - 100 / (1 + rs))
-    return out
-
-def m5_atr(highs, lows, closes, period=14):
-    if len(closes) < period + 1: return [None] * len(closes)
-    trs = [None]
-    for i in range(1, len(closes)):
-        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
-        trs.append(tr)
-    out = [None] * period
-    prev = sum(trs[1:period + 1]) / period
-    out.append(prev)
-    for i in range(period + 1, len(trs)):
-        prev = (prev * (period - 1) + trs[i]) / period
-        out.append(prev)
-    return out
-
-def m5_macd(closes, fast=12, slow=26, signal=9):
-    ef = m5_ema(closes, fast); es = m5_ema(closes, slow)
-    macd_line = [None] * len(closes)
-    for i in range(len(closes)):
-        if ef[i] is not None and es[i] is not None:
-            macd_line[i] = ef[i] - es[i]
-    valid = [v for v in macd_line if v is not None]
-    if len(valid) >= signal:
-        sig_valid = m5_ema(valid, signal)
-        signal_line = [None] * (len(macd_line) - len(sig_valid)) + sig_valid
-    else:
-        signal_line = [None] * len(macd_line)
-    hist = [None] * len(closes)
-    for i in range(len(closes)):
-        if macd_line[i] is not None and signal_line[i] is not None:
-            hist[i] = macd_line[i] - signal_line[i]
-    return macd_line, signal_line, hist
-
-def m5_bollinger(closes, period=20, mult=2.0):
-    mid = m5_sma(closes, period)
-    upper = [None] * len(closes); lower = [None] * len(closes)
-    for i in range(period - 1, len(closes)):
-        win = closes[i - period + 1:i + 1]
-        m = mid[i]
-        std = math.sqrt(sum((x - m) ** 2 for x in win) / period)
-        upper[i] = m + mult * std; lower[i] = m - mult * std
-    return upper, mid, lower
-
-def m5_detect_patterns(candles):
-    if len(candles) < 3: return []
-    c1, c2, c3 = candles[-3], candles[-2], candles[-1]
-    pats = []
-    def body(c): return abs(c["c"] - c["o"])
-    def rng(c): return c["h"] - c["l"] + 1e-9
-    def bull(c): return c["c"] > c["o"]
-    def bear(c): return c["c"] < c["o"]
-    if bear(c2) and bull(c3) and c3["c"] > c2["o"] and c3["o"] < c2["c"]:
-        pats.append(("bullish_engulfing", "UP"))
-    if bull(c2) and bear(c3) and c3["c"] < c2["o"] and c3["o"] > c2["c"]:
-        pats.append(("bearish_engulfing", "DOWN"))
-    b3 = body(c3)
-    lower_wick = min(c3["o"], c3["c"]) - c3["l"]
-    upper_wick = c3["h"] - max(c3["o"], c3["c"])
-    if b3 > 0 and lower_wick > 2 * b3 and upper_wick < b3: pats.append(("hammer", "UP"))
-    if b3 > 0 and upper_wick > 2 * b3 and lower_wick < b3: pats.append(("shooting_star", "DOWN"))
-    if body(c3) < 0.1 * rng(c3): pats.append(("doji", "NEUTRAL"))
-    if all(bull(c) for c in (c1, c2, c3)) and c3["c"] > c2["c"] > c1["c"]:
-        pats.append(("three_white_soldiers", "UP"))
-    if all(bear(c) for c in (c1, c2, c3)) and c3["c"] < c2["c"] < c1["c"]:
-        pats.append(("three_black_crows", "DOWN"))
-    return pats
-
-def m5_detect_trend(candles):
-    closes = [c["c"] for c in candles]
-    reasons = []; score = 0
-    ema9 = m5_ema(closes, 9); ema21 = m5_ema(closes, 21); ema50 = m5_ema(closes, 50)
-    if ema9[-1] and ema21[-1] and ema9[-1] > ema21[-1]: score += 1; reasons.append("EMA9>EMA21")
-    if ema9[-1] and ema21[-1] and ema9[-1] < ema21[-1]: score -= 1; reasons.append("EMA9<EMA21")
-    if ema21[-1] and ema50[-1] and ema21[-1] > ema50[-1]: score += 1; reasons.append("EMA21>EMA50")
-    if ema21[-1] and ema50[-1] and ema21[-1] < ema50[-1]: score -= 1; reasons.append("EMA21<EMA50")
-    if len(closes) >= 20:
-        w = closes[-20:]; n = len(w); xs = list(range(n)); xm = (n - 1) / 2
-        ym = sum(w) / n
-        num = sum((i - xm) * (w[i] - ym) for i in range(n))
-        den = sum((i - xm) ** 2 for i in range(n))
-        slope = num / den if den else 0
-        atr_vals = m5_atr([c["h"] for c in candles], [c["l"] for c in candles], closes, 14)
-        atr_v = atr_vals[-1] or (max(closes[-20:]) - min(closes[-20:])) / 10
-        norm = slope / atr_v if atr_v else 0
-        if norm > 0.05: score += 1; reasons.append("slope_up")
-        elif norm < -0.05: score -= 1; reasons.append("slope_down")
-    rsi_vals = m5_rsi(closes, 14)
-    r = rsi_vals[-1] if rsi_vals and rsi_vals[-1] is not None else 50
-    if r > 60: score += 1; reasons.append(f"RSI={r:.0f}")
-    elif r < 40: score -= 1; reasons.append(f"RSI={r:.0f}")
-    ml, sl, hist = m5_macd(closes)
-    if hist[-1] is not None:
-        if hist[-1] > 0: score += 1; reasons.append("MACD+")
-        else: score -= 1; reasons.append("MACD-")
-    if score >= 3: trend = "UP"
-    elif score <= -3: trend = "DOWN"
-    else: trend = "SIDEWAY"
-    return trend, score, reasons
-
-def m5_classify_state(candles, trend):
-    closes = [c["c"] for c in candles]
-    reasons = []
-    last = candles[-1]; prev = candles[-2] if len(candles) >= 2 else last
-    pats = m5_detect_patterns(candles)
-    pat_names = [p[0] for p in pats]
-    pat_dirs = [p[1] for p in pats if p[1] != "NEUTRAL"]
-    bullish_rev = ("hammer" in pat_names or "bullish_engulfing" in pat_names)
-    bearish_rev = ("shooting_star" in pat_names or "bearish_engulfing" in pat_names)
-    up_bb, mid_bb, low_bb = m5_bollinger(closes, 20)
-    bb_pos = None
-    if up_bb[-1] is not None and closes[-1] is not None:
-        rng = up_bb[-1] - low_bb[-1]
-        if rng > 0: bb_pos = (closes[-1] - low_bb[-1]) / rng
-    rsis = m5_rsi(closes, 14)
-    rsi_val = rsis[-1] if rsis[-1] is not None else 50
-    ml, sl, hist = m5_macd(closes)
-    hist_now = hist[-1] if hist[-1] is not None else 0
-    hist_prev = hist[-2] if len(hist) >= 2 and hist[-2] is not None else 0
-    macd_bull = hist_now > 0 and hist_now > hist_prev
-    macd_bear = hist_now < 0 and hist_now < hist_prev
-    b = abs(last["c"] - last["o"]); rng_c = last["h"] - last["l"] + 1e-9
-    body_ratio = b / rng_c
-    dao_score = 0
-    if bullish_rev and trend in ("DOWN", "SIDEWAY"): dao_score += 3; reasons.append("bullish_reversal")
-    if bearish_rev and trend in ("UP", "SIDEWAY"): dao_score += 3; reasons.append("bearish_reversal")
-    if bb_pos is not None and bb_pos < 0.05 and trend != "UP" and bullish_rev: dao_score += 2; reasons.append("bb_oversold_reversal")
-    if bb_pos is not None and bb_pos > 0.95 and trend != "DOWN" and bearish_rev: dao_score += 2; reasons.append("bb_overbought_reversal")
-    if rsi_val < 30 and bullish_rev: dao_score += 1; reasons.append("rsi_oversold")
-    if rsi_val > 70 and bearish_rev: dao_score += 1; reasons.append("rsi_overbought")
-    thuan_score = 0
-    if trend == "UP" and macd_bull and body_ratio > 0.5: thuan_score += 2; reasons.append("trend_up_momentum")
-    if trend == "DOWN" and macd_bear and body_ratio > 0.5: thuan_score += 2; reasons.append("trend_down_momentum")
-    if trend == "UP" and last["c"] > prev["h"]: thuan_score += 2; reasons.append("breakout_up")
-    if trend == "DOWN" and last["c"] < prev["l"]: thuan_score += 2; reasons.append("breakdown_down")
-    nghich_score = 0
-    if trend == "UP" and (bearish_rev or (macd_bear and body_ratio < 0.4)): nghich_score += 2; reasons.append("pullback_in_uptrend")
-    if trend == "DOWN" and (bullish_rev or (macd_bull and body_ratio < 0.4)): nghich_score += 2; reasons.append("bounce_in_downtrend")
-    if trend == "UP" and rsi_val > 70: nghich_score += 1; reasons.append("rsi_overbought_uptrend")
-    if trend == "DOWN" and rsi_val < 30: nghich_score += 1; reasons.append("rsi_oversold_downtrend")
-    xuhuong_score = 0
-    if trend in ("UP", "DOWN") and body_ratio > 0.6 and abs(hist_now) > abs(hist_prev): xuhuong_score += 2; reasons.append("strong_trend_candle")
-    if trend != "SIDEWAY" and abs(hist_now) > 0: xuhuong_score += 1; reasons.append("macd_aligned")
-    scores = {"DAO": dao_score, "THUAN": thuan_score, "NGHICH": nghich_score, "XUHUONG": xuhuong_score}
-    best_state = max(scores, key=scores.get); best_score = scores[best_state]
-    if best_score == 0: best_state = "XUHUONG" if trend == "SIDEWAY" else "THUAN"
-    if best_state == "DAO":
-        if any(d == "UP" for d in pat_dirs) or (bb_pos is not None and bb_pos < 0.2): signal = "BUY"
-        elif any(d == "DOWN" for d in pat_dirs) or (bb_pos is not None and bb_pos > 0.8): signal = "SELL"
-        else: signal = "WAIT"
-    elif best_state == "THUAN":
-        signal = "BUY" if trend == "UP" else ("SELL" if trend == "DOWN" else "WAIT")
-    elif best_state == "NGHICH":
-        signal = "WAIT"
-    else:
-        signal = "BUY" if trend == "UP" else ("SELL" if trend == "DOWN" else "WAIT")
-    base_conf = 50 + best_score * 8
-    if trend != "SIDEWAY": base_conf += 5
-    if pats: base_conf += 3
-    conf = int(max(40, min(95, base_conf)))
-    return best_state, signal, conf, reasons
-
-def m5_analyze(symbol="BTCUSDT", timeframe="5m", limit=200):
-    key = f"{symbol.upper()}_{timeframe}"
-    now = datetime.now().timestamp()
-    if key in M5_CACHE:
-        ts, data = M5_CACHE[key]
-        if now - ts < M5_CACHE_TTL: return data
-    candles, exchange = m5_fetch_klines(symbol, timeframe, limit)
-    trend, trend_score, trend_reasons = m5_detect_trend(candles)
-    state, signal, conf, state_reasons = m5_classify_state(candles, trend)
-    last = candles[-1]
-    reasons = trend_reasons + state_reasons
-    seen = set(); reasons_dedup = []
-    for r in reasons:
-        if r not in seen: seen.add(r); reasons_dedup.append(r)
-    result = {"symbol": symbol.upper(), "timeframe": timeframe,
-              "timestamp": int(last["t"]), "price": round(last["c"], 6),
-              "trend": trend, "state": state, "signal": signal,
-              "confidence": conf, "reasons": reasons_dedup,
-              "exchange": exchange, "candle_count": len(candles),
-              "generated_at": datetime.now().isoformat()}
-    M5_CACHE[key] = (now, result)
-    return result
-
-@app.route('/api/m5/<symbol>')
-@app.route('/api/m5/<symbol>/<timeframe>')
-def m5_api(symbol, timeframe="5m"):
-    try:
-        return jsonify(m5_analyze(symbol, timeframe, 200))
-    except Exception as e:
-        return jsonify({"symbol": symbol.upper(), "timeframe": timeframe,
-                        "error": str(e), "trend": "SIDEWAY", "state": "XUHUONG",
-                        "signal": "WAIT", "confidence": 0, "reasons": [f"error: {e}"]})
-
-@app.route('/api/m5/batch')
-@app.route('/api/m5/batch/<symbols>')
-def m5_batch(symbols="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT"):
-    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()][:10]
-    out = {}
-    for s in sym_list:
-        try: out[s] = m5_analyze(s, "5m", 200)
-        except Exception as e: out[s] = {"symbol": s, "error": str(e)}
-    return jsonify({"count": len(out), "results": out})
-
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
