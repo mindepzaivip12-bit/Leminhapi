@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, Counter
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -250,100 +250,204 @@ setInterval(fetchData, 5000);
 def _opp(v):
     return "Xỉu" if v == "Tài" else "Tài"
 
+
 def format_tx(results, length):
     if len(results) < length:
         return None
     return "-".join("T" if r == "Tài" else "X" for r in results[:length])
 
+
 # =====================================================================
-# THUẬT TOÁN MỚI: CHỈ DÙNG 5 PHIÊN GẦN NHẤT
+# THUẬT TOÁN NÂNG CẤP - MULTI-LAYER SCORING
 # =====================================================================
-def analyze_5p(results):
+
+def _streak_info(results):
+    """Trả về (value, length) của chuỗi bệt hiện tại (mới nhất)."""
+    if not results:
+        return None, 0
+    cur = results[0]
+    length = 1
+    for r in results[1:]:
+        if r == cur:
+            length += 1
+        else:
+            break
+    return cur, length
+
+
+def _markov_next(results, window=40):
     """
-    Trả về (prediction, confidence, pattern_name, pattern_label)
-    Dựa trên 5 phiên gần nhất (results[0] là mới nhất).
-    Các cầu: Đảo / Thuận / Nghịch bệt / 1-1
-    Không thiên lệch 1 phiên.
+    Markov bậc 1 trên `window` phiên gần nhất.
+    Trả về (prediction, prob) hoặc None nếu chưa đủ data.
     """
-    if len(results) < 5:
+    seq = results[:window]
+    if len(seq) < 6:
         return None
+    trans = Counter()
+    for i in range(len(seq) - 1):
+        trans[(seq[i], seq[i + 1])] += 1
+    cur_state = seq[0]
+    total_from = sum(c for (a, b), c in trans.items() if a == cur_state)
+    if total_from == 0:
+        return None
+    p_tai = trans.get((cur_state, "Tài"), 0) / total_from
+    p_xiu = trans.get((cur_state, "Xỉu"), 0) / total_from
+    if p_tai >= p_xiu:
+        return ("Tài", p_tai)
+    return ("Xỉu", p_xiu)
 
-    last5 = results[:5]  # mới nhất -> cũ nhất
-    # alt_count: số lần đổi giữa các phiên liên tiếp
-    alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
 
-    # 1) CẦU ĐẢO THUẬN: T-X-T-X-T hoặc X-T-X-T-X (alt = 4)
-    if alt_count == 4:
-        pred = _opp(last5[0])
-        return (pred, 78, "dao_thuan", "Đảo thuận (1-1)")
+def _pattern_score(results):
+    """
+    Chấm điểm pattern đa tầng. Trả về list các (prediction, weight, label).
+    weight = 0..1 (độ mạnh pattern).
+    """
+    hits = []
+    if len(results) < 5:
+        return hits
 
-    # 2) CẦU 1-1: mẫu T-X-X-T, X-T-T-X, T-T-X-X, X-X-T-T (alt = 2, không bệt)
-    #    Nhận diện đối xứng 1-1
-    if alt_count == 2:
-        # kiểm tra mẫu đối xứng 1-1: cặp đầu và cặp cuối đối nhau
-        # T-X | X-T  (T X X T)  hoặc  X-T | T-X  (X T T X)
-        # T-T | X-X  (T T X X)  hoặc  X-X | T-T  (X X T T)
+    last5 = results[:5]
+    cur, slen = _streak_info(results)
+
+    # 1) BỆT (streak)
+    if slen >= 6:
+        hits.append((cur, 0.92, f"Bệt cực mạnh {slen}P"))
+    elif slen == 5:
+        hits.append((cur, 0.86, "Bệt 5P"))
+    elif slen == 4:
+        hits.append((cur, 0.78, "Bệt 4P"))
+    elif slen == 3:
+        hits.append((cur, 0.68, "Bệt 3P"))
+
+    # 2) ĐẢO 1-1
+    alt5 = sum(1 for i in range(4) if last5[i] != last5[i + 1])
+    if alt5 == 4:
+        hits.append((_opp(last5[0]), 0.80, "Đảo 1-1 (5P)"))
+        if len(results) >= 8:
+            last8 = results[:8]
+            alt8 = sum(1 for i in range(7) if last8[i] != last8[i + 1])
+            if alt8 >= 6:
+                hits.append((_opp(last5[0]), 0.88, "Đảo 1-1 mạnh (8P)"))
+
+    # 3) CẦU 2-2 (T T X X T T ...)
+    if len(results) >= 5:
+        # T T X X -> phiên tiếp nên cùng với X (đang 2-2)
         if last5[0] == last5[1] and last5[2] == last5[3] and last5[0] != last5[2]:
-            # T T X X / X X T T -> đang ở cuối nhóm, dự đoán đảo
-            pred = _opp(last5[0])
-            return (pred, 72, "1_1_doi", "1-1 đối (bệt đôi)")
-        if last5[0] == last5[1] and last5[3] == last5[4] and last5[1] == last5[2] and last5[0] != last5[3]:
-            # T X X T / X T T X -> đang đối xứng, dự đoán tiếp nối đảo
-            pred = _opp(last5[0])
-            return (pred, 74, "1_1_doi_xung", "1-1 đối xứng")
+            # nếu 4 phiên đầu đã đối lập -> phiên 5 nên đảo (bắt đầu chu kỳ mới)
+            hits.append((_opp(last5[0]), 0.70, "Cầu 2-2"))
 
-    # 3) CẦU THUẬN (BỆT): 5 phiên cùng 1 kết quả (alt = 0)
-    if alt_count == 0:
-        return (last5[0], 80, "thuan_bet", "Thuận (bệt 5)")
+    # 4) CẦU 1-2-1 / 2-1-2 (nhịp đối xứng)
+    if len(results) >= 5:
+        if last5[0] != last5[1] and last5[1] == last5[2] and last5[2] != last5[3] and last5[3] == last5[4]:
+            # X T T X X -> pattern đối xứng
+            hits.append((_opp(last5[0]), 0.66, "Cầu 1-2-2-1"))
 
-    # 4) CẦU NGHỊCH BỆT: 4 phiên đầu cùng, phiên thứ 5 khác (alt = 1)
-    if alt_count == 1:
-        # T T T T X  hoặc  X X X X T  -> bệt đang gãy
-        # Hoặc T T T X X / X X X T T -> đang chuyển
-        if last5[0] == last5[1] == last5[2] == last5[3] and last5[3] != last5[4]:
-            # bệt 4 vừa gãy -> theo đà nghịch
-            return (last5[0], 70, "nghich_bet", "Nghịch bệt (gãy)")
-        if last5[0] != last5[1] and last5[1] == last5[2] == last5[3] == last5[4]:
-            # vừa bắt đầu bệt mới -> tiếp tục bệt
-            return (last5[1], 68, "nghich_bet_moi", "Nghịch bệt (mới)")
+    # 5) BẺ CẦU: đang bệt 2-3 mà phiên cuối lệch
+    if slen == 1 and len(results) >= 4:
+        # phiên mới nhất lệch so với 3 phiên trước (vừa gãy bệt)
+        if results[1] == results[2] == results[3] and results[0] != results[1]:
+            # xu hướng tiếp tục theo phiên mới (đảo)
+            hits.append((results[0], 0.62, "Gãy bệt (theo mới)"))
+            # hoặc quay lại bệt (nghịch)
+            hits.append((results[1], 0.58, "Hồi bệt"))
 
-    # 5) CẦU THUẬN NGẮN: 4 phiên đầu cùng, phiên cuối đảo (dạng bệt 3-1)
-    #    alt = 1 đã xử lý, còn alt = 2 nhưng không khớp 1-1 -> nghịch
-    # 6) Fallback: theo đa số 5 phiên (không thiên lệch 1 phiên)
-    t = last5.count("Tài")
-    x = 5 - t
+    return hits
+
+
+def _majority_score(results, window=15):
+    """Đa số trong window phiên gần nhất."""
+    seq = results[:window]
+    if not seq:
+        return None
+    t = seq.count("Tài")
+    x = len(seq) - t
+    total = len(seq)
     if t > x:
-        return ("Tài", 55, "majority", "Đa số Tài")
+        return ("Tài", t / total)
     elif x > t:
-        return ("Xỉu", 55, "majority", "Đa số Xỉu")
-    else:
-        # hòa 3-2 -> theo phiên mới nhất nhưng conf thấp
-        return (last5[0], 52, "tie_break", "Hòa (theo mới nhất)")
+        return ("Xỉu", x / total)
+    return None
+
 
 def compute_prediction(results):
     """
-    Trả về (prediction, confidence)
-    Chỉ dùng analyze_5p, không dùng MD5/Markov/trend.
+    Kết hợp đa tầng: Pattern + Markov + Majority.
+    Trả về (prediction, confidence, pattern_label).
     """
     if not results:
-        return ("Tài", 50)
+        return ("Tài", 50, "Chưa có dữ liệu")
+
+    # Chưa đủ data -> đa số đơn giản
     if len(results) < 5:
-        # chưa đủ 5 phiên -> theo đa số hiện có
         t = results.count("Tài")
         x = len(results) - t
         if t > x:
-            return ("Tài", 55)
+            return ("Tài", 55, "Đa số ngắn hạn")
         elif x > t:
-            return ("Xỉu", 55)
-        else:
-            return (results[0], 52)
+            return ("Xỉu", 55, "Đa số ngắn hạn")
+        return (results[0], 52, "Theo phiên mới")
 
-    res = analyze_5p(results)
-    if res is None:
-        return (results[0], 52)
-    pred, conf, _, _ = res
-    conf = int(max(50, min(MAX_CONFIDENCE, conf)))
-    return (pred, conf)
+    # Thu thập các tín hiệu
+    signals = []  # list[(prediction, score, label)]
+    pattern_label = "-"
+
+    # 1) Pattern (weight cao nhất)
+    pattern_hits = _pattern_score(results)
+    if pattern_hits:
+        # Chọn pattern có weight cao nhất
+        best = max(pattern_hits, key=lambda x: x[1])
+        signals.append((best[0], best[1] * 3.0, best[2]))
+        pattern_label = best[2]
+        # Cộng thêm các pattern phụ cùng chiều
+        for p in pattern_hits:
+            if p[0] == best[0] and p[1] < best[1]:
+                signals.append((p[0], p[1] * 1.0, p[2]))
+
+    # 2) Markov
+    mk = _markov_next(results, window=40)
+    if mk:
+        pred_mk, prob_mk = mk
+        # chỉ dùng nếu prob đủ cao (>0.55)
+        if prob_mk >= 0.55:
+            signals.append((pred_mk, (prob_mk - 0.5) * 4.0, "Markov"))
+
+    # 3) Majority (weight thấp - chỉ để cân bằng)
+    mj = _majority_score(results, window=15)
+    if mj:
+        pred_mj, ratio_mj = mj
+        if ratio_mj >= 0.55:
+            signals.append((pred_mj, (ratio_mj - 0.5) * 2.0, "Đa số 15P"))
+
+    # Nếu không có tín hiệu -> fallback theo phiên mới
+    if not signals:
+        return (results[0], 52, "Không tín hiệu (theo mới)")
+
+    # Tổng hợp: weighted vote
+    score_tai = 0.0
+    score_xiu = 0.0
+    for pred, w, _ in signals:
+        if pred == "Tài":
+            score_tai += w
+        else:
+            score_xiu += w
+
+    total_w = score_tai + score_xiu
+    if total_w == 0:
+        return (results[0], 52, "Hòa tín hiệu")
+
+    if score_tai >= score_xiu:
+        pred = "Tài"
+        raw_conf = score_tai / total_w
+    else:
+        pred = "Xỉu"
+        raw_conf = score_xiu / total_w
+
+    # Map raw_conf (0.5..1.0) -> confidence (52..90)
+    conf = 52 + (raw_conf - 0.5) * 2 * (MAX_CONFIDENCE - 52)
+    conf = int(max(52, min(MAX_CONFIDENCE, round(conf))))
+
+    return (pred, conf, pattern_label)
+
 
 # =====================================================================
 # API & ROUTES
@@ -361,15 +465,22 @@ def fetch_sessions():
                     dices = item.get('dices', [0, 0, 0])
                     dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
                     total = item.get('point', sum(dices))
-                    rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
+                    rows.append({
+                        'phien': int(item['id']),
+                        'result': res,
+                        'dice': dice_str,
+                        'total': total
+                    })
                 return rows, True
     except Exception as e:
         print(f"[API ERROR]: {e}")
     return [], False
 
+
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
+
 
 @app.route('/api/history')
 def history():
@@ -391,7 +502,7 @@ def history():
         total_past = 0
         history_for_next = [v['result'] for v in valid][::-1]
 
-        next_pred, next_conf = compute_prediction(history_for_next)
+        next_pred, next_conf, _ = compute_prediction(history_for_next)
 
         out.append({
             'phien': valid[-1]['phien'] + 1,
@@ -407,10 +518,17 @@ def history():
 
         for i in range(len(valid) - 1, max(-1, len(valid) - 150), -1):
             hist = [v['result'] for v in valid[:i]][::-1]
-            if len(hist) >= 5:
-                pred, conf = compute_prediction(hist)
+            if len(hist) >= 3:
+                pred, conf, _ = compute_prediction(hist)
             elif len(hist) > 0:
-                pred, conf = compute_prediction(hist)
+                t = hist.count("Tài")
+                x = len(hist) - t
+                if t > x:
+                    pred, conf = "Tài", 55
+                elif x > t:
+                    pred, conf = "Xỉu", 55
+                else:
+                    pred, conf = hist[0], 52
             else:
                 pred, conf = "-", 50
 
@@ -435,6 +553,7 @@ def history():
     except Exception as e:
         return jsonify({'error': str(e), 'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
+
 @app.route('/api/predict')
 def predict():
     global RESET_ID
@@ -451,13 +570,9 @@ def predict():
             return jsonify({'error': 'Chưa có dữ liệu'})
 
         results = [v['result'] for v in valid][::-1]
-        pred, conf = compute_prediction(results)
+        pred, conf, pattern_label = compute_prediction(results)
 
-        # Thông tin cầu 5P
         ls_5p = format_tx(results, 5)
-        analysis = analyze_5p(results) if len(results) >= 5 else None
-        pattern_name = analysis[2] if analysis else "-"
-        pattern_label = analysis[3] if analysis else "Chưa đủ 5 phiên"
 
         return jsonify({
             'last_phien': valid[-1]['phien'],
@@ -467,17 +582,17 @@ def predict():
             'recovery_flipped': False,
             'loss_streak': 0,
             'ls_5p': ls_5p,
-            'pattern': pattern_name,
             'pattern_label': pattern_label,
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
         return jsonify({'error': str(e)})
 
+
 @app.route('/lc79')
 @app.route('/lc79md5')
 def lc79_api():
-    """API đồng bộ với /api/predict, chỉ dùng 5 phiên gần nhất."""
+    """API đồng bộ output với /api/predict."""
     global RESET_ID
     try:
         raw_rows, _ = fetch_sessions()
@@ -492,11 +607,8 @@ def lc79_api():
             return jsonify({'id': '@cskhleminh', 'phien': '-', 'du_doan': '-', 'do_tin_cay': '50%'})
 
         results = [v['result'] for v in valid][::-1]
-        pred, conf = compute_prediction(results)
-
+        pred, conf, pattern_label = compute_prediction(results)
         ls_5p = format_tx(results, 5)
-        analysis = analyze_5p(results) if len(results) >= 5 else None
-        pattern_label = analysis[3] if analysis else "Chưa đủ 5 phiên"
 
         return jsonify({
             'id': '@cskhleminh',
@@ -512,6 +624,7 @@ def lc79_api():
     except Exception as e:
         return jsonify({'id': '@cskhleminh', 'phien': '-', 'du_doan': '-', 'do_tin_cay': '50%', 'error': str(e)})
 
+
 @app.route('/api/reset', methods=['POST'])
 def reset_api():
     global RESET_ID, HISTORY_CACHE
@@ -526,6 +639,7 @@ def reset_api():
         return jsonify({'status': 'error', 'message': 'Lỗi mạng'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
