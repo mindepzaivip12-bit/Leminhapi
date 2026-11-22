@@ -265,23 +265,123 @@ def _tx(seq):
 
 
 # =====================================================================
-# 🧠 HOUSE-STYLE ENGINE (thuật toán mới)
+# 🧠 HOUSE-STYLE ENGINE v2 — TÍCH HỢP ĐẢO 1-1 (THUẬN NGHỊCH)
 # =====================================================================
+
+class AlternatingDetector:
+    """
+    Chuyên gia nhận diện cầu ĐẢO 1-1 (T-X-T-X), đảo 1-2, đảo 2-2.
+    Trả về (p_alternating, confidence, pattern_type)
+    p_alternating = xác suất phiên tiếp theo LÀ ĐẢO (tức ngược với phiên hiện tại).
+    """
+
+    @staticmethod
+    def detect(seq):
+        # seq[0] = phiên gần nhất, seq[1] = trước đó, ...
+        if len(seq) < 3:
+            return 0.0, 0.0, "none"
+
+        s = _tx(seq)  # chuỗi T/X
+
+        # ---- Đảo 1-1 thuần: T-X-T-X-T-X ----
+        alt1 = AlternatingDetector._match_period(s, period=1, max_check=6)
+        # ---- Đảo 2-2: T-T-X-X-T-T-X-X ----
+        alt2 = AlternatingDetector._match_period(s, period=2, max_check=8)
+        # ---- Đảo 1-2 / 2-1: T-X-X-T-X-X ----
+        alt3 = AlternatingDetector._match_period(s, period=3, max_check=9)
+
+        candidates = [
+            ("alt1", alt1, 0.92),   # đảo 1-1 là mạnh nhất
+            ("alt2", alt2, 0.80),
+            ("alt3", alt3, 0.70),
+        ]
+
+        best_type = "none"
+        best_score = 0.0
+        best_conf = 0.0
+
+        for name, score, cap in candidates:
+            if score > best_score:
+                best_score = score
+                best_type = name
+                best_conf = min(1.0, score * cap)
+
+        if best_score < 0.35:
+            return 0.0, 0.0, "none"
+
+        # p_alternating: nếu phiên hiện tại là T, dự đoán X (đảo) → p_alt cao
+        p_alt = 0.5 + (best_score - 0.5) * 2  # scale 0.35..1 → 0.5..1
+        p_alt = min(0.98, max(0.5, p_alt))
+        return p_alt, best_conf, best_type
+
+    @staticmethod
+    def _match_period(s, period, max_check):
+        """
+        Kiểm tra xem chuỗi s (gần nhất ở đầu) có khớp pattern đảo chu kỳ `period` không.
+        period=1: T-X-T-X
+        period=2: T-T-X-X-T-T-X-X
+        Trả về score 0..1.
+        """
+        if len(s) < period * 2 + 1:
+            return 0.0
+
+        # Trích mẫu 2*period ký tự gần nhất
+        tail = s[:period * 2]
+        # Đảm bảo tail có đúng 2 block đối nhau
+        block_a = tail[:period]
+        block_b = tail[period:period * 2]
+        if block_a == block_b:
+            return 0.0  # không phải đảo
+
+        # Đếm số block liên tiếp khớp mẫu (a, b, a, b, ...)
+        matched_blocks = 0
+        max_blocks = min(max_check // period, len(s) // period)
+        for i in range(max_blocks):
+            start = i * period
+            end = start + period
+            if end > len(s):
+                break
+            block = s[start:end]
+            expected = block_a if i % 2 == 0 else block_b
+            if block == expected:
+                matched_blocks += 1
+            else:
+                break
+
+        if matched_blocks < 2:
+            return 0.0
+
+        # Score: số block khớp / max_blocks, cộng bonus nếu khớp dài
+        base = matched_blocks / max_blocks if max_blocks > 0 else 0.0
+        if matched_blocks >= 4:
+            base = min(1.0, base + 0.10)
+        if matched_blocks >= 6:
+            base = min(1.0, base + 0.10)
+        return base
+
 
 class HouseEngine:
     DEFAULT_WEIGHTS = {
-        "markov1": 0.18,
-        "markov2": 0.22,
-        "markov3": 0.12,
-        "pattern_memory": 0.18,
-        "multi_tf": 0.14,
-        "streak_physics": 0.10,
-        "bias_detector": 0.06,
+        "markov1": 0.14,
+        "markov2": 0.18,
+        "markov3": 0.10,
+        "pattern_memory": 0.16,
+        "multi_tf": 0.12,
+        "streak_physics": 0.08,
+        "bias_detector": 0.05,
+        "alternating": 0.17,   # ⭐ chuyên gia đảo
     }
+
+    ALT_OVERRIDE_THRESHOLD = 0.62  # p_alt >= threshold → override
+    ALT_OVERRIDE_MARGIN = 0.08     # phải vượt score tổng
 
     def __init__(self):
         self.weights = dict(self.DEFAULT_WEIGHTS)
         self.recent_perf = []
+        self.alt_perf = []          # hiệu suất riêng của alternating
+        self.last_alt_type = "none"
+
+    # ------------------ STATIC FEATURES ------------------
 
     @staticmethod
     def _markov_1(seq):
@@ -367,7 +467,8 @@ class HouseEngine:
         bias = 0.0
         reason = ""
         if flips >= 4:
-            bias = -0.15 if streak_val == "Tài" else 0.15
+            # đảo 1-1 mạnh tay hơn (từ -0.15 → -0.20)
+            bias = -0.20 if streak_val == "Tài" else 0.20
             reason = f"dao1-1({streak_len})"
         elif streak_len >= 3:
             decay = max(0.05, 0.25 - 0.04 * (streak_len - 3))
@@ -399,11 +500,18 @@ class HouseEngine:
         ent = -(p * math.log2(p) + (1 - p) * math.log2(1 - p))
         return ent / 1.0
 
+    # ------------------ LEARNING ------------------
+
     def update_performance(self, pred, actual):
         if pred in ("Tài", "Xỉu") and actual in ("Tài", "Xỉu"):
-            self.recent_perf.append(1 if pred == actual else 0)
+            win = 1 if pred == actual else 0
+            self.recent_perf.append(win)
             if len(self.recent_perf) > 60:
                 self.recent_perf.pop(0)
+            if self.last_alt_type != "none":
+                self.alt_perf.append(win)
+                if len(self.alt_perf) > 30:
+                    self.alt_perf.pop(0)
 
     def _adaptive_weights(self):
         if len(self.recent_perf) < 15:
@@ -419,8 +527,19 @@ class HouseEngine:
             w["pattern_memory"] = min(0.25, w["pattern_memory"] + 0.03)
             w["markov2"] = min(0.28, w["markov2"] + 0.02)
             w["bias_detector"] = max(0.03, w["bias_detector"] - 0.02)
+
+        # Adaptive riêng cho alternating
+        if len(self.alt_perf) >= 8:
+            alt_acc = sum(self.alt_perf) / len(self.alt_perf)
+            if alt_acc < 0.4:
+                w["alternating"] = max(0.08, w["alternating"] - 0.04)
+            elif alt_acc > 0.65:
+                w["alternating"] = min(0.28, w["alternating"] + 0.04)
+
         s = sum(w.values())
         return {k: v / s for k, v in w.items()}
+
+    # ------------------ PREDICT ------------------
 
     def predict(self, results):
         if not results:
@@ -436,16 +555,19 @@ class HouseEngine:
         signals = {}
         supports = {}
 
+        # 1) Markov 1
         p1 = self._markov_1(results)
         signals["markov1"] = p1 - 0.5
         supports["markov1"] = 0.6
 
+        # 2) Markov n
         for n in (2, 3):
             pn = self._markov_n(results, n)
             if pn is not None:
                 signals[f"markov{n}"] = pn - 0.5
                 supports[f"markov{n}"] = 0.7 if n == 2 else 0.5
 
+        # 3) Pattern memory
         pm = self._pattern_memory(results, max_len=4)
         pm_bias = 0.0
         pm_support = 0.0
@@ -461,22 +583,41 @@ class HouseEngine:
         signals["pattern_memory"] = pm_bias
         supports["pattern_memory"] = min(1.0, pm_total / 10.0)
 
+        # 4) Multi timeframe
         signals["multi_tf"] = self._multi_tf_bias(results)
         supports["multi_tf"] = 0.8
 
+        # 5) Streak physics
         sp_bias, sp_reason = self._streak_physics(results)
         signals["streak_physics"] = sp_bias
         supports["streak_physics"] = 0.7
 
+        # 6) Bias detector
         signals["bias_detector"] = self._bias_detector(results)
         supports["bias_detector"] = 0.6
 
+        # 7) ⭐ ALTERNATING DETECTOR (đảo thuận nghịch 1-1)
+        p_alt, alt_conf, alt_type = AlternatingDetector.detect(results)
+        self.last_alt_type = alt_type if alt_conf > 0 else "none"
+
+        last = results[0]  # phiên gần nhất
+        if alt_type != "none" and alt_conf > 0:
+            # Nếu đảo đang chạy → phiên tiếp theo nên NGƯỢC với phiên gần nhất
+            alt_target = _opp(last)
+            alt_sign = 1.0 if alt_target == "Tài" else -1.0
+            signals["alternating"] = alt_sign * min(1.0, alt_conf)
+            supports["alternating"] = min(1.0, alt_conf + 0.2)
+        else:
+            signals["alternating"] = 0.0
+            supports["alternating"] = 0.0
+
+        # ---- Tổng hợp có trọng số ----
         w = self._adaptive_weights()
         total_score = 0.0
         total_weight = 0.0
         for name, bias in signals.items():
-            if name in w:
-                eff_w = w[name] * supports.get(name, 0.5)
+            if name in w and supports.get(name, 0) > 0:
+                eff_w = w[name] * supports[name]
                 total_score += bias * eff_w
                 total_weight += eff_w
 
@@ -484,31 +625,69 @@ class HouseEngine:
             return results[0], 52, "fallback"
 
         score = total_score / total_weight
+
+        # ---- ⭐ OVERRIDE: đảo đủ mạnh → ưu tiên đảo ----
+        override_active = False
+        if alt_type != "none" and p_alt >= self.ALT_OVERRIDE_THRESHOLD:
+            alt_target = _opp(last)
+            # Score hiện tại có đồng thuận với đảo không?
+            alt_sign = 1.0 if alt_target == "Tài" else -1.0
+            if score * alt_sign < self.ALT_OVERRIDE_MARGIN:
+                # Override: kéo score về phía đảo
+                score = alt_sign * max(abs(score), self.ALT_OVERRIDE_MARGIN + 0.02)
+                override_active = True
+
         pred = "Tài" if score >= 0 else "Xỉu"
 
         if abs(score) < 0.02:
             pred = results[0]
-            label_extra = "edge"
+            label_extra = " edge"
         else:
             label_extra = ""
 
+        # ---- Confidence ----
         vol = self._volatility(results)
         conf_raw = 50 + abs(score) * 40
         conf_raw *= (1 - 0.25 * vol)
+
+        # Boost nếu đảo confirmed mạnh
+        if override_active:
+            conf_raw += 6
+        elif alt_type != "none" and alt_conf > 0.6:
+            # Đồng thuận đảo nhưng không override
+            if (pred == "Tài" and alt_target == "Tài") or (pred == "Xỉu" and alt_target == "Xỉu"):
+                conf_raw += 3
+
+        # Penalty nếu mâu thuẫn với đảo mạnh
+        if alt_type != "none" and alt_conf > 0.6 and not override_active:
+            alt_target = _opp(last)
+            if pred != alt_target:
+                conf_raw -= 4
+
         conf = int(round(conf_raw))
         conf = max(52, min(MAX_CONFIDENCE, conf))
         conf += random.randint(-2, 2)
         conf = max(52, min(MAX_CONFIDENCE, conf))
 
+        # ---- Label ----
         seq5 = results[:5]
         pattern = _tx(seq5)
         flips = sum(1 for i in range(4) if seq5[i] != seq5[i + 1])
-        if flips == 4:
+        if alt_type == "alt1" and alt_conf > 0.5:
+            mode = f"Đảo 1-1 ({int(alt_conf*100)}%)"
+        elif alt_type == "alt2":
+            mode = f"Đảo 2-2 ({int(alt_conf*100)}%)"
+        elif alt_type == "alt3":
+            mode = f"Đảo 1-2 ({int(alt_conf*100)}%)"
+        elif flips == 4:
             mode = "Đảo 1-1"
         elif flips <= 2:
             mode = f"Bệt {self._streak_len(results)}P"
         else:
             mode = "Hỗn tạp"
+
+        if override_active:
+            mode += " ⚡OVR"
         label = f"{mode} ({pattern}) | {sp_reason}{label_extra}"
 
         return pred, conf, label
@@ -582,6 +761,7 @@ def history():
 
         # Replay để build recent_perf cho adaptive learning
         ENGINE.recent_perf = []
+        ENGINE.alt_perf = []
         for i in range(len(history_for_engine) - 1, 0, -1):
             hist_at_i = history_for_engine[i:]
             if len(hist_at_i) >= 1:
@@ -589,6 +769,7 @@ def history():
                 actual = history_for_engine[i - 1]
                 ENGINE.update_performance(p, actual)
         ENGINE.recent_perf = ENGINE.recent_perf[-60:]
+        ENGINE.alt_perf = ENGINE.alt_perf[-30:]
 
         out = []
         correct_count = 0
@@ -722,6 +903,8 @@ def reset_api():
                 RESET_ID = valid[-1]['phien']
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
                 ENGINE.recent_perf = []
+                ENGINE.alt_perf = []
+                ENGINE.last_alt_type = "none"
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng'})
     except Exception as e:
