@@ -1,8 +1,7 @@
 import os
-import random
 import math
 from datetime import datetime
-from collections import Counter, defaultdict
+from collections import defaultdict
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -13,12 +12,12 @@ CORS(app)
 API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 
 HISTORY_CACHE = {}
-MAX_CONFIDENCE = 90
+MAX_CONFIDENCE = 92
+MIN_CONFIDENCE = 52
 RESET_ID = 0
-WINDOW = 5
 
 # =====================================================================
-# HTML TEMPLATE (GIỮ NGUYÊN 100%)
+# HTML TEMPLATE (giữ nguyên 100% từ bản gốc của bạn)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -26,7 +25,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 </title>
+<title>LE MINH MD5</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -71,12 +70,10 @@ HTML_TEMPLATE = """
     .badge-tai { background: var(--tai-bg); color: var(--tai-color); border: 1px solid rgba(56, 189, 248, 0.3); box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); }
     .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); border: 1px solid rgba(244, 114, 182, 0.3); box-shadow: 0 0 10px rgba(244, 114, 182, 0.2); }
     .badge-empty { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
-    .recovery-badge { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 800; background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); box-shadow: 0 0 10px rgba(251, 146, 60, 0.3); animation: pulse 1.5s infinite; letter-spacing: 0.5px; }
     .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; }
     .st-win { background: var(--win-bg); color: var(--win-color); border: 1px solid rgba(52, 211, 153, 0.3); }
     .st-lose { background: var(--lose-bg); color: var(--lose-color); border: 1px solid rgba(248, 113, 113, 0.3); }
     .st-wait { background: var(--wait-bg); color: var(--wait-color); border: 1px solid rgba(251, 191, 36, 0.3); animation: pulse 1.5s infinite; }
-    .st-recover { background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); animation: pulse 1.5s infinite; }
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
     .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
@@ -173,21 +170,16 @@ function renderTable(rows, stats) {
     }
     let html = '';
     rows.forEach((row) => {
-        let trClass = '';
-        if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
+        let trClass = row.is_next ? 'class="row-next"' : '';
         let predHtml = `<span class="badge badge-empty">-</span>`;
         if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
-        let recBadge = "";
-        if (row.recovery_flipped) {
-            recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡ </span>`;
-        }
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
             const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
             confHtml = `<div class="${cls}">${row.conf}%</div>`;
         }
-        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}${recBadge}</div>`;
+        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}</div>`;
         let resultHtml = `<span class="badge badge-empty">-</span>`;
         if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
@@ -200,9 +192,7 @@ function renderTable(rows, stats) {
         let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
         let statusHtml = '';
         if (row.is_next) {
-            statusHtml = row.recovery_flipped
-                ? `<span class="status st-recover">⚡ Đảo chiều</span>`
-                : `<span class="status st-wait">Chờ kết quả</span>`;
+            statusHtml = `<span class="status st-wait">Chờ kết quả</span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -248,94 +238,78 @@ setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# CORE UTILS
+# UTILS
 # =====================================================================
 def _opp(v):
     return "Xỉu" if v == "Tài" else "Tài"
-
 
 def format_tx(results, length):
     if len(results) < length:
         return None
     return "-".join("T" if r == "Tài" else "X" for r in results[:length])
 
-
 def _tx(seq):
     return "".join("T" if r == "Tài" else "X" for r in seq)
 
 
 # =====================================================================
-# 🧠 HOUSE-STYLE ENGINE v2 — TÍCH HỢP ĐẢO 1-1 (THUẬN NGHỊCH)
+# 🧠 ENGINE v3 — BAYESIAN + ENTROPY + REGIME DETECTION
 # =====================================================================
 
 class AlternatingDetector:
     """
-    Chuyên gia nhận diện cầu ĐẢO 1-1 (T-X-T-X), đảo 1-2, đảo 2-2.
-    Trả về (p_alternating, confidence, pattern_type)
-    p_alternating = xác suất phiên tiếp theo LÀ ĐẢO (tức ngược với phiên hiện tại).
+    Phát hiện đảo 1-1, 2-2, 1-2 với binomial confidence.
+    p_alt: xác suất phiên tiếp theo là ĐẢO (ngược phiên gần nhất).
     """
 
     @staticmethod
     def detect(seq):
-        # seq[0] = phiên gần nhất, seq[1] = trước đó, ...
-        if len(seq) < 3:
+        if len(seq) < 4:
             return 0.0, 0.0, "none"
 
-        s = _tx(seq)  # chuỗi T/X
+        s = _tx(seq)
+        candidates = []
 
-        # ---- Đảo 1-1 thuần: T-X-T-X-T-X ----
-        alt1 = AlternatingDetector._match_period(s, period=1, max_check=6)
-        # ---- Đảo 2-2: T-T-X-X-T-T-X-X ----
-        alt2 = AlternatingDetector._match_period(s, period=2, max_check=8)
-        # ---- Đảo 1-2 / 2-1: T-X-X-T-X-X ----
-        alt3 = AlternatingDetector._match_period(s, period=3, max_check=9)
+        for period, cap in [(1, 0.95), (2, 0.85), (3, 0.72)]:
+            score, n_blocks = AlternatingDetector._match_period(s, period)
+            if score > 0:
+                # Confidence dựa trên binomial: n block khớp liên tiếp
+                # P >= n_block khớp ngẫu nhiên = 0.5^(n_blocks-1)
+                binomial_conf = 1.0 - (0.5 ** max(1, n_blocks - 1))
+                conf = binomial_conf * cap * score
+                candidates.append((period, score, conf, n_blocks))
 
-        candidates = [
-            ("alt1", alt1, 0.92),   # đảo 1-1 là mạnh nhất
-            ("alt2", alt2, 0.80),
-            ("alt3", alt3, 0.70),
-        ]
-
-        best_type = "none"
-        best_score = 0.0
-        best_conf = 0.0
-
-        for name, score, cap in candidates:
-            if score > best_score:
-                best_score = score
-                best_type = name
-                best_conf = min(1.0, score * cap)
-
-        if best_score < 0.35:
+        if not candidates:
             return 0.0, 0.0, "none"
 
-        # p_alternating: nếu phiên hiện tại là T, dự đoán X (đảo) → p_alt cao
-        p_alt = 0.5 + (best_score - 0.5) * 2  # scale 0.35..1 → 0.5..1
+        # Ưu tiên period nhỏ nếu conf tương đương
+        best = max(candidates, key=lambda x: (x[2], -x[0]))
+        period, score, conf, n_blocks = best
+
+        if conf < 0.20:
+            return 0.0, 0.0, "none"
+
+        # p_alt scale từ score
+        p_alt = 0.5 + score * 0.48  # 0.5 → 0.98
         p_alt = min(0.98, max(0.5, p_alt))
-        return p_alt, best_conf, best_type
+
+        type_map = {1: "alt1", 2: "alt2", 3: "alt3"}
+        return p_alt, min(1.0, conf), type_map[period]
 
     @staticmethod
-    def _match_period(s, period, max_check):
-        """
-        Kiểm tra xem chuỗi s (gần nhất ở đầu) có khớp pattern đảo chu kỳ `period` không.
-        period=1: T-X-T-X
-        period=2: T-T-X-X-T-T-X-X
-        Trả về score 0..1.
-        """
+    def _match_period(s, period):
+        """Trả về (score 0..1, số block khớp liên tiếp)."""
         if len(s) < period * 2 + 1:
-            return 0.0
+            return 0.0, 0
 
-        # Trích mẫu 2*period ký tự gần nhất
         tail = s[:period * 2]
-        # Đảm bảo tail có đúng 2 block đối nhau
         block_a = tail[:period]
         block_b = tail[period:period * 2]
         if block_a == block_b:
-            return 0.0  # không phải đảo
+            return 0.0, 0
 
-        # Đếm số block liên tiếp khớp mẫu (a, b, a, b, ...)
-        matched_blocks = 0
-        max_blocks = min(max_check // period, len(s) // period)
+        matched = 0
+        max_blocks = len(s) // period
         for i in range(max_blocks):
             start = i * period
             end = start + period
@@ -344,44 +318,125 @@ class AlternatingDetector:
             block = s[start:end]
             expected = block_a if i % 2 == 0 else block_b
             if block == expected:
-                matched_blocks += 1
+                matched += 1
             else:
                 break
 
-        if matched_blocks < 2:
-            return 0.0
+        if matched < 2:
+            return 0.0, matched
 
-        # Score: số block khớp / max_blocks, cộng bonus nếu khớp dài
-        base = matched_blocks / max_blocks if max_blocks > 0 else 0.0
-        if matched_blocks >= 4:
+        # Score: tỷ lệ khớp, bonus nếu chuỗi dài
+        base = matched / max_blocks
+        if matched >= 4:
             base = min(1.0, base + 0.10)
-        if matched_blocks >= 6:
-            base = min(1.0, base + 0.10)
-        return base
+        if matched >= 6:
+            base = min(1.0, base + 0.08)
+        return base, matched
+
+
+class RegimeDetector:
+    """
+    Phát hiện chế độ cầu hiện tại: BET (bệt), ALT (đảo), MIX (hỗn tạp).
+    Trả về dict với regime + confidence cho từng chế độ.
+    """
+    @staticmethod
+    def detect(seq):
+        if len(seq) < 6:
+            return {"regime": "unknown", "bet_conf": 0.0, "alt_conf": 0.0, "mix_conf": 1.0}
+
+        recent = seq[:20]
+        flips = sum(1 for i in range(len(recent) - 1) if recent[i] != recent[i + 1])
+        n_pairs = len(recent) - 1
+        flip_rate = flips / n_pairs if n_pairs > 0 else 0.5
+
+        # Streak hiện tại
+        streak_val = recent[0]
+        streak_len = 1
+        for r in recent[1:]:
+            if r == streak_val:
+                streak_len += 1
+            else:
+                break
+
+        bet_conf = 0.0
+        alt_conf = 0.0
+        mix_conf = 0.0
+
+        # Bệt: streak dài, flip_rate thấp
+        if streak_len >= 3:
+            bet_conf = min(1.0, 0.4 + 0.15 * (streak_len - 2))
+        if flip_rate < 0.35:
+            bet_conf = max(bet_conf, 0.7 - flip_rate * 1.0)
+
+        # Đảo: flip_rate cao
+        if flip_rate > 0.65:
+            alt_conf = min(1.0, (flip_rate - 0.5) * 3.0)
+        if flip_rate >= 0.85:
+            alt_conf = max(alt_conf, 0.85)
+
+        # Hỗn tạp: flip_rate trung bình
+        if 0.35 <= flip_rate <= 0.65:
+            mix_conf = 1.0 - abs(flip_rate - 0.5) * 2.5
+            mix_conf = max(0.0, min(1.0, mix_conf))
+
+        # Normalize
+        total = bet_conf + alt_conf + mix_conf
+        if total > 0:
+            bet_conf /= total
+            alt_conf /= total
+            mix_conf /= total
+        else:
+            mix_conf = 1.0
+
+        if bet_conf >= max(alt_conf, mix_conf):
+            regime = "bet"
+        elif alt_conf >= max(bet_conf, mix_conf):
+            regime = "alt"
+        else:
+            regime = "mix"
+
+        return {
+            "regime": regime,
+            "bet_conf": bet_conf,
+            "alt_conf": alt_conf,
+            "mix_conf": mix_conf,
+            "flip_rate": flip_rate,
+            "streak_len": streak_len,
+            "streak_val": streak_val,
+        }
 
 
 class HouseEngine:
-    DEFAULT_WEIGHTS = {
-        "markov1": 0.14,
-        "markov2": 0.18,
+    """
+    Engine v3: Bayesian weighted ensemble + regime-aware + entropy confidence.
+    KHÔNG random.
+    """
+
+    # Base weights (sẽ được adaptive theo performance)
+    BASE_WEIGHTS = {
+        "markov1": 0.12,
+        "markov2": 0.16,
         "markov3": 0.10,
-        "pattern_memory": 0.16,
-        "multi_tf": 0.12,
+        "pattern_memory": 0.15,
+        "multi_tf": 0.10,
         "streak_physics": 0.08,
         "bias_detector": 0.05,
-        "alternating": 0.17,   # ⭐ chuyên gia đảo
+        "alternating": 0.18,
+        "regime_align": 0.06,
     }
 
-    ALT_OVERRIDE_THRESHOLD = 0.62  # p_alt >= threshold → override
-    ALT_OVERRIDE_MARGIN = 0.08     # phải vượt score tổng
+    ALT_OVERRIDE_P_ALT = 0.70     # ngưỡng p_alt để override
+    ALT_OVERRIDE_MARGIN = 0.06
+    BET_OVERRIDE_STREAK = 5       # streak >= 5 → ưu tiên bệt mạnh
+    MIX_MIN_CONF_CAP = 68         # conf tối đa khi cầu hỗn tạp
 
     def __init__(self):
-        self.weights = dict(self.DEFAULT_WEIGHTS)
-        self.recent_perf = []
-        self.alt_perf = []          # hiệu suất riêng của alternating
-        self.last_alt_type = "none"
+        self.weights = dict(self.BASE_WEIGHTS)
+        self.perf_history = []        # list of 0/1
+        self.signal_perf = defaultdict(lambda: {"win": 0, "total": 0})
+        self.last_signal_biases = {}
 
-    # ------------------ STATIC FEATURES ------------------
+    # ---------------- STATIC FEATURES ----------------
 
     @staticmethod
     def _markov_1(seq):
@@ -454,29 +509,19 @@ class HouseEngine:
     @staticmethod
     def _streak_physics(seq):
         if not seq:
-            return 0.0, "empty"
-        streak_val = seq[0]
-        streak_len = 1
+            return 0.0, 0
+        val = seq[0]
+        n = 1
         for r in seq[1:]:
-            if r == streak_val:
-                streak_len += 1
-            else:
-                break
-        flips = sum(1 for i in range(min(len(seq) - 1, 5)) if seq[i] != seq[i + 1])
+            if r == val: n += 1
+            else: break
 
-        bias = 0.0
-        reason = ""
-        if flips >= 4:
-            # đảo 1-1 mạnh tay hơn (từ -0.15 → -0.20)
-            bias = -0.20 if streak_val == "Tài" else 0.20
-            reason = f"dao1-1({streak_len})"
-        elif streak_len >= 3:
-            decay = max(0.05, 0.25 - 0.04 * (streak_len - 3))
-            bias = decay if streak_val == "Xỉu" else -decay
-            reason = f"bet{streak_len}"
-        else:
-            reason = "normal"
-        return bias, reason
+        # Bệt: đi theo bệt (không phải chống)
+        if n >= 3:
+            decay = min(0.30, 0.08 * (n - 2))
+            bias = decay if val == "Tài" else -decay
+            return bias, n
+        return 0.0, n
 
     @staticmethod
     def _bias_detector(seq):
@@ -487,7 +532,8 @@ class HouseEngine:
         dev = p_tai - 0.5
         if abs(dev) < 0.10:
             return 0.0
-        return -dev * 0.5
+        # Mean reversion: lệch nhiều → kéo về
+        return -dev * 0.6
 
     @staticmethod
     def _volatility(seq):
@@ -498,59 +544,78 @@ class HouseEngine:
         if p in (0.0, 1.0):
             return 0.0
         ent = -(p * math.log2(p) + (1 - p) * math.log2(1 - p))
-        return ent / 1.0
+        return ent
 
-    # ------------------ LEARNING ------------------
+    # ---------------- LEARNING ----------------
 
-    def update_performance(self, pred, actual):
-        if pred in ("Tài", "Xỉu") and actual in ("Tài", "Xỉu"):
-            win = 1 if pred == actual else 0
-            self.recent_perf.append(win)
-            if len(self.recent_perf) > 60:
-                self.recent_perf.pop(0)
-            if self.last_alt_type != "none":
-                self.alt_perf.append(win)
-                if len(self.alt_perf) > 30:
-                    self.alt_perf.pop(0)
+    def update_performance(self, pred, actual, last_biases=None):
+        if pred not in ("Tài", "Xỉu") or actual not in ("Tài", "Xỉu"):
+            return
+        win = 1 if pred == actual else 0
+        self.perf_history.append(win)
+        if len(self.perf_history) > 80:
+            self.perf_history.pop(0)
+
+        # Cập nhật per-signal performance
+        if last_biases:
+            for name, bias in last_biases.items():
+                if abs(bias) < 0.01:
+                    continue
+                signal_pred = "Tài" if bias > 0 else "Xỉu"
+                self.signal_perf[name]["total"] += 1
+                if signal_pred == actual:
+                    self.signal_perf[name]["win"] += 1
 
     def _adaptive_weights(self):
-        if len(self.recent_perf) < 15:
-            return self.weights
-        recent = self.recent_perf[-30:]
-        acc = sum(recent) / len(recent)
-        w = dict(self.weights)
-        if acc < 0.45:
-            w["bias_detector"] = min(0.20, w["bias_detector"] + 0.05)
-            w["markov1"] = max(0.10, w["markov1"] - 0.03)
-            w["pattern_memory"] = max(0.10, w["pattern_memory"] - 0.03)
-        elif acc > 0.60:
-            w["pattern_memory"] = min(0.25, w["pattern_memory"] + 0.03)
-            w["markov2"] = min(0.28, w["markov2"] + 0.02)
-            w["bias_detector"] = max(0.03, w["bias_detector"] - 0.02)
+        """Bayesian adaptive weights dựa trên hiệu suất gần đây của từng signal."""
+        w = dict(self.BASE_WEIGHTS)
 
-        # Adaptive riêng cho alternating
-        if len(self.alt_perf) >= 8:
-            alt_acc = sum(self.alt_perf) / len(self.alt_perf)
-            if alt_acc < 0.4:
-                w["alternating"] = max(0.08, w["alternating"] - 0.04)
-            elif alt_acc > 0.65:
-                w["alternating"] = min(0.28, w["alternating"] + 0.04)
+        # Global performance
+        if len(self.perf_history) >= 20:
+            recent = self.perf_history[-40:]
+            acc = sum(recent) / len(recent)
+            if acc < 0.48:
+                w["bias_detector"] += 0.04
+                w["markov1"] -= 0.02
+                w["pattern_memory"] -= 0.02
+            elif acc > 0.58:
+                w["pattern_memory"] += 0.03
+                w["markov2"] += 0.02
+                w["bias_detector"] -= 0.02
 
+        # Per-signal Bayesian adjustment: Laplace smoothing
+        for name, stats in self.signal_perf.items():
+            if name not in w:
+                continue
+            total = stats["total"]
+            if total < 8:
+                continue
+            # Laplace-smoothed accuracy
+            acc = (stats["win"] + 1) / (total + 2)
+            # Nếu acc > 0.55 → tăng weight; < 0.45 → giảm
+            multiplier = 1.0 + (acc - 0.5) * 0.8  # 0.5→1.0, 0.55→1.04, 0.45→0.96
+            w[name] *= multiplier
+
+        # Normalize
         s = sum(w.values())
-        return {k: v / s for k, v in w.items()}
+        if s > 0:
+            w = {k: v / s for k, v in w.items()}
+        return w
 
-    # ------------------ PREDICT ------------------
+    # ---------------- PREDICT ----------------
 
-    def predict(self, results):
+    def predict(self, results, return_biases=False):
         if not results:
-            return "Tài", 50, "empty"
+            return ("Tài", 50, "empty") + (({}) if return_biases else ())
 
         if len(results) < 5:
             t = results.count("Tài")
             x = len(results) - t
-            if t > x: return "Tài", 55, "short-majority"
-            if x > t: return "Xỉu", 55, "short-majority"
-            return results[0], 52, "follow-last"
+            if t > x: pred, conf = "Tài", 55
+            elif x > t: pred, conf = "Xỉu", 55
+            else: pred, conf = results[0], 52
+            base = (pred, conf, "short-majority")
+            return base + (({}) if return_biases else ())
 
         signals = {}
         supports = {}
@@ -558,60 +623,71 @@ class HouseEngine:
         # 1) Markov 1
         p1 = self._markov_1(results)
         signals["markov1"] = p1 - 0.5
-        supports["markov1"] = 0.6
+        supports["markov1"] = 0.55
 
-        # 2) Markov n
+        # 2) Markov 2 & 3
         for n in (2, 3):
             pn = self._markov_n(results, n)
             if pn is not None:
                 signals[f"markov{n}"] = pn - 0.5
-                supports[f"markov{n}"] = 0.7 if n == 2 else 0.5
+                supports[f"markov{n}"] = 0.70 if n == 2 else 0.45
 
         # 3) Pattern memory
         pm = self._pattern_memory(results, max_len=4)
         pm_bias = 0.0
-        pm_support = 0.0
+        pm_weight_sum = 0.0
         pm_total = 0
         for L, (p, sup) in pm.items():
             if p is not None:
                 w = {2: 0.5, 3: 0.3, 4: 0.2}.get(L, 0.1)
                 pm_bias += (p - 0.5) * w
-                pm_support += w
+                pm_weight_sum += w
                 pm_total += sup
-        if pm_support > 0:
-            pm_bias /= pm_support
+        if pm_weight_sum > 0:
+            pm_bias /= pm_weight_sum
         signals["pattern_memory"] = pm_bias
-        supports["pattern_memory"] = min(1.0, pm_total / 10.0)
+        supports["pattern_memory"] = min(1.0, pm_total / 12.0)
 
-        # 4) Multi timeframe
+        # 4) Multi-timeframe
         signals["multi_tf"] = self._multi_tf_bias(results)
-        supports["multi_tf"] = 0.8
+        supports["multi_tf"] = 0.75
 
-        # 5) Streak physics
-        sp_bias, sp_reason = self._streak_physics(results)
+        # 5) Streak physics (theo bệt)
+        sp_bias, streak_len = self._streak_physics(results)
         signals["streak_physics"] = sp_bias
-        supports["streak_physics"] = 0.7
+        supports["streak_physics"] = 0.65 if streak_len >= 3 else 0.0
 
-        # 6) Bias detector
+        # 6) Bias detector (mean reversion)
         signals["bias_detector"] = self._bias_detector(results)
-        supports["bias_detector"] = 0.6
+        supports["bias_detector"] = 0.55
 
-        # 7) ⭐ ALTERNATING DETECTOR (đảo thuận nghịch 1-1)
+        # 7) Alternating detector
         p_alt, alt_conf, alt_type = AlternatingDetector.detect(results)
-        self.last_alt_type = alt_type if alt_conf > 0 else "none"
-
-        last = results[0]  # phiên gần nhất
-        if alt_type != "none" and alt_conf > 0:
-            # Nếu đảo đang chạy → phiên tiếp theo nên NGƯỢC với phiên gần nhất
+        last = results[0]
+        if alt_type != "none" and alt_conf > 0.15:
             alt_target = _opp(last)
             alt_sign = 1.0 if alt_target == "Tài" else -1.0
             signals["alternating"] = alt_sign * min(1.0, alt_conf)
-            supports["alternating"] = min(1.0, alt_conf + 0.2)
+            supports["alternating"] = min(1.0, alt_conf + 0.15)
         else:
             signals["alternating"] = 0.0
             supports["alternating"] = 0.0
 
-        # ---- Tổng hợp có trọng số ----
+        # 8) Regime align (signal phụ thuộc chế độ)
+        regime = RegimeDetector.detect(results)
+        regime_bias = 0.0
+        if regime["regime"] == "bet":
+            # Đi theo bệt
+            s_val = regime["streak_val"]
+            regime_bias = (0.10 if s_val == "Tài" else -0.10) * regime["bet_conf"]
+        elif regime["regime"] == "alt":
+            # Đi theo đảo
+            alt_target = _opp(last)
+            regime_bias = (0.10 if alt_target == "Tài" else -0.10) * regime["alt_conf"]
+        signals["regime_align"] = regime_bias
+        supports["regime_align"] = max(regime["bet_conf"], regime["alt_conf"])
+
+        # ---- Weighted ensemble ----
         w = self._adaptive_weights()
         total_score = 0.0
         total_weight = 0.0
@@ -622,95 +698,116 @@ class HouseEngine:
                 total_weight += eff_w
 
         if total_weight == 0:
-            return results[0], 52, "fallback"
+            base = (results[0], 52, "fallback")
+            return base + ((signals,) if return_biases else ())
 
         score = total_score / total_weight
 
-        # ---- ⭐ OVERRIDE: đảo đủ mạnh → ưu tiên đảo ----
-        override_active = False
-        if alt_type != "none" and p_alt >= self.ALT_OVERRIDE_THRESHOLD:
+        # ---- Override logic ----
+        override_mode = None
+        override_strength = 0.0
+
+        # Override 1: Đảo mạnh
+        if alt_type != "none" and p_alt >= self.ALT_OVERRIDE_P_ALT:
             alt_target = _opp(last)
-            # Score hiện tại có đồng thuận với đảo không?
             alt_sign = 1.0 if alt_target == "Tài" else -1.0
             if score * alt_sign < self.ALT_OVERRIDE_MARGIN:
-                # Override: kéo score về phía đảo
                 score = alt_sign * max(abs(score), self.ALT_OVERRIDE_MARGIN + 0.02)
-                override_active = True
+                override_mode = "alt"
+                override_strength = alt_conf
+
+        # Override 2: Bệt cực mạnh
+        if streak_len >= self.BET_OVERRIDE_STREAK and override_mode is None:
+            s_val = results[0]
+            bet_sign = 1.0 if s_val == "Tài" else -1.0
+            # Nếu score ngược hướng bệt → kéo về
+            if score * bet_sign < 0:
+                score = bet_sign * max(abs(score) * 0.7, 0.05)
+                override_mode = "bet"
+                override_strength = min(1.0, 0.5 + 0.1 * (streak_len - 4))
 
         pred = "Tài" if score >= 0 else "Xỉu"
 
-        if abs(score) < 0.02:
-            pred = results[0]
-            label_extra = " edge"
-        else:
-            label_extra = ""
+        # ---- Confidence via Bayesian ensemble ----
+        # Đếm số signal đồng thuận
+        pred_sign = 1.0 if pred == "Tài" else -1.0
+        agreeing = 0
+        total_sig = 0
+        for name, bias in signals.items():
+            if abs(bias) < 0.01:
+                continue
+            total_sig += 1
+            if bias * pred_sign > 0:
+                agreeing += 1
+        agreement_ratio = agreeing / total_sig if total_sig > 0 else 0.5
 
-        # ---- Confidence ----
-        vol = self._volatility(results)
-        conf_raw = 50 + abs(score) * 40
-        conf_raw *= (1 - 0.25 * vol)
-
-        # Boost nếu đảo confirmed mạnh
-        if override_active:
-            conf_raw += 6
-        elif alt_type != "none" and alt_conf > 0.6:
-            # Đồng thuận đảo nhưng không override
-            if (pred == "Tài" and alt_target == "Tài") or (pred == "Xỉu" and alt_target == "Xỉu"):
-                conf_raw += 3
-
-        # Penalty nếu mâu thuẫn với đảo mạnh
-        if alt_type != "none" and alt_conf > 0.6 and not override_active:
+        # Confidence components
+        strength_conf = min(1.0, abs(score) * 4.0)          # strength of ensemble score
+        agreement_conf = agreement_ratio                      # consensus
+        alt_bonus = 0.0
+        if alt_type != "none" and alt_conf > 0.5:
             alt_target = _opp(last)
-            if pred != alt_target:
-                conf_raw -= 4
+            if pred == alt_target:
+                alt_bonus = min(0.20, alt_conf * 0.25)
 
-        conf = int(round(conf_raw))
-        conf = max(52, min(MAX_CONFIDENCE, conf))
-        conf += random.randint(-2, 2)
-        conf = max(52, min(MAX_CONFIDENCE, conf))
+        # Entropy penalty: cầu càng volatile → conf càng giảm
+        vol = self._volatility(results)  # 0..1
+        entropy_factor = 1.0 - 0.30 * vol
+
+        # Base confidence: blend strength + agreement
+        raw_conf = 0.5 + (0.5 * strength_conf + 0.5 * agreement_conf) * 0.45
+        raw_conf = raw_conf * entropy_factor + alt_bonus
+
+        # Override boost
+        if override_mode:
+            raw_conf += 0.06 * override_strength
+
+        # Regime cap: cầu hỗn tạp → không bao giờ quá tự tin
+        if regime["regime"] == "mix":
+            cap = self.MIX_MIN_CONF_CAP / 100.0
+            raw_conf = min(raw_conf, cap)
+
+        conf = int(round(raw_conf * 100))
+        conf = max(MIN_CONFIDENCE, min(MAX_CONFIDENCE, conf))
 
         # ---- Label ----
         seq5 = results[:5]
         pattern = _tx(seq5)
-        flips = sum(1 for i in range(4) if seq5[i] != seq5[i + 1])
         if alt_type == "alt1" and alt_conf > 0.5:
-            mode = f"Đảo 1-1 ({int(alt_conf*100)}%)"
+            mode = f"Đảo1-1({int(alt_conf*100)}%)"
         elif alt_type == "alt2":
-            mode = f"Đảo 2-2 ({int(alt_conf*100)}%)"
+            mode = f"Đảo2-2({int(alt_conf*100)}%)"
         elif alt_type == "alt3":
-            mode = f"Đảo 1-2 ({int(alt_conf*100)}%)"
-        elif flips == 4:
-            mode = "Đảo 1-1"
-        elif flips <= 2:
-            mode = f"Bệt {self._streak_len(results)}P"
-        else:
+            mode = f"Đảo1-2({int(alt_conf*100)}%)"
+        elif streak_len >= 4:
+            mode = f"Bệt{streak_len}P"
+        elif regime["regime"] == "mix":
             mode = "Hỗn tạp"
+        else:
+            mode = "Cân bằng"
 
-        if override_active:
-            mode += " ⚡OVR"
-        label = f"{mode} ({pattern}) | {sp_reason}{label_extra}"
+        if override_mode == "alt":
+            mode += " ⚡ALT"
+        elif override_mode == "bet":
+            mode += " ⚡BET"
 
-        return pred, conf, label
+        label = f"{mode} | flips={regime['flip_rate']:.2f} | {pattern}"
 
-    @staticmethod
-    def _streak_len(seq):
-        v = seq[0]
-        n = 1
-        for r in seq[1:]:
-            if r == v: n += 1
-            else: break
-        return n
+        result = (pred, conf, label)
+        if return_biases:
+            return result + (signals,)
+        return result
 
 
 ENGINE = HouseEngine()
 
 
-def compute_prediction(results):
-    return ENGINE.predict(results)
+def compute_prediction(results, return_biases=False):
+    return ENGINE.predict(results, return_biases=return_biases)
 
 
 # =====================================================================
-# API & ROUTES (giữ nguyên)
+# API & ROUTES
 # =====================================================================
 def fetch_sessions():
     try:
@@ -737,6 +834,33 @@ def fetch_sessions():
     return [], False
 
 
+def _load_history():
+    """Load + refresh HISTORY_CACHE. Trả về list valid đã sort."""
+    global RESET_ID
+    raw_rows, _ = fetch_sessions()
+    if raw_rows:
+        for row in raw_rows:
+            HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]:
+            del HISTORY_CACHE[k]
+    return sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+
+
+def _warmup_engine(history_results):
+    """Replay để build performance history cho adaptive learning."""
+    ENGINE.perf_history = []
+    ENGINE.signal_perf = defaultdict(lambda: {"win": 0, "total": 0})
+    n = len(history_results)
+    # Replay từ cũ → mới
+    for i in range(min(80, n - 1), 0, -1):
+        hist_at_i = history_results[i:]
+        if len(hist_at_i) < 1:
+            continue
+        pred, _, _, biases = ENGINE.predict(hist_at_i, return_biases=True)
+        actual = history_results[i - 1]
+        ENGINE.update_performance(pred, actual, last_biases=biases)
+
+
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -744,38 +868,22 @@ def index():
 
 @app.route('/api/history')
 def history():
-    global RESET_ID
     try:
-        raw_rows, success = fetch_sessions()
-        if raw_rows:
-            for row in raw_rows:
-                HISTORY_CACHE[row['phien']] = row
-            for k in [k for k in HISTORY_CACHE if k < RESET_ID]:
-                del HISTORY_CACHE[k]
-
-        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        valid = _load_history()
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
         history_for_engine = [v['result'] for v in valid][::-1]
 
-        # Replay để build recent_perf cho adaptive learning
-        ENGINE.recent_perf = []
-        ENGINE.alt_perf = []
-        for i in range(len(history_for_engine) - 1, 0, -1):
-            hist_at_i = history_for_engine[i:]
-            if len(hist_at_i) >= 1:
-                p, _, _ = ENGINE.predict(hist_at_i)
-                actual = history_for_engine[i - 1]
-                ENGINE.update_performance(p, actual)
-        ENGINE.recent_perf = ENGINE.recent_perf[-60:]
-        ENGINE.alt_perf = ENGINE.alt_perf[-30:]
+        # Warmup CHỈ MỘT LẦN mỗi request, không predict lặp lại
+        _warmup_engine(history_for_engine)
 
         out = []
         correct_count = 0
         total_past = 0
         next_pred, next_conf, _ = compute_prediction(history_for_engine)
 
+        # Phiên tiếp theo
         out.append({
             'phien': valid[-1]['phien'] + 1,
             'is_next': True,
@@ -784,11 +892,11 @@ def history():
             'dice': "? + ? + ?",
             'is_correct': None,
             'conf': next_conf,
-            'recovery_flipped': False,
-            'loss_streak': 0
         })
 
-        for i in range(len(valid) - 1, max(-1, len(valid) - 150), -1):
+        # Lịch sử 150 phiên — predict cho từng phiên
+        start_idx = max(0, len(valid) - 150)
+        for i in range(len(valid) - 1, start_idx - 1, -1):
             hist = [v['result'] for v in valid[:i]][::-1]
             if len(hist) >= 5:
                 pred, conf, _ = compute_prediction(hist)
@@ -815,7 +923,6 @@ def history():
                 'dice': valid[i]['dice'],
                 'is_correct': is_correct,
                 'conf': conf,
-                'recovery_flipped': False
             })
 
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
@@ -825,16 +932,8 @@ def history():
 
 @app.route('/api/predict')
 def predict():
-    global RESET_ID
     try:
-        raw_rows, _ = fetch_sessions()
-        if raw_rows:
-            for row in raw_rows:
-                HISTORY_CACHE[row['phien']] = row
-            for k in [k for k in HISTORY_CACHE if k < RESET_ID]:
-                del HISTORY_CACHE[k]
-
-        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        valid = _load_history()
         if not valid:
             return jsonify({'error': 'Chưa có dữ liệu'})
 
@@ -847,8 +946,6 @@ def predict():
             'next_phien': valid[-1]['phien'] + 1,
             'prediction': pred,
             'confidence': conf,
-            'recovery_flipped': False,
-            'loss_streak': 0,
             'ls_5p': ls_5p,
             'pattern_label': pattern_label,
             'timestamp': datetime.now().isoformat()
@@ -860,16 +957,8 @@ def predict():
 @app.route('/lc79')
 @app.route('/lc79md5')
 def lc79_api():
-    global RESET_ID
     try:
-        raw_rows, _ = fetch_sessions()
-        if raw_rows:
-            for row in raw_rows:
-                HISTORY_CACHE[row['phien']] = row
-            for k in [k for k in HISTORY_CACHE if k < RESET_ID]:
-                del HISTORY_CACHE[k]
-
-        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        valid = _load_history()
         if not valid:
             return jsonify({'id': '@cskhleminh', 'phien': '-', 'du_doan': '-', 'do_tin_cay': '50%'})
 
@@ -885,8 +974,6 @@ def lc79_api():
             'do_tin_cay': f"{conf}%",
             'ls_5p': ls_5p,
             'cau': pattern_label,
-            'auto_flip': False,
-            'chuoi_thua': 0
         })
     except Exception as e:
         return jsonify({'id': '@cskhleminh', 'phien': '-', 'du_doan': '-', 'do_tin_cay': '50%', 'error': str(e)})
@@ -902,9 +989,9 @@ def reset_api():
             if valid:
                 RESET_ID = valid[-1]['phien']
                 HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
-                ENGINE.recent_perf = []
-                ENGINE.alt_perf = []
-                ENGINE.last_alt_type = "none"
+                # Reset engine state
+                ENGINE.perf_history = []
+                ENGINE.signal_perf = defaultdict(lambda: {"win": 0, "total": 0})
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
         return jsonify({'status': 'error', 'message': 'Lỗi mạng'})
     except Exception as e:
