@@ -2,7 +2,6 @@ import os
 import math
 import hashlib
 import traceback
-import time
 from datetime import datetime
 from collections import defaultdict, deque
 import requests
@@ -14,37 +13,13 @@ CORS(app)
 
 API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
 
-# =====================================================================
-# CẤU HÌNH CHUNG
-# =====================================================================
 HISTORY_CACHE = {}
 PREDICTION_CACHE = {}
-MAX_PREDICTION_CACHE = 3000
+MAX_PREDICTION_CACHE = 2000
 RESET_ID = 0
-MAX_CONFIDENCE = 93
-REPLAY_N = 40
-SCAN_LIMIT = 120
-
-# API state
-_API_LAST_OK = {"ts": 0.0, "rows": []}
-_API_FAIL_COUNT = {"n": 0}
-_API_STALE_SECONDS = 30
-
-# =====================================================================
-# CẤU HÌNH ĐẢO NGHỊCH THUẬN (POLARITY INVERSION)
-# =====================================================================
-POLARITY_WINDOW = 15                # đo trên N phiên gần nhất
-POLARITY_MIN_SAMPLES = 4            # cần tối thiểu để kết luận
-POLARITY_INVERT_THRESHOLD = 0.38    # acc < 38% → nghịch pha → invert
-POLARITY_BOOST_THRESHOLD = 0.62     # acc > 62% → thuận mạnh → boost
-POLARITY_NOISE_LOW = 0.42
-POLARITY_NOISE_HIGH = 0.58
-POLARITY_CONFIDENCE_BOOST = 1.35    # hệ số khi thuận mạnh
-POLARITY_CONFIDENCE_INVERT = 0.85   # hệ số khi nghịch pha (giữ một phần)
-POLARITY_NOISE_PENALTY = 0.45       # hệ số khi nhiễu
-
-# Bộ nhớ polarity — rolling history mỗi signal
-SIGNAL_POLARITY_HISTORY = defaultdict(lambda: deque(maxlen=POLARITY_WINDOW))
+MAX_CONFIDENCE = 90
+REPLAY_N = 50        # Tối ưu: 80 → 50
+SCAN_LIMIT = 150     # Tối ưu: 200 → 150
 
 # =====================================================================
 # DATABASES
@@ -66,17 +41,20 @@ MD5_NGRAM_DB = {
 
 MD5_HAMMING_DB = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
 
+# 🆕 DELTA CHAIN
 MD5_DELTA_DB = {
     1: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
     2: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
     3: defaultdict(lambda: {"Tài": 0, "Xỉu": 0}),
 }
 
+# 🆕 HEX DIGIT
 MD5_HEX_DIGIT_DB = {
     pos: {val: {"Tài": 0, "Xỉu": 0} for val in range(16)}
     for pos in range(32)
 }
 
+# 🆕 SUM MOD
 MD5_SUM_MOD_DB = {
     "mod3": {i: {"Tài": 0, "Xỉu": 0} for i in range(3)},
     "mod5": {i: {"Tài": 0, "Xỉu": 0} for i in range(5)},
@@ -87,7 +65,7 @@ LOSS_HISTORY = deque(maxlen=20)
 
 
 # =====================================================================
-# HTML TEMPLATE v7 — thêm badge polarity
+# HTML TEMPLATE (GIỮ NGUYÊN)
 # =====================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -95,7 +73,7 @@ HTML_TEMPLATE = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LE MINH MD5 v7</title>
+<title>LE MINH MD5 </title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
@@ -108,7 +86,6 @@ HTML_TEMPLATE = """
         --lose-color: #f87171; --lose-bg: rgba(248, 113, 113, 0.15);
         --wait-color: #fbbf24; --wait-bg: rgba(251, 191, 36, 0.15);
         --recovery-color: #fb923c; --recovery-bg: rgba(251, 146, 60, 0.15);
-        --invert-color: #a78bfa; --invert-bg: rgba(167, 139, 250, 0.15);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
     body { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); color: var(--text-main); min-height: 100vh; padding-bottom: 40px; }
@@ -137,19 +114,16 @@ HTML_TEMPLATE = """
     .data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
     .row-next { background: rgba(14, 165, 233, 0.08); border-left: 4px solid var(--tai-color); }
     .row-next.recovery { background: rgba(251, 146, 60, 0.1); border-left: 4px solid var(--recovery-color); }
-    .row-next.invert { background: rgba(167, 139, 250, 0.1); border-left: 4px solid var(--invert-color); }
     .badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; min-width: 70px; text-align: center; }
     .badge-tai { background: var(--tai-bg); color: var(--tai-color); border: 1px solid rgba(56, 189, 248, 0.3); box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); }
     .badge-xiu { background: var(--xiu-bg); color: var(--xiu-color); border: 1px solid rgba(244, 114, 182, 0.3); box-shadow: 0 0 10px rgba(244, 114, 182, 0.2); }
     .badge-empty { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
     .recovery-badge { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 800; background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); box-shadow: 0 0 10px rgba(251, 146, 60, 0.3); animation: pulse 1.5s infinite; letter-spacing: 0.5px; }
-    .invert-badge { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 800; background: var(--invert-bg); color: var(--invert-color); border: 1px solid var(--invert-color); box-shadow: 0 0 10px rgba(167, 139, 250, 0.3); animation: pulse 1.5s infinite; letter-spacing: 0.5px; }
     .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 20px; }
     .st-win { background: var(--win-bg); color: var(--win-color); border: 1px solid rgba(52, 211, 153, 0.3); }
     .st-lose { background: var(--lose-bg); color: var(--lose-color); border: 1px solid rgba(248, 113, 113, 0.3); }
     .st-wait { background: var(--wait-bg); color: var(--wait-color); border: 1px solid rgba(251, 191, 36, 0.3); animation: pulse 1.5s infinite; }
     .st-recover { background: var(--recovery-bg); color: var(--recovery-color); border: 1px solid var(--recovery-color); animation: pulse 1.5s infinite; }
-    .st-invert { background: var(--invert-bg); color: var(--invert-color); border: 1px solid var(--invert-color); animation: pulse 1.5s infinite; }
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     .dice-text { font-size: 11px; color: var(--text-muted); display: block; margin-top: 4px; font-weight: 500; }
     .conf-badge { font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: 700; }
@@ -168,7 +142,7 @@ HTML_TEMPLATE = """
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>MD5 v7</span></div>
+    <div class="header-title">LE MINH <span>MD5 v5</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -247,20 +221,13 @@ function renderTable(rows, stats) {
     let html = '';
     rows.forEach((row) => {
         let trClass = '';
-        if (row.is_next) {
-            if (row.polarity_inverted) trClass = 'class="row-next invert"';
-            else if (row.recovery_flipped) trClass = 'class="row-next recovery"';
-            else trClass = 'class="row-next"';
-        }
+        if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
         let predHtml = `<span class="badge badge-empty">-</span>`;
         if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
         if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
         let recBadge = "";
         if (row.recovery_flipped) {
-            recBadge = `<span class="recovery-badge" title="Auto-flip">⚡</span>`;
-        }
-        if (row.polarity_inverted) {
-            recBadge += `<span class="invert-badge" title="Đảo nghịch thuận">↺</span>`;
+            recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡ </span>`;
         }
         let confHtml = "";
         if (row.conf && row.prediction !== "-") {
@@ -274,17 +241,15 @@ function renderTable(rows, stats) {
         let diceDisplay = "";
         if (row.dice !== "? + ? + ?") {
             const p = row.dice.split(" + ");
-            if (p.length === 3) {
-                const sum = parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]);
-                diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
-            }
+            const sum = parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]);
+            diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
         }
         let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
         let statusHtml = '';
         if (row.is_next) {
-            if (row.polarity_inverted) statusHtml = `<span class="status st-invert">↺ Nghịch pha</span>`;
-            else if (row.recovery_flipped) statusHtml = `<span class="status st-recover">⚡ Đảo chiều</span>`;
-            else statusHtml = `<span class="status st-wait">Chờ kết quả</span>`;
+            statusHtml = row.recovery_flipped
+                ? `<span class="status st-recover">⚡ Đảo chiều</span>`
+                : `<span class="status st-wait">Chờ kết quả</span>`;
         } else if (row.is_correct === true) {
             statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
         } else if (row.is_correct === false) {
@@ -299,7 +264,7 @@ function renderTable(rows, stats) {
 
 async function confirmReset() {
     Swal.fire({
-        title: 'Xác nhận Reset?', text: "Toàn bộ lịch sử hiển thị sẽ bị xoá!",
+        title: 'Xác nhận Reset?', text: "Toàn bộ lịch sử hiển thị sẽ bị xoá và bắt đầu lại từ đầu!",
         icon: 'warning', background: '#1e293b', color: '#f8fafc',
         showCancelButton: true, confirmButtonColor: '#0ea5e9', cancelButtonColor: '#64748b',
         confirmButtonText: 'Đồng ý', cancelButtonText: 'Hủy'
@@ -311,7 +276,7 @@ async function confirmReset() {
                 const res = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    Swal.fire({ title: 'Thành công!', text: 'Đã xoá lịch sử.', icon: 'success', background: '#1e293b', color: '#f8fafc', confirmButtonColor: '#0ea5e9' });
+                    Swal.fire({ title: 'Thành công!', text: 'Đã xoá lịch sử và bắt đầu lại.', icon: 'success', background: '#1e293b', color: '#f8fafc', confirmButtonColor: '#0ea5e9' });
                     isResetting = false; fetchData();
                 } else { throw new Error(data.message); }
             } catch (error) {
@@ -334,66 +299,23 @@ setInterval(fetchData, 5000);
 # DATA FETCHER
 # =====================================================================
 def fetch_sessions():
-    global _API_LAST_OK, _API_FAIL_COUNT
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                      '(KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Referer': 'https://tele68.com/',
-    }
-    last_err = None
-    for attempt in range(3):
-        try:
-            r = requests.get(API_URL_MD5, timeout=(3, 6), headers=headers)
-            if r.status_code != 200:
-                last_err = f"HTTP {r.status_code}"
-                time.sleep(0.25 * (attempt + 1))
-                continue
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+        r = requests.get(API_URL_MD5, timeout=5, headers=headers)
+        if r.status_code == 200:
             data = r.json()
-            lst = data.get('list') if isinstance(data, dict) else None
-            if not lst:
-                last_err = "empty list"
-                continue
-            rows = []
-            for item in lst:
-                try:
-                    rid = int(item['id'])
-                except Exception:
-                    continue
-                res_raw = str(item.get('resultTruyenThong', '')).upper()
-                if res_raw not in ("TAI", "XIU"):
-                    continue
-                res = "Tài" if res_raw == "TAI" else "Xỉu"
-                dices = item.get('dices') or [0, 0, 0]
-                try:
-                    dices = [int(x) for x in dices[:3]]
-                except Exception:
-                    dices = [0, 0, 0]
-                if len(dices) < 3:
-                    dices = [0, 0, 0]
-                try:
-                    total = int(item.get('point', sum(dices)))
-                except Exception:
-                    total = sum(dices)
-                rows.append({
-                    'phien': rid, 'result': res,
-                    'dice': f"{dices[0]} + {dices[1]} + {dices[2]}",
-                    'total': total
-                })
-            if not rows:
-                last_err = "no valid rows"
-                continue
-            _API_LAST_OK["ts"] = time.time()
-            _API_LAST_OK["rows"] = rows
-            _API_FAIL_COUNT["n"] = 0
-            return rows, True
-        except Exception as e:
-            last_err = str(e)
-            time.sleep(0.25 * (attempt + 1))
-    _API_FAIL_COUNT["n"] += 1
-    if _API_LAST_OK["rows"] and (time.time() - _API_LAST_OK["ts"] < _API_STALE_SECONDS):
-        return _API_LAST_OK["rows"], True
-    print(f"[API FAIL]: {last_err}")
+            if 'list' in data and data['list']:
+                rows = []
+                for item in data['list']:
+                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                    dices = item.get('dices', [0, 0, 0])
+                    dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
+                    total = item.get('point', sum(dices))
+                    rows.append({'phien': int(item['id']), 'result': res,
+                                 'dice': dice_str, 'total': total})
+                return rows, True
+    except Exception as e:
+        print(f"[API ERROR]: {e}")
     return [], False
 
 
@@ -475,12 +397,14 @@ def hamming_distance(h1, h2):
 
 
 def hash_sum_mod(hash_hex):
+    """Tổng giá trị hex mod 3/5/7."""
     if not hash_hex: return 0, 0, 0
     total = sum(int(c, 16) for c in hash_hex)
     return total % 3, total % 5, total % 7
 
 
 def hex_delta(h1, h2):
+    """Delta hex: XOR từng ký tự → hex string."""
     if not h1 or not h2 or len(h1) != len(h2): return None
     delta = []
     for c1, c2 in zip(h1, h2):
@@ -489,40 +413,17 @@ def hex_delta(h1, h2):
 
 
 # =====================================================================
-# LEARN — incremental
+# LEARN — học tất cả DB
 # =====================================================================
-_LEARN_STATE = {"last_phien": 0, "last_len": 0}
-
-
-def learn_incremental(valid):
+def learn_hash_deep_from_history(valid):
     n = len(valid)
     if n < 15: return
 
-    last_phien = _LEARN_STATE["last_phien"]
-    last_len = _LEARN_STATE["last_len"]
-
-    rebuild = (n < last_len) or (last_phien and valid[-1]['phien'] < last_phien)
-    if rebuild:
-        reset_all_databases()
-        last_phien = 0
-        last_len = 0
-
-    start_idx = 0
-    if not rebuild and last_phien:
-        for idx in range(n - 1, -1, -1):
-            if valid[idx]['phien'] <= last_phien:
-                start_idx = idx + 1
-                break
-    if start_idx >= n:
-        return
-
-    ctx_start = max(0, start_idx - 13)
-
-    # HASH_DEEP_DB
+    # HASH_DEEP_DB (4 tầng)
     for depth in (5, 7, 10, 13):
         if n <= depth: continue
         db = HASH_DEEP_DB[depth]
-        for i in range(max(depth, ctx_start + depth), n):
+        for i in range(depth, n):
             history = [v['result'] for v in valid[i-depth:i]][::-1]
             tx = encode_tx(history, depth)
             if not tx: continue
@@ -532,72 +433,60 @@ def learn_incremental(valid):
 
     if n < 20: return
 
-    hash_list = []
-    for i in range(max(13, ctx_start + 13), n):
-        history = [v['result'] for v in valid[i-13:i]][::-1]
-        tx = encode_tx(history, 13)
-        if not tx: continue
-        h = hash_deep_md5(tx, depth_level=2)
-        if h:
-            hash_list.append((h, valid[i]['result'], i))
-
-    if not hash_list:
-        _LEARN_STATE["last_phien"] = valid[-1]['phien']
-        _LEARN_STATE["last_len"] = n
-        return
-
-    for h, res, _ in hash_list:
-        bits = hash_to_bits(h)
-        for bit_idx in range(128):
-            if bit_idx < len(bits) and bits[bit_idx] == 1:
-                MD5_BIT_DB[bit_idx][res] += 1
-
-    for h, res, _ in hash_list:
-        for ng_size in (2, 3, 4):
-            for start in range(0, len(h) - ng_size + 1):
-                gram = h[start:start + ng_size]
-                MD5_NGRAM_DB[ng_size][gram][res] += 1
-
-    for h, res, _ in hash_list:
-        for pos in range(min(32, len(h))):
-            val = int(h[pos], 16)
-            MD5_HEX_DIGIT_DB[pos][val][res] += 1
-
-    for h, res, _ in hash_list:
-        m3, m5, m7 = hash_sum_mod(h)
-        MD5_SUM_MOD_DB["mod3"][m3][res] += 1
-        MD5_SUM_MOD_DB["mod5"][m5][res] += 1
-        MD5_SUM_MOD_DB["mod7"][m7][res] += 1
-
-    # Hamming + Delta cần full hash_list
-    full_hash_list = []
+    # Chuẩn bị hash list
+    hash_list = []  # [(hash, result)]
     for i in range(13, n):
         history = [v['result'] for v in valid[i-13:i]][::-1]
         tx = encode_tx(history, 13)
         if not tx: continue
         h = hash_deep_md5(tx, depth_level=2)
         if h:
-            full_hash_list.append((h, valid[i]['result'], i))
+            hash_list.append((h, valid[i]['result']))
 
-    if len(full_hash_list) >= 2:
-        for i in range(len(full_hash_list) - 1):
-            hd = hamming_distance(full_hash_list[i][0], full_hash_list[i+1][0])
-            bin_key = hd // 8
-            MD5_HAMMING_DB[bin_key][full_hash_list[i+1][1]] += 1
+    # MD5_BIT_DB
+    for h, res in hash_list:
+        bits = hash_to_bits(h)
+        for bit_idx in range(128):
+            if bit_idx < len(bits) and bits[bit_idx] == 1:
+                MD5_BIT_DB[bit_idx][res] += 1
 
-        for i in range(len(full_hash_list)):
-            for offset in (1, 2, 3):
-                if i + offset < len(full_hash_list):
-                    delta = hex_delta(full_hash_list[i][0], full_hash_list[i+offset][0])
-                    if delta:
-                        MD5_DELTA_DB[offset][delta][full_hash_list[i][1]] += 1
+    # MD5_NGRAM_DB
+    for h, res in hash_list:
+        for ng_size in (2, 3, 4):
+            for start in range(0, len(h) - ng_size + 1):
+                gram = h[start:start + ng_size]
+                MD5_NGRAM_DB[ng_size][gram][res] += 1
 
-    _LEARN_STATE["last_phien"] = valid[-1]['phien']
-    _LEARN_STATE["last_len"] = n
+    # MD5_HAMMING_DB
+    for i in range(len(hash_list) - 1):
+        hd = hamming_distance(hash_list[i][0], hash_list[i+1][0])
+        bin_key = hd // 8
+        MD5_HAMMING_DB[bin_key][hash_list[i+1][1]] += 1
+
+    # 🆕 MD5_DELTA_DB — delta với 1/2/3 hash trước
+    for i in range(len(hash_list)):
+        for offset in (1, 2, 3):
+            if i + offset < len(hash_list):
+                delta = hex_delta(hash_list[i][0], hash_list[i+offset][0])
+                if delta:
+                    MD5_DELTA_DB[offset][delta][hash_list[i][1]] += 1
+
+    # 🆕 MD5_HEX_DIGIT_DB — từng vị trí hex
+    for h, res in hash_list:
+        for pos in range(min(32, len(h))):
+            val = int(h[pos], 16)
+            MD5_HEX_DIGIT_DB[pos][val][res] += 1
+
+    # 🆕 MD5_SUM_MOD_DB
+    for h, res in hash_list:
+        m3, m5, m7 = hash_sum_mod(h)
+        MD5_SUM_MOD_DB["mod3"][m3][res] += 1
+        MD5_SUM_MOD_DB["mod5"][m5][res] += 1
+        MD5_SUM_MOD_DB["mod7"][m7][res] += 1
 
 
 # =====================================================================
-# ALGOS (giữ nguyên v6)
+# ALGO: HASH DEEP MULTI-DEPTH
 # =====================================================================
 def algo_hash_deep_lookup(results):
     combined_score = {"Tài": 0.0, "Xỉu": 0.0}
@@ -618,6 +507,7 @@ def algo_hash_deep_lookup(results):
         weight = min(24, 10 + abs(z) * 4) * weight_factor
         combined_score[pred] += weight
         total_samples += total
+
     if total_samples < 3: return None
     st = combined_score["Tài"]; sx = combined_score["Xỉu"]
     if st == sx: return None
@@ -629,6 +519,9 @@ def algo_hash_deep_lookup(results):
     return (pred, weight, f"hash_deep_multi_{total_samples}")
 
 
+# =====================================================================
+# ALGO: MD5 BIT ANALYSIS
+# =====================================================================
 def algo_md5_bit_analysis(results):
     if len(results) < 13: return None
     tx = encode_tx(results, 13)
@@ -637,7 +530,9 @@ def algo_md5_bit_analysis(results):
     if not h: return None
     bits = hash_to_bits(h)
     if len(bits) < 128: return None
-    st = sx = 0.0; total_active = 0
+
+    st = sx = 0.0
+    total_active = 0
     for bit_idx in range(128):
         if bits[bit_idx] != 1: continue
         cnt = MD5_BIT_DB[bit_idx]
@@ -650,6 +545,7 @@ def algo_md5_bit_analysis(results):
         if p_tai > 0.5: st += w
         else: sx += w
         total_active += 1
+
     if total_active < 5: return None
     if st == sx: return None
     pred = "Tài" if st > sx else "Xỉu"
@@ -659,13 +555,18 @@ def algo_md5_bit_analysis(results):
     return (pred, weight, f"md5_bit_{total_active}")
 
 
+# =====================================================================
+# ALGO: MD5 N-GRAM
+# =====================================================================
 def algo_md5_ngram(results):
     if len(results) < 13: return None
     tx = encode_tx(results, 13)
     if not tx: return None
     h = hash_deep_md5(tx, depth_level=2)
     if not h: return None
-    st = sx = 0.0; total_grams = 0
+
+    st = sx = 0.0
+    total_grams = 0
     for ng_size, weight_factor in ((2, 0.5), (3, 1.0), (4, 1.5)):
         db = MD5_NGRAM_DB[ng_size]
         for start in range(0, len(h) - ng_size + 1):
@@ -681,6 +582,7 @@ def algo_md5_ngram(results):
             if p_tai > 0.5: st += w
             else: sx += w
             total_grams += 1
+
     if total_grams < 8: return None
     if st == sx: return None
     pred = "Tài" if st > sx else "Xỉu"
@@ -690,6 +592,9 @@ def algo_md5_ngram(results):
     return (pred, weight, f"md5_ngram_{total_grams}")
 
 
+# =====================================================================
+# ALGO: MD5 HAMMING
+# =====================================================================
 def algo_md5_hamming(results):
     if len(results) < 15: return None
     tx_now = encode_tx(results, 13)
@@ -712,15 +617,25 @@ def algo_md5_hamming(results):
     return (pred, weight, f"md5_hamming_{hd}")
 
 
+# =====================================================================
+# 🆕 ALGO: MD5 DELTA CHAIN
+# =====================================================================
 def algo_md5_delta_chain(results):
+    """
+    So sánh hash hiện tại với hash 1/2/3 phiên trước.
+    Delta hex XOR → tra DB xem delta này ra Tài/Xỉu thế nào.
+    """
     n = len(results)
     if n < 15: return None
     tx_now = encode_tx(results, 13)
     if not tx_now: return None
     h_now = hash_deep_md5(tx_now, depth_level=2)
     if not h_now: return None
-    st = sx = 0.0; hits = 0
+
+    st = sx = 0.0
+    hits = 0
     for offset in (1, 2, 3):
+        if n <= 13 + offset - 1: continue
         tx_prev = encode_tx(results[offset:], 13)
         if not tx_prev: continue
         h_prev = hash_deep_md5(tx_prev, depth_level=2)
@@ -735,10 +650,11 @@ def algo_md5_delta_chain(results):
         p_tai = (cnt["Tài"] + 1) / (total + 2)
         z = (p_tai - 0.5) / math.sqrt(0.25 / (total + 2))
         if abs(z) < 1.0: continue
-        w = abs(z) * 2 * (1.0 / offset)
+        w = abs(z) * 2 * (1.0 / offset)  # offset nhỏ quan trọng hơn
         if p_tai > 0.5: st += w
         else: sx += w
         hits += 1
+
     if hits < 1: return None
     if st == sx: return None
     pred = "Tài" if st > sx else "Xỉu"
@@ -748,13 +664,22 @@ def algo_md5_delta_chain(results):
     return (pred, weight, f"md5_delta_{hits}")
 
 
+# =====================================================================
+# 🆕 ALGO: MD5 HEX DIGIT
+# =====================================================================
 def algo_md5_hex_digit(results):
+    """
+    Phân tích từng vị trí hex (32 vị trí × 16 giá trị).
+    Mỗi vị trí có thiên lệch → vote.
+    """
     if len(results) < 13: return None
     tx = encode_tx(results, 13)
     if not tx: return None
     h = hash_deep_md5(tx, depth_level=2)
     if not h: return None
-    st = sx = 0.0; active_pos = 0
+
+    st = sx = 0.0
+    active_pos = 0
     for pos in range(min(32, len(h))):
         val = int(h[pos], 16)
         cnt = MD5_HEX_DIGIT_DB[pos][val]
@@ -767,6 +692,7 @@ def algo_md5_hex_digit(results):
         if p_tai > 0.5: st += w
         else: sx += w
         active_pos += 1
+
     if active_pos < 5: return None
     if st == sx: return None
     pred = "Tài" if st > sx else "Xỉu"
@@ -776,14 +702,22 @@ def algo_md5_hex_digit(results):
     return (pred, weight, f"md5_hex_digit_{active_pos}")
 
 
+# =====================================================================
+# 🆕 ALGO: MD5 SUM MOD
+# =====================================================================
 def algo_md5_sum_mod(results):
+    """
+    Tổng hex của hash → mod 3/5/7 → tra DB theo từng mod.
+    """
     if len(results) < 13: return None
     tx = encode_tx(results, 13)
     if not tx: return None
     h = hash_deep_md5(tx, depth_level=2)
     if not h: return None
+
     m3, m5, m7 = hash_sum_mod(h)
-    st = sx = 0.0; hits = 0
+    st = sx = 0.0
+    hits = 0
     for mod_name, key, wf in (("mod3", m3, 0.7), ("mod5", m5, 1.0), ("mod7", m7, 1.3)):
         cnt = MD5_SUM_MOD_DB[mod_name][key]
         total = cnt["Tài"] + cnt["Xỉu"]
@@ -795,6 +729,7 @@ def algo_md5_sum_mod(results):
         if p_tai > 0.5: st += w
         else: sx += w
         hits += 1
+
     if hits < 1: return None
     if st == sx: return None
     pred = "Tài" if st > sx else "Xỉu"
@@ -804,11 +739,15 @@ def algo_md5_sum_mod(results):
     return (pred, weight, f"md5_sum_mod_{hits}")
 
 
+# =====================================================================
+# 5P ALTERNATION
+# =====================================================================
 def algo_5p_alternation(results):
     n = len(results)
     if n < 10: return None
     last5 = results[:5]
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
+
     if alt_count == 4:
         tai_next = xiu_next = 0
         key5 = tuple(last5)
@@ -824,6 +763,7 @@ def algo_5p_alternation(results):
             elif p_tai <= 0.38:
                 return ("Xỉu", min(24, 13 + (0.5 - p_tai) * 25), "5p_alt_data_X")
         return (_opp(last5[0]), 18, "5p_alt_continue")
+
     if alt_count == 3:
         tai_next = xiu_next = 0
         key5 = tuple(last5)
@@ -842,6 +782,9 @@ def algo_5p_alternation(results):
     return None
 
 
+# =====================================================================
+# TREND BREAK
+# =====================================================================
 def algo_trend_break(results):
     n = len(results)
     if n < 20: return None
@@ -853,19 +796,24 @@ def algo_trend_break(results):
     den = sum((i - x_mean) ** 2 for i in range(20))
     slope = num / den if den else 0
     last3 = b[-3:]
+
     if slope > 0.04:
         if sum(last3) <= 1:
             return ("Tài", min(20, 12 + abs(slope) * 30), "trend_bounce_T")
     elif slope < -0.04:
         if sum(last3) >= 2:
             return ("Xỉu", min(20, 12 + abs(slope) * 30), "trend_bounce_X")
+
     if abs(slope) > 0.08:
         last_dir = "Tài" if sum(last3) >= 2 else "Xỉu"
         if (slope > 0 and last_dir == "Tài") or (slope < 0 and last_dir == "Xỉu"):
-            return (last_dir, min(18, 12 + abs(slope) * 25), "trend_continue")
+            return (last_dir, min(18, 12 + abs(slope) * 25), f"trend_continue")
     return None
 
 
+# =====================================================================
+# BREAK RHYTHM
+# =====================================================================
 def algo_break_rhythm(results):
     n = len(results)
     if n < 12: return None
@@ -878,6 +826,9 @@ def algo_break_rhythm(results):
     return None
 
 
+# =====================================================================
+# DATA-DRIVEN
+# =====================================================================
 def data_markov2(results):
     n = len(results)
     if n < 20: return None
@@ -986,9 +937,9 @@ def analyze_full_bridge(results):
         algo_md5_bit_analysis,
         algo_md5_ngram,
         algo_md5_hamming,
-        algo_md5_delta_chain,
-        algo_md5_hex_digit,
-        algo_md5_sum_mod,
+        algo_md5_delta_chain,    # 🆕
+        algo_md5_hex_digit,      # 🆕
+        algo_md5_sum_mod,        # 🆕
         algo_hash_deep_lookup,
         algo_5p_alternation,
         algo_trend_break,
@@ -1009,87 +960,7 @@ def analyze_full_bridge(results):
 
 
 # =====================================================================
-# 🆕 POLARITY ENGINE — ĐẢO NGHỊCH THUẬN
-# =====================================================================
-def update_polarity_history(results, up_to_index):
-    """
-    Ghi nhận lịch sử đúng/sai của từng signal trên phiên quá khứ.
-    up_to_index: vị trí cuối trong list results (0 = mới nhất)
-    Chạy trước khi predict phiên mới.
-    """
-    # Xóa history cũ để tránh lẫn
-    for name in list(SIGNAL_POLARITY_HISTORY.keys()):
-        SIGNAL_POLARITY_HISTORY[name].clear()
-
-    if len(results) < 5:
-        return
-
-    # Duyệt N phiên gần nhất: results[0] là mới nhất
-    scan = min(POLARITY_WINDOW, len(results) - 3)
-    for k in range(scan):
-        # History tại thời điểm dự đoán phiên results[k]
-        # → dùng results[k+1:] (bỏ qua kết quả tương lai)
-        history = results[k+1:]
-        actual = results[k]
-        signals = analyze_full_bridge(history)
-        for pred_sig, weight, name in signals:
-            SIGNAL_POLARITY_HISTORY[name].append(1 if pred_sig == actual else 0)
-
-
-def get_signal_polarity(name):
-    """
-    Trả về (polarity, accuracy, samples):
-    - polarity = "direct" | "inverse" | "noise" | "unknown"
-    """
-    hist = SIGNAL_POLARITY_HISTORY.get(name)
-    if not hist or len(hist) < POLARITY_MIN_SAMPLES:
-        return ("unknown", 0.5, len(hist) if hist else 0)
-    acc = sum(hist) / len(hist)
-    if acc <= POLARITY_INVERT_THRESHOLD:
-        return ("inverse", acc, len(hist))
-    if acc >= POLARITY_BOOST_THRESHOLD:
-        return ("direct", acc, len(hist))
-    if POLARITY_NOISE_LOW <= acc <= POLARITY_NOISE_HIGH:
-        return ("noise", acc, len(hist))
-    return ("weak", acc, len(hist))
-
-
-def apply_polarity_to_signals(signals):
-    """
-    Áp dụng đảo nghịch thuận:
-    - inverse → flip pred, giảm weight (POLARITY_CONFIDENCE_INVERT)
-    - direct → giữ, boost (POLARITY_CONFIDENCE_BOOST)
-    - noise → flip pred, giảm mạnh weight (POLARITY_NOISE_PENALTY)
-    - weak/unknown → giữ, không đổi
-    Trả về (new_signals, polarity_info_list)
-    """
-    new_signals = []
-    polarity_info = []
-    for pred_sig, weight, name in signals:
-        pol, acc, samples = get_signal_polarity(name)
-        new_pred = pred_sig
-        new_weight = weight
-        info = {'name': name, 'polarity': pol, 'acc': round(acc, 3),
-                'samples': samples, 'orig_pred': pred_sig}
-
-        if pol == "inverse":
-            new_pred = _opp(pred_sig)
-            new_weight = weight * POLARITY_CONFIDENCE_INVERT
-        elif pol == "noise":
-            new_pred = _opp(pred_sig)  # nhiễu thì đảo (vì có xu hướng sai nhẹ)
-            new_weight = weight * POLARITY_NOISE_PENALTY
-        elif pol == "direct":
-            new_weight = weight * POLARITY_CONFIDENCE_BOOST
-
-        info['new_pred'] = new_pred
-        info['new_weight'] = round(new_weight, 2)
-        polarity_info.append(info)
-        new_signals.append((new_pred, new_weight, name))
-    return new_signals, polarity_info
-
-
-# =====================================================================
-# PREDICTOR — tích hợp polarity
+# PREDICTOR
 # =====================================================================
 def full_bridge_predict_adaptive(results):
     n = len(results)
@@ -1099,10 +970,6 @@ def full_bridge_predict_adaptive(results):
         if results[0] == results[1]: return _opp(results[0]), 55, []
         return results[1], 52, []
 
-    # 🆕 Cập nhật polarity history TRƯỚC khi predict
-    update_polarity_history(results, up_to_index=0)
-
-    # replay accuracy weighting
     signal_stats = defaultdict(lambda: {'wins': 0.0, 'total': 0.0})
     replay_count = min(REPLAY_N, n - 3)
     for j in range(replay_count):
@@ -1116,44 +983,28 @@ def full_bridge_predict_adaptive(results):
     signals = analyze_full_bridge(results)
     if not signals: return results[0], 52, []
 
-    # 🆕 Áp dụng polarity
-    signals, polarity_info = apply_polarity_to_signals(signals)
-
     regime = _regime(results)
     st = sx = 0.0; detail = []
-    pol_map = {p['name']: p for p in polarity_info}
-
     for pred_sig, weight, name in signals:
         s = signal_stats[name]
         if s['total'] >= 3:
             acc = (s['wins'] + 1.0) / (s['total'] + 2.0)
         else:
             acc = 0.5
-        accuracy_mult = 0.55 + max(0.0, min(1.1, (acc - 0.35) * 1.9))
-
+        accuracy_mult = 0.4 + max(0.0, min(1.9, (acc - 0.3) * 3.0))
         if regime == "streak" and "break" in name:
-            accuracy_mult *= 1.08
-        elif regime == "alternation" and ("alt" in name or "5p" in name):
-            accuracy_mult *= 1.12
-        if "trend_" in name or "rhythm_" in name:
             accuracy_mult *= 1.10
+        elif regime == "alternation" and ("alt" in name or "5p" in name):
+            accuracy_mult *= 1.15
+        if "trend_" in name or "rhythm_" in name:
+            accuracy_mult *= 1.12
         if "md5_" in name:
-            accuracy_mult *= 1.05
-
+            accuracy_mult *= 1.08
         adjusted = weight * accuracy_mult
         if pred_sig == "Tài": st += adjusted
         else: sx += adjusted
-
-        pol_info = pol_map.get(name, {})
-        detail.append({
-            'name': name, 'pred': pred_sig,
-            'base_weight': weight,
-            'accuracy': round(acc, 3),
-            'adjusted_weight': round(adjusted, 2),
-            'polarity': pol_info.get('polarity', 'unknown'),
-            'polarity_acc': pol_info.get('acc', 0.5),
-            'polarity_flipped': pol_info.get('orig_pred') != pred_sig
-        })
+        detail.append({'name': name, 'pred': pred_sig, 'base_weight': weight,
+                       'accuracy': round(acc, 3), 'adjusted_weight': round(adjusted, 2)})
 
     total = st + sx
     if total == 0: return results[0], 50, detail
@@ -1161,11 +1012,9 @@ def full_bridge_predict_adaptive(results):
     elif sx > st: pred, ratio = "Xỉu", sx / total
     else: return _opp(results[0]), 50, detail
 
-    raw = 50 + (ratio - 0.5) * 100
-    evidence = min(1.0, total / 60.0)
-    conf = 50 + (raw - 50) * evidence
-    if ratio >= 0.72: conf += 3
-    if ratio >= 0.80: conf += 2
+    conf = 50 + (ratio - 0.5) * 100
+    conf = conf * min(1.0, total / 50.0) + 50 * (1 - min(1.0, total / 50.0))
+    if ratio >= 0.72: conf += 5
     if len(signals) < 3: conf -= 5
     conf = int(max(50, min(MAX_CONFIDENCE, conf)))
     return pred, conf, detail
@@ -1203,18 +1052,9 @@ def compute_loss_streak(valid, max_scan=10):
 
 
 # =====================================================================
-# AUTO-RECOVERY
+# AUTO-FIX GÃY 2-3 TAY + BẺ CẦU XU HƯỚNG
 # =====================================================================
-def apply_recovery(base_pred, conf, loss_streak, results=None, polarity_info=None):
-    """
-    Recovery + tôn trọng polarity:
-    Nếu polarity engine đã flip signal mạnh → giảm flip recovery.
-    """
-    # Đếm xem có bao nhiêu signal đã bị đảo bởi polarity
-    polarity_flip_count = 0
-    if polarity_info:
-        polarity_flip_count = sum(1 for p in polarity_info if p.get('polarity_flipped'))
-
+def apply_recovery(base_pred, conf, loss_streak, results=None):
     if loss_streak < 1:
         return base_pred, conf, False, None
 
@@ -1222,40 +1062,40 @@ def apply_recovery(base_pred, conf, loss_streak, results=None, polarity_info=Non
 
     if loss_streak == 1:
         if regime == "alternation":
-            return base_pred, max(50, conf - 2), False, "hold_alt"
-        return base_pred, max(50, conf - 4), False, "soft_hold"
+            return base_pred, max(50, conf - 3), False, "hold_alt"
+        return base_pred, max(50, conf - 5), False, "soft_hold"
 
     if loss_streak == 2:
-        if regime == "alternation":
-            return base_pred, max(55, conf - 2), False, "hold_alt_2"
-        if regime == "streak":
-            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 74)), True, "flip_streak_2"
-
         trend_signal = algo_trend_break(results) if results else None
         rhythm_signal = algo_break_rhythm(results) if results else None
-        if (trend_signal and trend_signal[0] == _opp(base_pred)) or \
-           (rhythm_signal and rhythm_signal[0] == _opp(base_pred)):
-            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 73)), True, "flip_signal_2"
-        return base_pred, max(50, conf - 3), False, "hold_2"
+
+        if regime == "alternation":
+            return base_pred, max(55, conf - 3), False, "hold_alt_2"
+        if regime == "streak":
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True, "flip_streak_2"
+        if trend_signal and trend_signal[0] == _opp(base_pred):
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 74)), True, "flip_trend_2"
+        if rhythm_signal and rhythm_signal[0] == _opp(base_pred):
+            return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 73)), True, "flip_rhythm_2"
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 72)), True, "flip_2"
 
     if loss_streak == 3:
         if regime == "alternation":
-            if results and len(results) >= 1:
-                return results[0], min(MAX_CONFIDENCE, max(conf, 70)), False, "follow_3"
-            return base_pred, max(55, conf - 3), False, "hold_alt_3"
-        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 10), True, "flip_3"
-
-    if loss_streak == 4:
-        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 12), True, "flip_4"
+            if results and len(results) >= 3:
+                return results[0], min(MAX_CONFIDENCE, max(conf, 72)), False, "follow_3"
+            return base_pred, max(55, conf - 5), False, "hold_alt_3"
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 12), True, "flip_3_strong"
 
     if loss_streak >= 5:
-        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 14), True, "flip_5plus"
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 15), True, "flip_5plus"
+    if loss_streak == 4:
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 13), True, "flip_4"
 
     return base_pred, conf, False, None
 
 
 # =====================================================================
-# RESET
+# RESET HELPERS
 # =====================================================================
 def reset_all_databases():
     for depth in (5, 7, 10, 13):
@@ -1277,9 +1117,6 @@ def reset_all_databases():
             MD5_SUM_MOD_DB[mod_name][k]["Tài"] = 0
             MD5_SUM_MOD_DB[mod_name][k]["Xỉu"] = 0
     LOSS_HISTORY.clear()
-    SIGNAL_POLARITY_HISTORY.clear()
-    _LEARN_STATE["last_phien"] = 0
-    _LEARN_STATE["last_len"] = 0
 
 
 # =====================================================================
@@ -1290,29 +1127,20 @@ def index():
     return render_template_string(HTML_TEMPLATE)
 
 
-def _prepare_valid():
-    global RESET_ID, HISTORY_CACHE
-    raw_rows, success = fetch_sessions()
-    if not success and not HISTORY_CACHE:
-        return None, False
-    for row in raw_rows:
-        HISTORY_CACHE[row['phien']] = row
-    for k in [k for k in HISTORY_CACHE if k < RESET_ID]:
-        del HISTORY_CACHE[k]
-    valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
-    return valid, True
-
-
 @app.route('/api/history')
 def history():
+    global RESET_ID
     try:
-        valid, ok = _prepare_valid()
-        if not ok:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
 
-        learn_incremental(valid)
+        learn_hash_deep_from_history(valid)
 
         loss_streak = compute_loss_streak(valid)
         out = []; correct_count = 0; total_past = 0
@@ -1320,17 +1148,10 @@ def history():
         next_phien = latest_session['phien'] + 1
         history_for_next = [v['result'] for v in valid][::-1]
 
-        # 🆕 predict có polarity
-        base_pred, base_conf, detail = full_bridge_predict_adaptive(history_for_next)
-        polarity_flipped_count = sum(1 for d in detail if d.get('polarity_flipped'))
-
+        base_pred, base_conf, _ = full_bridge_predict_adaptive(history_for_next)
         next_pred, next_conf, flipped, reason = apply_recovery(
-            base_pred, base_conf, loss_streak,
-            results=history_for_next, polarity_info=detail
+            base_pred, base_conf, loss_streak, results=history_for_next
         )
-
-        # Xác định next có bị polarity ảnh hưởng mạnh không
-        polarity_inverted = polarity_flipped_count >= 3 and next_pred != latest_session['result']
 
         out.append({
             'phien': next_phien, 'is_next': True,
@@ -1339,8 +1160,6 @@ def history():
             'conf': next_conf, 'recovery_flipped': flipped,
             'recovery_reason': reason, 'loss_streak': loss_streak,
             'base_prediction': base_pred if flipped else None,
-            'polarity_inverted': polarity_inverted,
-            'polarity_flipped_count': polarity_flipped_count,
         })
 
         for i in range(len(valid) - 1, len(valid) - min(len(valid), SCAN_LIMIT) - 1, -1):
@@ -1352,8 +1171,7 @@ def history():
             out.append({'phien': current_session['phien'], 'is_next': False,
                         'prediction': pred, 'result': current_session['result'],
                         'dice': current_session['dice'], 'is_correct': is_correct,
-                        'conf': conf, 'recovery_flipped': False,
-                        'polarity_inverted': False})
+                        'conf': conf, 'recovery_flipped': False})
 
         return jsonify({
             'rows': out,
@@ -1368,29 +1186,39 @@ def history():
 
 @app.route('/api/predict')
 def predict():
+    global RESET_ID
     try:
-        valid, ok = _prepare_valid()
-        if not ok:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
 
-        learn_incremental(valid)
+        learn_hash_deep_from_history(valid)
         results = [v['result'] for v in valid][::-1]
 
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(
-            base_pred, base_conf, loss_streak, results=results, polarity_info=detail
+            base_pred, base_conf, loss_streak, results=results
         )
 
-        # polarity stats tổng hợp
-        polarity_summary = defaultdict(int)
-        for d in detail:
-            polarity_summary[d.get('polarity', 'unknown')] += 1
+        p5_signal = algo_5p_alternation(results)
+        hash_signal = algo_hash_deep_lookup(results)
+        bit_signal = algo_md5_bit_analysis(results)
+        ngram_signal = algo_md5_ngram(results)
+        hamming_signal = algo_md5_hamming(results)
+        delta_signal = algo_md5_delta_chain(results)
+        hex_signal = algo_md5_hex_digit(results)
+        sum_mod_signal = algo_md5_sum_mod(results)
+        trend_signal = algo_trend_break(results)
+        rhythm_signal = algo_break_rhythm(results)
 
-        inverted_names = [d['name'] for d in detail if d.get('polarity_flipped')]
-        direct_names = [d['name'] for d in detail if d.get('polarity') == 'direct']
-        noise_names = [d['name'] for d in detail if d.get('polarity') == 'noise']
+        last5_tx = encode_tx(results, 5)
+        last13_tx = encode_tx(results, 13)
+        last13_hash = hash_deep_md5(last13_tx, depth_level=2) if last13_tx else None
 
         return jsonify({
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
@@ -1399,19 +1227,21 @@ def predict():
             'base_prediction': base_pred, 'base_confidence': base_conf,
             'recovery_flipped': flipped, 'recovery_reason': reason,
             'loss_streak': loss_streak, 'total_sessions': len(valid),
+            'last5_pattern': last5_tx, 'last13_hash': last13_hash,
+            'pattern_5p': {'pred': p5_signal[0], 'name': p5_signal[2]} if p5_signal else None,
+            'hash_deep': {'pred': hash_signal[0], 'name': hash_signal[2]} if hash_signal else None,
+            'md5_bit': {'pred': bit_signal[0], 'name': bit_signal[2]} if bit_signal else None,
+            'md5_ngram': {'pred': ngram_signal[0], 'name': ngram_signal[2]} if ngram_signal else None,
+            'md5_hamming': {'pred': hamming_signal[0], 'name': hamming_signal[2]} if hamming_signal else None,
+            'md5_delta': {'pred': delta_signal[0], 'name': delta_signal[2]} if delta_signal else None,
+            'md5_hex_digit': {'pred': hex_signal[0], 'name': hex_signal[2]} if hex_signal else None,
+            'md5_sum_mod': {'pred': sum_mod_signal[0], 'name': sum_mod_signal[2]} if sum_mod_signal else None,
+            'trend': {'pred': trend_signal[0], 'name': trend_signal[2]} if trend_signal else None,
+            'rhythm': {'pred': rhythm_signal[0], 'name': rhythm_signal[2]} if rhythm_signal else None,
             'signals': detail,
             'tai_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài'), 2),
             'xiu_score': round(sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Xỉu'), 2),
             'signal_count': len(detail),
-            'polarity': {
-                'summary': dict(polarity_summary),
-                'inverted_signals': inverted_names,
-                'direct_signals': direct_names,
-                'noise_signals': noise_names,
-                'inverted_count': len(inverted_names),
-                'direct_count': len(direct_names),
-                'noise_count': len(noise_names),
-            },
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
@@ -1421,18 +1251,23 @@ def predict():
 
 @app.route('/lc79')
 def lc79():
+    global RESET_ID
     try:
-        valid, ok = _prepare_valid()
-        if not ok:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
 
-        learn_incremental(valid)
+        learn_hash_deep_from_history(valid)
         results = [v['result'] for v in valid][::-1]
+
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(
-            base_pred, base_conf, loss_streak, results=results, polarity_info=detail
+            base_pred, base_conf, loss_streak, results=results
         )
 
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
@@ -1449,16 +1284,13 @@ def lc79():
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         last = valid[-1]; next_phien = last['phien'] + 1
-        polarity_flipped = sum(1 for d in detail if d.get('polarity_flipped'))
 
         return jsonify({
-            'Id': 'le minh md5 v7 polarity', 'Phien': str(next_phien),
+            'Id': 'le minh md5 deep v5', 'Phien': str(next_phien),
             'Ket_qua': last['result'].lower(), 'Lich_su': lich_su,
             'Du_doan': pred, 'Do_tin_cay': conf_str,
             'Base_du_doan': base_pred if flipped else None,
             'Auto_flip': flipped, 'Chuoi_thua': loss_streak,
-            'Polarity_flipped': polarity_flipped,
-            'Polarity_ratio': round(polarity_flipped / max(len(detail), 1), 2),
         })
     except Exception as e:
         traceback.print_exc()
@@ -1467,18 +1299,22 @@ def lc79():
 
 @app.route('/lc79md5')
 def lc79md5():
+    global RESET_ID
     try:
-        valid, ok = _prepare_valid()
-        if not ok:
+        raw_rows, success = fetch_sessions()
+        if not success and not HISTORY_CACHE:
             return jsonify({'error': 'Không thể kết nối API'}), 500
+        for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+        for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'}), 400
 
-        learn_incremental(valid)
+        learn_hash_deep_from_history(valid)
         results = [v['result'] for v in valid][::-1]
         loss_streak = compute_loss_streak(valid)
         base_pred, base_conf, detail = full_bridge_predict_adaptive(results)
         pred, conf, flipped, reason = apply_recovery(
-            base_pred, base_conf, loss_streak, results=results, polarity_info=detail
+            base_pred, base_conf, loss_streak, results=results
         )
 
         tai_score = sum(s['adjusted_weight'] for s in detail if s['pred'] == 'Tài')
@@ -1500,7 +1336,6 @@ def lc79md5():
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
         next_phien = last['phien'] + 1
-        polarity_flipped = sum(1 for d in detail if d.get('polarity_flipped'))
 
         return jsonify({
             'id': '@cskhleminh', 'phien': str(next_phien),
@@ -1508,7 +1343,6 @@ def lc79md5():
             'do_tin_cay': conf_str, 'lich_su': lich_su,
             'base_du_doan': base_pred if flipped else None,
             'auto_flip': flipped, 'chuoi_thua': loss_streak,
-            'polarity_flipped': polarity_flipped,
         })
     except Exception as e:
         traceback.print_exc()
@@ -1528,7 +1362,7 @@ def reset_api():
                 PREDICTION_CACHE = {}
                 reset_all_databases()
                 return jsonify({'status': 'success', 'reset_to': RESET_ID})
-        return jsonify({'status': 'error', 'message': 'Lỗi mạng'}), 400
+        return jsonify({'status': 'error', 'message': 'Lỗi mạng, không thể xác nhận mốc Reset'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
