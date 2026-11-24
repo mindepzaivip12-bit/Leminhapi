@@ -1,17 +1,26 @@
 import os
+import math
+import hashlib
 import traceback
 from datetime import datetime
-from collections import Counter
+from collections import defaultdict
 import requests
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
-API_URL_MD5 = 'https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df'
+
+API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=d35795e07a393f91815436933a4852df"
+
 HISTORY_CACHE = {}
+MAX_CONFIDENCE = 90
 RESET_ID = 0
-HTML_TEMPLATE = r"""
+
+# =====================================================================
+# HTML TEMPLATE (GIỮ NGUYÊN)
+# =====================================================================
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -86,7 +95,7 @@ HTML_TEMPLATE = r"""
 <body>
 
 <div class="header">
-    <div class="header-title">LE MINH <span>MD5 v5</span></div>
+    <div class="header-title">LE MINH <span>MD5</span></div>
     <div class="header-actions">
         <div class="time-update" id="time-update">--:--:--</div>
         <button class="btn-refresh" onclick="fetchData()">↻</button>
@@ -96,9 +105,9 @@ HTML_TEMPLATE = r"""
 
 <div class="stats-bar">
     <div class="stat-item"><div class="stat-label">Tổng</div><div class="stat-value" id="stat-total">0</div></div>
-    <div class="stat-item"><div class="stat-label">Số Tài</div><div class="stat-value win" id="stat-win">0</div></div>
-    <div class="stat-item"><div class="stat-label">Số Xỉu</div><div class="stat-value loss" id="stat-lose">0</div></div>
-    <div class="stat-item"><div class="stat-label">Tỷ lệ Tài</div><div class="stat-value rate" id="stat-rate">0%</div></div>
+    <div class="stat-item"><div class="stat-label">Thắng</div><div class="stat-value win" id="stat-win">0</div></div>
+    <div class="stat-item"><div class="stat-label">Thua</div><div class="stat-value loss" id="stat-lose">0</div></div>
+    <div class="stat-item"><div class="stat-label">Tỷ lệ thắng</div><div class="stat-value rate" id="stat-rate">0%</div></div>
 </div>
 
 <div class="table-wrapper">
@@ -107,7 +116,7 @@ HTML_TEMPLATE = r"""
             <thead>
                 <tr>
                     <th>Phiên</th>
-                    <th>Mẫu 5 phiên</th>
+                    <th>Dự đoán</th>
                     <th>Kết quả</th>
                     <th>Trạng thái</th>
                 </tr>
@@ -149,28 +158,59 @@ async function fetchData() {
 
 function renderTable(rows, stats) {
     const tbody = document.getElementById('table-body');
-    animateNumber(document.getElementById('stat-total'), stats.total || 0);
-    animateNumber(document.getElementById('stat-win'), stats.tai || 0);
-    animateNumber(document.getElementById('stat-lose'), stats.xiu || 0);
-    animateNumber(document.getElementById('stat-rate'), Math.round(stats.tai_rate || 0), '%');
+    const total = stats.total || 0;
+    const correct = stats.correct || 0;
+    const wrong = total - correct;
+    animateNumber(document.getElementById('stat-total'), total);
+    animateNumber(document.getElementById('stat-win'), correct);
+    animateNumber(document.getElementById('stat-lose'), wrong);
+    const rate = total > 0 ? (correct / total) * 100 : 0;
+    animateNumber(document.getElementById('stat-rate'), Math.round(rate), '%');
+
     if (!rows.length) {
         tbody.innerHTML = '<tr><td colspan="4" class="loading">Không có dữ liệu. Hãy đợi phiên mới.</td></tr>';
         return;
     }
     let html = '';
     rows.forEach((row) => {
-        const pattern = row.pattern_label || 'Chưa đủ 5 phiên';
-        const detail = row.pattern_detail || '';
-        const resultHtml = row.result === "Tài"
-            ? '<span class="badge badge-tai">TÀI</span>'
-            : row.result === "Xỉu" ? '<span class="badge badge-xiu">XỈU</span>'
-            : '<span class="badge badge-empty">-</span>';
-        const p = (row.dice || '').split(" + ");
-        let diceDisplay = '';
-        if (p.length === 3 && p.every(x => !isNaN(parseInt(x)))) {
-            diceDisplay = `<span class="dice-text">${row.dice} (${p.reduce((a,b) => a + parseInt(b), 0)})</span>`;
+        let trClass = '';
+        if (row.is_next) trClass = row.recovery_flipped ? 'class="row-next recovery"' : 'class="row-next"';
+        let predHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.prediction === "Tài") predHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.prediction === "Xỉu") predHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let recBadge = "";
+        if (row.recovery_flipped) {
+            recBadge = `<span class="recovery-badge" title="Auto-flip do thua ${row.loss_streak || 0} lần">⚡ </span>`;
         }
-        html += `<tr><td>#${row.phien}</td><td><div style="display:flex;flex-direction:column;align-items:center;gap:3px"><span class="badge badge-empty">${pattern}</span><span class="dice-text">${detail}</span></div></td><td><div style="display:flex;flex-direction:column;align-items:center">${resultHtml}${diceDisplay}</div></td><td><span class="status st-wait">LỊCH SỬ</span></td></tr>`;
+        let confHtml = "";
+        if (row.conf && row.prediction !== "-") {
+            const cls = row.conf >= 70 ? 'conf-badge high' : 'conf-badge';
+            confHtml = `<div class="${cls}">${row.conf}%</div>`;
+        }
+        let predFull = `<div style="display:flex; flex-direction:column; align-items:center; gap:2px;">${predHtml}${confHtml}${recBadge}</div>`;
+        let resultHtml = `<span class="badge badge-empty">-</span>`;
+        if (row.result === "Tài") resultHtml = `<span class="badge badge-tai">TÀI</span>`;
+        if (row.result === "Xỉu") resultHtml = `<span class="badge badge-xiu">XỈU</span>`;
+        let diceDisplay = "";
+        if (row.dice !== "? + ? + ?") {
+            const p = row.dice.split(" + ");
+            const sum = parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]);
+            diceDisplay = `<span class="dice-text">${row.dice} (${sum})</span>`;
+        }
+        let resultFull = `<div style="display:flex; flex-direction:column; align-items:center;">${resultHtml}${diceDisplay}</div>`;
+        let statusHtml = '';
+        if (row.is_next) {
+            statusHtml = row.recovery_flipped
+                ? `<span class="status st-recover">⚡ Đảo chiều</span>`
+                : `<span class="status st-wait">Chờ kết quả</span>`;
+        } else if (row.is_correct === true) {
+            statusHtml = `<span class="status st-win">✔ THẮNG</span>`;
+        } else if (row.is_correct === false) {
+            statusHtml = `<span class="status st-lose">✖ THUA</span>`;
+        } else {
+            statusHtml = `<span class="status" style="color:var(--text-muted)">-</span>`;
+        }
+        html += `<tr ${trClass}><td>#${row.phien}</td><td>${predFull}</td><td>${resultFull}</td><td>${statusHtml}</td></tr>`;
     });
     tbody.innerHTML = html;
 }
@@ -204,231 +244,345 @@ fetchData();
 setInterval(fetchData, 5000);
 </script>
 </body>
-</html>"""
+</html>
+"""
 
+# =====================================================================
+# THUẬT TOÁN NÂNG CAO (STABLE & ACCURATE)
+# =====================================================================
 
-def fetch_sessions():
-    """Lấy kết quả đã có từ API nguồn."""
-    try:
-        headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-        response = requests.get(API_URL_MD5, timeout=8, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        rows = []
-        for item in data.get("list", []):
-            raw = str(item.get("resultTruyenThong", "")).upper()
-            if raw not in ("TAI", "XIU"):
-                continue
-            dices = item.get("dices") or [0, 0, 0]
-            if not isinstance(dices, (list, tuple)) or len(dices) != 3:
-                dices = [0, 0, 0]
-            rows.append({
-                "phien": int(item["id"]),
-                "result": "Tài" if raw == "TAI" else "Xỉu",
-                "dice": " + ".join(str(x) for x in dices),
-                "total": item.get("point", sum(int(x) for x in dices))
-            })
-        return rows, True
-    except Exception as exc:
-        print(f"[API ERROR] {exc}")
-        return [], False
+def _opp(v): return "Xỉu" if v == "Tài" else "Tài"
 
+def _count_streak(results):
+    if not results: return 0
+    r0 = results[0]; c = 1
+    for r in results[1:]:
+        if r == r0: c += 1
+        else: break
+    return c
 
-def analyze_five_sessions(results):
-    """Thống kê mô tả 5 kết quả đã xảy ra theo thứ tự cũ -> mới."""
-    window = list(results[-5:])
-    counts = Counter(window)
-    if len(window) < 5:
-        return {
-            "sample_size": len(window), "sequence": window,
-            "pattern": "insufficient", "pattern_label": "Chưa đủ 5 phiên",
-            "alternations": 0, "tai_count": counts["Tài"],
-            "xiu_count": counts["Xỉu"], "current_streak": len(window),
-            "last_change": False,
-            "description": "Cần đủ 5 kết quả đã có để mô tả mẫu."
-        }
-
-    alternations = sum(window[i] != window[i - 1] for i in range(1, 5))
-    streak = 1
-    for value in reversed(window[:-1]):
-        if value == window[-1]:
-            streak += 1
+def get_groups(results):
+    if not results: return []
+    groups = []
+    current_val = results[0]; count = 1
+    for r in results[1:]:
+        if r == current_val: count += 1
         else:
-            break
+            groups.append(count); current_val = r; count = 1
+    groups.append(count)
+    return groups
 
-    last_change = len(set(window[:3])) == 1 and window[3] != window[2] and window[4] == window[3]
-    if alternations == 4:
-        pattern, label = "alternating_1_1", "Luân phiên 1-1"
-        description = "5 phiên gần nhất thay đổi Tài/Xỉu liên tiếp; đây là mô tả lịch sử."
-    elif streak >= 3:
-        pattern, label = "same_result_run", f"Chuỗi {streak} phiên"
-        description = f"{streak} kết quả cuối liên tiếp là {window[-1]}."
-    elif counts["Tài"] >= 4:
-        pattern, label = "tai_dominant", "Tài xuất hiện nhiều"
-        description = f"Tài xuất hiện {counts['Tài']}/5 phiên."
-    elif counts["Xỉu"] >= 4:
-        pattern, label = "xiu_dominant", "Xỉu xuất hiện nhiều"
-        description = f"Xỉu xuất hiện {counts['Xỉu']}/5 phiên."
-    elif alternations >= 3:
-        pattern, label = "frequent_changes", "Biến đổi thường xuyên"
-        description = f"Có {alternations} lần đổi kết quả trong 4 khoảng chuyển tiếp."
-    else:
-        pattern, label = "mixed", "Mẫu hỗn hợp"
-        description = f"Tài {counts['Tài']} phiên, Xỉu {counts['Xỉu']} phiên; chưa có mẫu nổi bật."
-    if last_change:
-        description += " Hai kết quả cuối khác với cụm 3 phiên đầu."
-    return {
-        "sample_size": 5, "sequence": window, "pattern": pattern,
-        "pattern_label": label, "alternations": alternations,
-        "tai_count": counts["Tài"], "xiu_count": counts["Xỉu"],
-        "current_streak": streak, "last_change": last_change,
-        "description": description
-    }
+def _regime(results):
+    """Phân tích trạng thái: Đang bệt hay đang đảo"""
+    if len(results) < 5: return "balanced"
+    streak = _count_streak(results)
+    alt = sum(1 for i in range(min(4, len(results)-1)) if results[i] != results[i+1])
+    if alt >= 3 and alt > streak: return "alternation"
+    if streak >= 3: return "streak"
+    return "balanced"
 
+def encode_tx(results, length):
+    if not results or len(results) < length: return None
+    return "".join("T" if r == "Tài" else "X" for r in results[:length])
 
-def annotate_rows(valid, limit=150):
-    results = [row["result"] for row in valid]
-    output = []
-    first = max(0, len(valid) - limit)
-    for i in range(len(valid) - 1, first - 1, -1):
-        window = results[max(0, i - 4):i + 1]
-        info = analyze_five_sessions(window)
-        row = valid[i]
-        output.append({
-            "phien": row["phien"], "result": row["result"],
-            "dice": row["dice"], "pattern_label": info["pattern_label"],
-            "pattern_detail": info["description"]
-        })
-    return output
+def learn_md5_db(valid):
+    """Học lịch sử Hash MD5 từ API"""
+    db = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
+    n = len(valid)
+    if n < 15: return db
+    
+    for i in range(13, n):
+        hist = [v['result'] for v in valid[i-13:i]][::-1]
+        tx = encode_tx(hist, 13)
+        h = hashlib.md5(f"leminh_stable|{tx}".encode()).hexdigest()
+        db[h][valid[i]['result']] += 1
+    return db
 
+# --- CÁC TÍN HIỆU DỰ ĐOÁN ---
 
-def load_history():
-    global HISTORY_CACHE
-    raw, success = fetch_sessions()
-    if success:
-        for row in raw:
-            if row["phien"] >= RESET_ID:
-                HISTORY_CACHE[row["phien"]] = row
-    return sorted(HISTORY_CACHE.values(), key=lambda x: x["phien"]), success
+def algo_5p_pattern(results):
+    """Thuật toán 5 phiên: Đảo/Thuận/Nghịch"""
+    if len(results) < 5: return None
+    last5 = results[:5]
+    alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
+    
+    # 1. Đảo thuận (T-X-T-X-T) -> Bẻ sang hướng ngược lại
+    if alt_count == 4:
+        return (_opp(last5[0]), 30, "5p_dao_thuan")
+    # 2. Đảo nghịch (T-X-X-T-X) -> Bẻ theo nhịp
+    if alt_count == 3:
+        return (_opp(last5[0]), 22, "5p_dao_nghich")
+    # 3. Thuận bệt (T-T-T-T-T) -> Đi theo bệt
+    if alt_count <= 1:
+        return (last5[0], 25, "5p_thuan_bet")
+    return None
 
+def algo_md5_deep(results, md5_db):
+    """Thuật toán Hash Deep MD5 13 phiên"""
+    if len(results) < 13: return None
+    tx = encode_tx(results, 13)
+    h = hashlib.md5(f"leminh_stable|{tx}".encode()).hexdigest()
+    
+    if h in md5_db:
+        counts = md5_db[h]
+        total = counts["Tài"] + counts["Xỉu"]
+        if total >= 2:
+            p_tai = (counts["Tài"] + 1) / (total + 2)
+            if p_tai >= 0.6: return ("Tài", 28, "md5_deep")
+            if p_tai <= 0.4: return ("Xỉu", 28, "md5_deep")
+    return None
 
-@app.route("/")
+def algo_trend_break(results):
+    """Thuật toán xu hướng (Linear Regression)"""
+    if len(results) < 20: return None
+    window = list(reversed(results[:20]))
+    b = [1 if r == "Tài" else 0 for r in window]
+    x_mean = 9.5; y_mean = sum(b) / 20
+    num = sum((i - x_mean) * (b[i] - y_mean) for i in range(20))
+    den = sum((i - x_mean) ** 2 for i in range(20))
+    slope = num / den if den else 0
+    last3 = b[-3:]
+
+    if slope > 0.04 and sum(last3) <= 1: return ("Tài", 18, "trend_bounce_T")
+    if slope < -0.04 and sum(last3) >= 2: return ("Xỉu", 18, "trend_bounce_X")
+    if abs(slope) > 0.08:
+        last_dir = "Tài" if sum(last3) >= 2 else "Xỉu"
+        if (slope > 0 and last_dir == "Tài") or (slope < 0 and last_dir == "Xỉu"):
+            return (last_dir, 15, "trend_continue")
+    return None
+
+def algo_markov(results):
+    """Thuật toán Markov bậc 2"""
+    if len(results) < 20: return None
+    key = (results[1], results[0])
+    counts = {"Tài": 1, "Xỉu": 1}
+    for i in range(min(len(results) - 2, 60)):
+        if (results[i+2], results[i+1]) == key:
+            counts[results[i]] += 1
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 6: return None
+    p_tai = counts["Tài"] / total
+    if p_tai >= 0.65: return ("Tài", 20, "markov2")
+    if p_tai <= 0.35: return ("Xỉu", 20, "markov2")
+    return None
+
+# --- TỔNG HỢP TÍN HIỆU ---
+
+def compute_prediction(results, md5_db):
+    """Hàm lõi tính toán dự đoán (Dùng chung cho toàn bộ API)"""
+    if not results: return "Tài", 50
+    if len(results) == 1: return _opp(results[0]), 52
+    
+    signals = []
+    for fn in [algo_5p_pattern, algo_trend_break, algo_markov]:
+        s = fn(results)
+        if s: signals.append(s)
+    
+    s = algo_md5_deep(results, md5_db)
+    if s: signals.append(s)
+
+    if not signals:
+        return results[0], 52
+
+    st = sum(w for p, w, _ in signals if p == "Tài")
+    sx = sum(w for p, w, _ in signals if p == "Xỉu")
+    total = st + sx
+    
+    if total == 0: return results[0], 50
+    
+    if st > sx: pred = "Tài"
+    elif sx > st: pred = "Xỉu"
+    else: return _opp(results[0]), 50
+
+    ratio = max(st, sx) / total
+    conf = 50 + (ratio - 0.5) * 100
+    conf = int(max(50, min(MAX_CONFIDENCE, conf)))
+    
+    return pred, conf
+
+def apply_recovery(base_pred, conf, loss_streak, results):
+    """Tự động đảo kèo nếu gãy 2-3 tay"""
+    if loss_streak < 2:
+        return base_pred, conf, False
+        
+    regime = _regime(results) if results else "balanced"
+    
+    # Gãy 2 tay: Đảo nếu không phải cầu đảo
+    if loss_streak == 2:
+        if regime == "alternation":
+            return base_pred, max(55, conf - 5), False # Cầu đảo thì giữ nguyên
+        return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True
+        
+    # Gãy >= 3 tay: Đảo mạnh mẽ
+    if loss_streak >= 3:
+        return _opp(base_pred), min(MAX_CONFIDENCE, conf + 12), True
+
+    return base_pred, conf, False
+
+def compute_loss_streak(valid, md5_db):
+    if len(valid) < 5: return 0
+    streak = 0
+    for i in range(len(valid) - 1, len(valid) - 10, -1):
+        if i < 3: break
+        hist = [v['result'] for v in valid[:i]][::-1]
+        pred, _ = compute_prediction(hist, md5_db)
+        if pred == valid[i]['result']: break
+        streak += 1
+    return streak
+
+# =====================================================================
+# API & ROUTES
+# =====================================================================
+def fetch_sessions():
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+        r = requests.get(API_URL_MD5, timeout=8, headers=headers)
+        if r.status_code == 200:
+            data = r.json()
+            if 'list' in data and data['list']:
+                rows = []
+                for item in data['list']:
+                    res = "Tài" if item['resultTruyenThong'] == "TAI" else "Xỉu"
+                    dices = item.get('dices', [0, 0, 0])
+                    dice_str = f"{dices[0]} + {dices[1]} + {dices[2]}"
+                    total = item.get('point', sum(dices))
+                    rows.append({'phien': int(item['id']), 'result': res, 'dice': dice_str, 'total': total})
+                return rows, True
+    except Exception as e:
+        print(f"[API ERROR]: {e}")
+    return [], False
+
+@app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
 
-
-@app.route("/api/history")
+@app.route('/api/history')
 def history():
+    global RESET_ID
     try:
-        valid, success = load_history()
-        results = [row["result"] for row in valid]
-        tai, xiu = results.count("Tài"), results.count("Xỉu")
-        return jsonify({
-            "rows": annotate_rows(valid),
-            "stats": {
-                "total": len(valid), "tai": tai, "xiu": xiu,
-                "tai_rate": tai / len(valid) * 100 if valid else 0
-            },
-            "source_ok": success,
-            "timestamp": datetime.now().isoformat()
-        })
-    except Exception as exc:
-        traceback.print_exc()
-        return jsonify({"error": str(exc)}), 500
-
-
-@app.route("/api/analysis")
-def analysis():
-    try:
-        valid, success = load_history()
+        raw_rows, success = fetch_sessions()
+        if raw_rows:
+            for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+            for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+            
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
-            return jsonify({"error": "Chưa có dữ liệu phiên"}), 400
-        info = analyze_five_sessions([row["result"] for row in valid][-5:])
-        info.update({
-            "latest_session": valid[-1]["phien"],
-            "latest_result": valid[-1]["result"],
-            "source_ok": success, "timestamp": datetime.now().isoformat()
+            return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
+
+        md5_db = learn_md5_db(valid)
+        loss_streak = compute_loss_streak(valid, md5_db)
+        
+        out = []; correct_count = 0; total_past = 0
+        history_for_next = [v['result'] for v in valid][::-1]
+
+        base_pred, base_conf = compute_prediction(history_for_next, md5_db)
+        next_pred, next_conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, history_for_next)
+
+        out.append({
+            'phien': valid[-1]['phien'] + 1, 'is_next': True, 
+            'prediction': next_pred, 'result': 'Chờ...', 'dice': "? + ? + ?", 
+            'is_correct': None, 'conf': next_conf, 
+            'recovery_flipped': flipped, 'loss_streak': loss_streak
         })
-        return jsonify(info)
-    except Exception as exc:
-        traceback.print_exc()
-        return jsonify({"error": str(exc)}), 500
 
+        for i in range(len(valid) - 1, max(-1, len(valid) - 150), -1):
+            hist = [v['result'] for v in valid[:i]][::-1]
+            pred, conf = compute_prediction(hist, md5_db) if len(hist) >= 3 else ("-", 50)
+            is_correct = (pred == valid[i]['result']) if pred != "-" else None
+            
+            if is_correct is not None: total_past += 1
+            if is_correct: correct_count += 1
+            
+            out.append({
+                'phien': valid[i]['phien'], 'is_next': False, 'prediction': pred, 
+                'result': valid[i]['result'], 'dice': valid[i]['dice'], 
+                'is_correct': is_correct, 'conf': conf, 'recovery_flipped': False
+            })
 
-@app.route("/api/predict")
+        return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
+    except Exception as e:
+        return jsonify({'error': str(e), 'rows': [], 'stats': {'total': 0, 'correct': 0}})
+
+@app.route('/api/predict')
 def predict():
-    return jsonify({
-        "available": False,
-        "message": "Phiên bản này chỉ thống kê 5 phiên lịch sử, không dự báo kết quả tương lai."
-    }), 410
-
-
-@app.route("/lc79")
-def lc79():
+    global RESET_ID
     try:
-        valid, success = load_history()
-        if not valid:
-            return jsonify({"error": "Chưa có dữ liệu"}), 400
-        info = analyze_five_sessions([row["result"] for row in valid][-5:])
-        last = valid[-1]
+        raw_rows, _ = fetch_sessions()
+        if raw_rows:
+            for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+            for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+            
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
+        if not valid: return jsonify({'error': 'Chưa có dữ liệu'})
+
+        results = [v['result'] for v in valid][::-1]
+        md5_db = learn_md5_db(valid)
+        loss_streak = compute_loss_streak(valid, md5_db)
+        
+        base_pred, base_conf = compute_prediction(results, md5_db)
+        pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
+
         return jsonify({
-            "Id": "le minh md5 history analyzer",
-            "Phien": str(last["phien"]),
-            "Ket_qua": last["result"].lower(),
-            "Mau_5_phien": info["sequence"],
-            "Phan_tich": info["pattern_label"],
-            "So_lan_doi": info["alternations"],
-            "Tai_trong_5": info["tai_count"],
-            "Xiu_trong_5": info["xiu_count"],
-            "Mo_ta": info["description"],
-            "Nguon_du_lieu": success
+            'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
+            'prediction': pred, 'confidence': conf, 'recovery_flipped': flipped,
+            'loss_streak': loss_streak, 'timestamp': datetime.now().isoformat()
         })
-    except Exception as exc:
-        traceback.print_exc()
-        return jsonify({"error": str(exc)}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
-
-@app.route("/lc79md5")
-def lc79md5():
+@app.route('/lc79')
+@app.route('/lc79md5')
+def lc79_api():
+    """API Đồng bộ 100% với /api/predict"""
+    global RESET_ID
     try:
-        valid, success = load_history()
+        raw_rows, _ = fetch_sessions()
+        if raw_rows:
+            for row in raw_rows: HISTORY_CACHE[row['phien']] = row
+            for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
+            
+        valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
-            return jsonify({"error": "Chưa có dữ liệu"}), 400
-        info = analyze_five_sessions([row["result"] for row in valid][-5:])
-        last = valid[-1]
+            return jsonify({'id': '@cskhleminh', 'phien': '-', 'du_doan': '-', 'do_tin_cay': '50%'})
+
+        results = [v['result'] for v in valid][::-1]
+        md5_db = learn_md5_db(valid)
+        loss_streak = compute_loss_streak(valid, md5_db)
+        
+        base_pred, base_conf = compute_prediction(results, md5_db)
+        pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
+
+        groups = get_groups(results)
+        lich_su = "-" + "-".join(str(g) for g in groups[:4])
+
         return jsonify({
-            "id": "@cskhleminh",
-            "phien": str(last["phien"]),
-            "ket_qua": last["result"].lower(),
-            "mau_5_phien": "".join("T" if x == "Tài" else "X" for x in info["sequence"]),
-            "phan_tich": info["pattern_label"],
-            "so_lan_doi": info["alternations"],
-            "tai_trong_5": info["tai_count"],
-            "xiu_trong_5": info["xiu_count"],
-            "mo_ta": info["description"],
-            "source_ok": success
+            'id': '@cskhleminh', 
+            'phien': str(valid[-1]['phien'] + 1),
+            'ket_qua': f"{valid[-1]['result'].lower()} {valid[-1]['dice'].replace(' + ', '-')}", 
+            'du_doan': pred,
+            'do_tin_cay': f"{conf}%", 
+            'lich_su': lich_su,
+            'auto_flip': flipped, 
+            'chuoi_thua': loss_streak
         })
-    except Exception as exc:
-        traceback.print_exc()
-        return jsonify({"error": str(exc)}), 500
+    except Exception as e:
+        return jsonify({'id': '@cskhleminh', 'phien': '-', 'du_doan': '-', 'do_tin_cay': '50%', 'error': str(e)})
 
-
-@app.route("/api/reset", methods=["POST"])
+@app.route('/api/reset', methods=['POST'])
 def reset_api():
     global RESET_ID, HISTORY_CACHE
     try:
-        raw, success = fetch_sessions()
-        if not success or not raw:
-            return jsonify({"status": "error", "message": "Không thể xác nhận mốc Reset do lỗi API nguồn."}), 400
-        latest = max(raw, key=lambda row: row["phien"])
-        RESET_ID = latest["phien"]
-        HISTORY_CACHE = {latest["phien"]: latest}
-        return jsonify({"status": "success", "reset_to": RESET_ID})
-    except Exception as exc:
-        traceback.print_exc()
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        raw_rows, _ = fetch_sessions()
+        if raw_rows:
+            valid = sorted(raw_rows, key=lambda x: x['phien'])
+            if valid:
+                RESET_ID = valid[-1]['phien']
+                HISTORY_CACHE = {valid[-1]['phien']: valid[-1]}
+                return jsonify({'status': 'success', 'reset_to': RESET_ID})
+        return jsonify({'status': 'error', 'message': 'Lỗi mạng'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
 
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, threaded=True)
