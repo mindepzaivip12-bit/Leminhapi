@@ -3,7 +3,7 @@ import math
 import hashlib
 import traceback
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, Counter
 import requests
 from flask import Flask, render_template_string, jsonify
 from flask_cors import CORS
@@ -15,6 +15,7 @@ API_URL_MD5 = "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=we
 
 HISTORY_CACHE = {}
 MAX_CONFIDENCE = 90
+MIN_CONFIDENCE = 50
 RESET_ID = 0
 
 # =====================================================================
@@ -248,7 +249,7 @@ setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# THUẬT TOÁN NÂNG CAO (STABLE & ACCURATE)
+# 🎯 THUẬT TOÁN CHÍNH - 5 PHIÊN ĐẢO THUẬN NGHỊCH 1-1
 # =====================================================================
 
 def _opp(v): return "Xỉu" if v == "Tài" else "Tài"
@@ -273,11 +274,10 @@ def get_groups(results):
     return groups
 
 def _regime(results):
-    """Phân tích trạng thái: Đang bệt hay đang đảo"""
     if len(results) < 5: return "balanced"
     streak = _count_streak(results)
-    alt = sum(1 for i in range(min(4, len(results)-1)) if results[i] != results[i+1])
-    if alt >= 3 and alt > streak: return "alternation"
+    alt = sum(1 for i in range(min(5, len(results)-1)) if results[i] != results[i+1])
+    if alt >= 4 and alt > streak: return "alternation"
     if streak >= 3: return "streak"
     return "balanced"
 
@@ -286,54 +286,84 @@ def encode_tx(results, length):
     return "".join("T" if r == "Tài" else "X" for r in results[:length])
 
 def learn_md5_db(valid):
-    """Học lịch sử Hash MD5 từ API"""
+    """Học lịch sử Hash MD5 từ API (dùng cho algo_md5_deep)"""
     db = defaultdict(lambda: {"Tài": 0, "Xỉu": 0})
     n = len(valid)
     if n < 15: return db
-    
     for i in range(13, n):
         hist = [v['result'] for v in valid[i-13:i]][::-1]
         tx = encode_tx(hist, 13)
-        h = hashlib.md5(f"leminh_stable|{tx}".encode()).hexdigest()
+        h = hashlib.md5(f"leminh_v2|{tx}".encode()).hexdigest()
         db[h][valid[i]['result']] += 1
     return db
 
-# --- CÁC TÍN HIỆU DỰ ĐOÁN ---
+# ---------- 🎯 CORE ALGORITHMS ----------
 
 def algo_5p_pattern(results):
-    """Thuật toán 5 phiên: Đảo/Thuận/Nghịch"""
-    if len(results) < 5: return None
-    last5 = results[:5]
+    """
+    🎯 THUẬT TOÁN CHÍNH: 5 PHIÊN ĐẢO THUẬN / ĐẢO NGHỊCH 1-1
+    Phân tích 5 phiên gần nhất và đưa ra dự đoán dựa trên pattern
+    """
+    if len(results) < 5:
+        return None
+    last5 = results[:5]  # results[0] = mới nhất
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
     
-    # 1. Đảo thuận (T-X-T-X-T) -> Bẻ sang hướng ngược lại
+    # ===== 1. ĐẢO THUẬN HOÀN HẢO (T-X-T-X-T hoặc X-T-X-T-X) =====
     if alt_count == 4:
-        return (_opp(last5[0]), 30, "5p_dao_thuan")
-    # 2. Đảo nghịch (T-X-X-T-X) -> Bẻ theo nhịp
+        # Cầu đảo 1-1 liên tục → bẻ tiếp theo nhịp đảo
+        return (_opp(last5[0]), 85, "5p_dao_thuan_perfect")
+    
+    # ===== 2. ĐẢO NGHỊCH (3-4 nhịp đảo) =====
     if alt_count == 3:
-        return (_opp(last5[0]), 22, "5p_dao_nghich")
-    # 3. Thuận bệt (T-T-T-T-T) -> Đi theo bệt
+        # Ví dụ: T-X-T-T-X → xu hướng đảo chiếm ưu thế → bẻ ngược
+        # Nhưng nếu phiên cuối đi ngược xu hướng đảo 2 lần liên tiếp → thuận
+        if last5[0] == last5[1] and last5[1] == last5[2]:
+            # 3 phiên cuối giống nhau → phá cầu
+            return (_opp(last5[0]), 75, "5p_dao_nghich_3same")
+        # Đảo nghịch thông thường → theo nhịp đảo
+        return (_opp(last5[0]), 78, "5p_dao_nghich")
+    
+    # ===== 3. THUẬN BỆT (0-1 nhịp đảo) =====
     if alt_count <= 1:
-        return (last5[0], 25, "5p_thuan_bet")
+        streak = _count_streak(results)
+        if streak >= 3:
+            # Bệt dài → 60% đi tiếp, 40% phá (dựa trên lịch sử)
+            # Theo thống kê bệt thường gãy sau 3-5 phiên
+            if streak >= 4:
+                return (_opp(last5[0]), 72, "5p_thuan_break")
+            return (last5[0], 70, "5p_thuan_bet")
+        # Bệt ngắn 2 phiên → theo đà
+        return (last5[0], 65, "5p_thuan_short")
+    
+    # ===== 4. HỖN HỢP (2 nhịp đảo) =====
+    if alt_count == 2:
+        # Xem 2 phiên cuối để quyết định
+        if last5[0] != last5[1]:
+            # Đang đảo → có thể tiếp tục đảo
+            return (_opp(last5[0]), 68, "5p_mix_dao")
+        else:
+            # Đang bệt 2 phiên → có thể phá
+            return (_opp(last5[0]), 62, "5p_mix_bet")
+    
     return None
 
 def algo_md5_deep(results, md5_db):
-    """Thuật toán Hash Deep MD5 13 phiên"""
+    """Thuật toán Hash Deep MD5 13 phiên (bổ trợ)"""
     if len(results) < 13: return None
     tx = encode_tx(results, 13)
-    h = hashlib.md5(f"leminh_stable|{tx}".encode()).hexdigest()
-    
+    h = hashlib.md5(f"leminh_v2|{tx}".encode()).hexdigest()
     if h in md5_db:
         counts = md5_db[h]
         total = counts["Tài"] + counts["Xỉu"]
         if total >= 2:
             p_tai = (counts["Tài"] + 1) / (total + 2)
-            if p_tai >= 0.6: return ("Tài", 28, "md5_deep")
-            if p_tai <= 0.4: return ("Xỉu", 28, "md5_deep")
+            if p_tai >= 0.65: return ("Tài", 20, "md5_deep")
+            if p_tai <= 0.35: return ("Xỉu", 20, "md5_deep")
     return None
 
 def algo_trend_break(results):
-    """Thuật toán xu hướng (Linear Regression)"""
+    """Xu hướng Linear Regression (bổ trợ)"""
     if len(results) < 20: return None
     window = list(reversed(results[:20]))
     b = [1 if r == "Tài" else 0 for r in window]
@@ -342,17 +372,12 @@ def algo_trend_break(results):
     den = sum((i - x_mean) ** 2 for i in range(20))
     slope = num / den if den else 0
     last3 = b[-3:]
-
-    if slope > 0.04 and sum(last3) <= 1: return ("Tài", 18, "trend_bounce_T")
-    if slope < -0.04 and sum(last3) >= 2: return ("Xỉu", 18, "trend_bounce_X")
-    if abs(slope) > 0.08:
-        last_dir = "Tài" if sum(last3) >= 2 else "Xỉu"
-        if (slope > 0 and last_dir == "Tài") or (slope < 0 and last_dir == "Xỉu"):
-            return (last_dir, 15, "trend_continue")
+    if slope > 0.05 and sum(last3) <= 1: return ("Tài", 15, "trend_bounce_T")
+    if slope < -0.05 and sum(last3) >= 2: return ("Xỉu", 15, "trend_bounce_X")
     return None
 
 def algo_markov(results):
-    """Thuật toán Markov bậc 2"""
+    """Markov bậc 2 (bổ trợ)"""
     if len(results) < 20: return None
     key = (results[1], results[0])
     counts = {"Tài": 1, "Xỉu": 1}
@@ -362,19 +387,31 @@ def algo_markov(results):
     total = counts["Tài"] + counts["Xỉu"]
     if total < 6: return None
     p_tai = counts["Tài"] / total
-    if p_tai >= 0.65: return ("Tài", 20, "markov2")
-    if p_tai <= 0.35: return ("Xỉu", 20, "markov2")
+    if p_tai >= 0.68: return ("Tài", 18, "markov2")
+    if p_tai <= 0.32: return ("Xỉu", 18, "markov2")
     return None
 
-# --- TỔNG HỢP TÍN HIỆU ---
+# ---------- 🎯 TỔNG HỢP TÍN HIỆU ----------
 
 def compute_prediction(results, md5_db):
-    """Hàm lõi tính toán dự đoán (Dùng chung cho toàn bộ API)"""
-    if not results: return "Tài", 50
-    if len(results) == 1: return _opp(results[0]), 52
+    """
+    🎯 Hàm lõi: Kết hợp các tín hiệu
+    Ưu tiên algo_5p (thuật toán chính), sau đó mới đến bổ trợ
+    """
+    if not results:
+        return "Tài", 50
+    if len(results) == 1:
+        return _opp(results[0]), 52
     
     signals = []
-    for fn in [algo_5p_pattern, algo_trend_break, algo_markov]:
+    
+    # 🎯 TÍN HIỆU CHÍNH: 5p pattern (weight ưu tiên cao)
+    s_main = algo_5p_pattern(results)
+    if s_main:
+        signals.append(s_main)
+    
+    # Bổ trợ
+    for fn in [algo_trend_break, algo_markov]:
         s = fn(results)
         if s: signals.append(s)
     
@@ -394,9 +431,10 @@ def compute_prediction(results, md5_db):
     elif sx > st: pred = "Xỉu"
     else: return _opp(results[0]), 50
 
+    # 🎯 Confidence: scale từ 50-90 dựa trên độ mạnh tín hiệu
     ratio = max(st, sx) / total
     conf = 50 + (ratio - 0.5) * 100
-    conf = int(max(50, min(MAX_CONFIDENCE, conf)))
+    conf = int(max(MIN_CONFIDENCE, min(MAX_CONFIDENCE, conf)))
     
     return pred, conf
 
@@ -404,19 +442,13 @@ def apply_recovery(base_pred, conf, loss_streak, results):
     """Tự động đảo kèo nếu gãy 2-3 tay"""
     if loss_streak < 2:
         return base_pred, conf, False
-        
     regime = _regime(results) if results else "balanced"
-    
-    # Gãy 2 tay: Đảo nếu không phải cầu đảo
     if loss_streak == 2:
         if regime == "alternation":
-            return base_pred, max(55, conf - 5), False # Cầu đảo thì giữ nguyên
+            return base_pred, max(55, conf - 5), False
         return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True
-        
-    # Gãy >= 3 tay: Đảo mạnh mẽ
     if loss_streak >= 3:
         return _opp(base_pred), min(MAX_CONFIDENCE, conf + 12), True
-
     return base_pred, conf, False
 
 def compute_loss_streak(valid, md5_db):
@@ -464,41 +496,32 @@ def history():
         if raw_rows:
             for row in raw_rows: HISTORY_CACHE[row['phien']] = row
             for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
-            
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
             return jsonify({'rows': [], 'stats': {'total': 0, 'correct': 0}})
-
         md5_db = learn_md5_db(valid)
         loss_streak = compute_loss_streak(valid, md5_db)
-        
         out = []; correct_count = 0; total_past = 0
         history_for_next = [v['result'] for v in valid][::-1]
-
         base_pred, base_conf = compute_prediction(history_for_next, md5_db)
         next_pred, next_conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, history_for_next)
-
         out.append({
-            'phien': valid[-1]['phien'] + 1, 'is_next': True, 
-            'prediction': next_pred, 'result': 'Chờ...', 'dice': "? + ? + ?", 
-            'is_correct': None, 'conf': next_conf, 
+            'phien': valid[-1]['phien'] + 1, 'is_next': True,
+            'prediction': next_pred, 'result': 'Chờ...', 'dice': "? + ? + ?",
+            'is_correct': None, 'conf': next_conf,
             'recovery_flipped': flipped, 'loss_streak': loss_streak
         })
-
         for i in range(len(valid) - 1, max(-1, len(valid) - 150), -1):
             hist = [v['result'] for v in valid[:i]][::-1]
             pred, conf = compute_prediction(hist, md5_db) if len(hist) >= 3 else ("-", 50)
             is_correct = (pred == valid[i]['result']) if pred != "-" else None
-            
             if is_correct is not None: total_past += 1
             if is_correct: correct_count += 1
-            
             out.append({
-                'phien': valid[i]['phien'], 'is_next': False, 'prediction': pred, 
-                'result': valid[i]['result'], 'dice': valid[i]['dice'], 
+                'phien': valid[i]['phien'], 'is_next': False, 'prediction': pred,
+                'result': valid[i]['result'], 'dice': valid[i]['dice'],
                 'is_correct': is_correct, 'conf': conf, 'recovery_flipped': False
             })
-
         return jsonify({'rows': out, 'stats': {'total': total_past, 'correct': correct_count}})
     except Exception as e:
         return jsonify({'error': str(e), 'rows': [], 'stats': {'total': 0, 'correct': 0}})
@@ -511,17 +534,13 @@ def predict():
         if raw_rows:
             for row in raw_rows: HISTORY_CACHE[row['phien']] = row
             for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
-            
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid: return jsonify({'error': 'Chưa có dữ liệu'})
-
         results = [v['result'] for v in valid][::-1]
         md5_db = learn_md5_db(valid)
         loss_streak = compute_loss_streak(valid, md5_db)
-        
         base_pred, base_conf = compute_prediction(results, md5_db)
         pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
-
         return jsonify({
             'last_phien': valid[-1]['phien'], 'next_phien': valid[-1]['phien'] + 1,
             'prediction': pred, 'confidence': conf, 'recovery_flipped': flipped,
@@ -540,29 +559,24 @@ def lc79_api():
         if raw_rows:
             for row in raw_rows: HISTORY_CACHE[row['phien']] = row
             for k in [k for k in HISTORY_CACHE if k < RESET_ID]: del HISTORY_CACHE[k]
-            
         valid = sorted(HISTORY_CACHE.values(), key=lambda x: x['phien'])
         if not valid:
             return jsonify({'id': '@cskhleminh', 'phien': '-', 'du_doan': '-', 'do_tin_cay': '50%'})
-
         results = [v['result'] for v in valid][::-1]
         md5_db = learn_md5_db(valid)
         loss_streak = compute_loss_streak(valid, md5_db)
-        
         base_pred, base_conf = compute_prediction(results, md5_db)
         pred, conf, flipped = apply_recovery(base_pred, base_conf, loss_streak, results)
-
         groups = get_groups(results)
         lich_su = "-" + "-".join(str(g) for g in groups[:4])
-
         return jsonify({
-            'id': '@cskhleminh', 
+            'id': '@cskhleminh',
             'phien': str(valid[-1]['phien'] + 1),
-            'ket_qua': f"{valid[-1]['result'].lower()} {valid[-1]['dice'].replace(' + ', '-')}", 
+            'ket_qua': f"{valid[-1]['result'].lower()} {valid[-1]['dice'].replace(' + ', '-')}",
             'du_doan': pred,
-            'do_tin_cay': f"{conf}%", 
+            'do_tin_cay': f"{conf}%",
             'lich_su': lich_su,
-            'auto_flip': flipped, 
+            'auto_flip': flipped,
             'chuoi_thua': loss_streak
         })
     except Exception as e:
