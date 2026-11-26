@@ -249,7 +249,7 @@ setInterval(fetchData, 5000);
 """
 
 # =====================================================================
-# 🎯 THUẬT TOÁN CHÍNH - 5 PHIÊN ĐẢO THUẬN NGHỊCH 1-1
+# 🎯 THUẬT TOÁN CHÍNH - MULTI-SIGNAL ENGINE V2
 # =====================================================================
 
 def _opp(v): return "Xỉu" if v == "Tài" else "Tài"
@@ -297,7 +297,7 @@ def learn_md5_db(valid):
         db[h][valid[i]['result']] += 1
     return db
 
-# ---------- 🎯 CORE ALGORITHMS ----------
+# ==================== 🎯 CORE ALGORITHMS ====================
 
 def algo_5p_pattern(results):
     """
@@ -306,78 +306,114 @@ def algo_5p_pattern(results):
     """
     if len(results) < 5:
         return None
-    last5 = results[:5]  # results[0] = mới nhất
+    last5 = results[:5]
     alt_count = sum(1 for i in range(4) if last5[i] != last5[i+1])
-    
+
     # ===== 1. ĐẢO THUẬN HOÀN HẢO (T-X-T-X-T hoặc X-T-X-T-X) =====
     if alt_count == 4:
-        # Cầu đảo 1-1 liên tục → bẻ tiếp theo nhịp đảo
         return (_opp(last5[0]), 85, "5p_dao_thuan_perfect")
-    
+
     # ===== 2. ĐẢO NGHỊCH (3-4 nhịp đảo) =====
     if alt_count == 3:
-        # Ví dụ: T-X-T-T-X → xu hướng đảo chiếm ưu thế → bẻ ngược
-        # Nhưng nếu phiên cuối đi ngược xu hướng đảo 2 lần liên tiếp → thuận
-        if last5[0] == last5[1] and last5[1] == last5[2]:
-            # 3 phiên cuối giống nhau → phá cầu
+        if last5[0] == last5[1] == last5[2]:
             return (_opp(last5[0]), 75, "5p_dao_nghich_3same")
-        # Đảo nghịch thông thường → theo nhịp đảo
         return (_opp(last5[0]), 78, "5p_dao_nghich")
-    
+
     # ===== 3. THUẬN BỆT (0-1 nhịp đảo) =====
     if alt_count <= 1:
         streak = _count_streak(results)
+        if streak >= 4:
+            return (_opp(last5[0]), 72, "5p_thuan_break")
         if streak >= 3:
-            # Bệt dài → 60% đi tiếp, 40% phá (dựa trên lịch sử)
-            # Theo thống kê bệt thường gãy sau 3-5 phiên
-            if streak >= 4:
-                return (_opp(last5[0]), 72, "5p_thuan_break")
             return (last5[0], 70, "5p_thuan_bet")
-        # Bệt ngắn 2 phiên → theo đà
         return (last5[0], 65, "5p_thuan_short")
-    
+
     # ===== 4. HỖN HỢP (2 nhịp đảo) =====
     if alt_count == 2:
-        # Xem 2 phiên cuối để quyết định
         if last5[0] != last5[1]:
-            # Đang đảo → có thể tiếp tục đảo
             return (_opp(last5[0]), 68, "5p_mix_dao")
-        else:
-            # Đang bệt 2 phiên → có thể phá
-            return (_opp(last5[0]), 62, "5p_mix_bet")
-    
+        return (_opp(last5[0]), 62, "5p_mix_bet")
     return None
 
-def algo_md5_deep(results, md5_db):
-    """Thuật toán Hash Deep MD5 13 phiên (bổ trợ)"""
-    if len(results) < 13: return None
-    tx = encode_tx(results, 13)
-    h = hashlib.md5(f"leminh_v2|{tx}".encode()).hexdigest()
-    if h in md5_db:
-        counts = md5_db[h]
-        total = counts["Tài"] + counts["Xỉu"]
-        if total >= 2:
-            p_tai = (counts["Tài"] + 1) / (total + 2)
-            if p_tai >= 0.65: return ("Tài", 20, "md5_deep")
-            if p_tai <= 0.35: return ("Xỉu", 20, "md5_deep")
+def algo_streak_analysis(results):
+    """Phân tích streak - phá bệt thông minh theo độ dài streak"""
+    if len(results) < 6: return None
+    streak = _count_streak(results)
+    streak_val = results[0]
+
+    if streak >= 6:
+        return (_opp(streak_val), 78, f"streak_break_{streak}")
+    if streak == 5:
+        return (_opp(streak_val), 72, "streak_break_5")
+    if streak == 4:
+        if len(results) >= 10:
+            recent = results[:10]
+            same = sum(1 for r in recent if r == streak_val)
+            if same >= 7:
+                return (streak_val, 62, "streak_continue_4")
+        return (_opp(streak_val), 68, "streak_break_4")
+    if streak == 3:
+        if len(results) >= 10:
+            recent = results[:10]
+            same = sum(1 for r in recent if r == streak_val)
+            if same >= 7:
+                return (streak_val, 60, "streak_continue_3")
+        return (_opp(streak_val), 58, "streak_break_3")
     return None
 
-def algo_trend_break(results):
-    """Xu hướng Linear Regression (bổ trợ)"""
+def algo_pattern_match(results):
+    """Tìm mẫu lặp lại trong lịch sử (Pattern matching 2-5 phiên)"""
     if len(results) < 20: return None
-    window = list(reversed(results[:20]))
-    b = [1 if r == "Tài" else 0 for r in window]
-    x_mean = 9.5; y_mean = sum(b) / 20
-    num = sum((i - x_mean) * (b[i] - y_mean) for i in range(20))
-    den = sum((i - x_mean) ** 2 for i in range(20))
-    slope = num / den if den else 0
-    last3 = b[-3:]
-    if slope > 0.05 and sum(last3) <= 1: return ("Tài", 15, "trend_bounce_T")
-    if slope < -0.05 and sum(last3) >= 2: return ("Xỉu", 15, "trend_bounce_X")
+    best = None
+    for plen in [2, 3, 4, 5]:
+        if len(results) < plen + 10: continue
+        pattern = results[:plen]
+        matches_tai = 0
+        matches_xiu = 0
+        for i in range(plen, len(results) - plen + 1):
+            if results[i:i+plen] == pattern:
+                next_result = results[i-1]
+                if next_result == "Tài": matches_tai += 1
+                else: matches_xiu += 1
+        total = matches_tai + matches_xiu
+        if total >= 3:
+            if matches_tai / total >= 0.7:
+                w = 15 + plen * 3
+                if best is None or w > best[1]:
+                    best = ("Tài", w, f"pattern_{plen}T")
+            elif matches_xiu / total >= 0.7:
+                w = 15 + plen * 3
+                if best is None or w > best[1]:
+                    best = ("Xỉu", w, f"pattern_{plen}X")
+    return best
+
+def algo_momentum(results):
+    """Momentum ngắn hạn - theo đà 3 phiên gần"""
+    if len(results) < 10: return None
+    last3 = results[:3]
+    last10 = results[:10]
+    tai_3 = sum(1 for r in last3 if r == "Tài")
+    tai_10 = sum(1 for r in last10 if r == "Tài")
+    if tai_3 == 3 and 3 <= tai_10 <= 6:
+        return ("Tài", 62, "momentum_T")
+    if tai_3 == 0 and 4 <= tai_10 <= 7:
+        return ("Xỉu", 62, "momentum_X")
+    return None
+
+def algo_frequency_bias(results, window=20):
+    """Mean reversion - quay về cân bằng khi lệch tần suất"""
+    if len(results) < window: return None
+    recent = results[:window]
+    tai = sum(1 for r in recent if r == "Tài")
+    ratio_tai = tai / window
+    if ratio_tai >= 0.72:
+        return ("Xỉu", int(55 + (ratio_tai - 0.72) * 100), "freq_bias_X")
+    if ratio_tai <= 0.28:
+        return ("Tài", int(55 + (0.28 - ratio_tai) * 100), "freq_bias_T")
     return None
 
 def algo_markov(results):
-    """Markov bậc 2 (bổ trợ)"""
+    """Markov bậc 2"""
     if len(results) < 20: return None
     key = (results[1], results[0])
     counts = {"Tài": 1, "Xỉu": 1}
@@ -391,30 +427,80 @@ def algo_markov(results):
     if p_tai <= 0.32: return ("Xỉu", 18, "markov2")
     return None
 
-# ---------- 🎯 TỔNG HỢP TÍN HIỆU ----------
+def algo_markov_order3(results):
+    """Markov bậc 3"""
+    if len(results) < 30: return None
+    key = (results[2], results[1], results[0])
+    counts = {"Tài": 1, "Xỉu": 1}
+    for i in range(1, min(len(results) - 2, 81)):
+        if (results[i+2], results[i+1], results[i]) == key:
+            counts[results[i-1]] += 1
+    total = counts["Tài"] + counts["Xỉu"]
+    if total < 5: return None
+    p_tai = counts["Tài"] / total
+    if p_tai >= 0.70: return ("Tài", 18, "markov3")
+    if p_tai <= 0.30: return ("Xỉu", 18, "markov3")
+    return None
+
+def algo_trend_break(results):
+    """Xu hướng Linear Regression (bổ trợ)"""
+    if len(results) < 20: return None
+    window = list(reversed(results[:20]))
+    b = [1 if r == "Tài" else 0 for r in window]
+    x_mean = 9.5; y_mean = sum(b) / 20
+    num = sum((i - x_mean) * (b[i] - y_mean) for i in range(20))
+    den = sum((i - x_mean) ** 2 for i in range(20))
+    slope = num / den if den else 0
+    last3 = b[-3:]
+    if slope > 0.05 and sum(last3) <= 1: return ("Tài", 15, "trend_T")
+    if slope < -0.05 and sum(last3) >= 2: return ("Xỉu", 15, "trend_X")
+    return None
+
+def algo_md5_deep(results, md5_db):
+    """Thuật toán Hash Deep MD5 13 phiên"""
+    if len(results) < 13: return None
+    tx = encode_tx(results, 13)
+    h = hashlib.md5(f"leminh_v2|{tx}".encode()).hexdigest()
+    if h in md5_db:
+        counts = md5_db[h]
+        total = counts["Tài"] + counts["Xỉu"]
+        if total >= 2:
+            p_tai = (counts["Tài"] + 1) / (total + 2)
+            if p_tai >= 0.65: return ("Tài", 20, "md5_deep")
+            if p_tai <= 0.35: return ("Xỉu", 20, "md5_deep")
+    return None
+
+# ==================== 🎯 TỔNG HỢP TÍN HIỆU ====================
 
 def compute_prediction(results, md5_db):
     """
-    🎯 Hàm lõi: Kết hợp các tín hiệu
-    Ưu tiên algo_5p (thuật toán chính), sau đó mới đến bổ trợ
+    🎯 Hàm lõi: Kết hợp đa tín hiệu với weighted voting
+    - Primary: 5p, streak, pattern (weight cao)
+    - Secondary: momentum, freq_bias (weight trung)
+    - Auxiliary: trend, markov2/3, md5 (weight thấp)
     """
     if not results:
         return "Tài", 50
     if len(results) == 1:
         return _opp(results[0]), 52
-    
+
     signals = []
-    
-    # 🎯 TÍN HIỆU CHÍNH: 5p pattern (weight ưu tiên cao)
-    s_main = algo_5p_pattern(results)
-    if s_main:
-        signals.append(s_main)
-    
-    # Bổ trợ
-    for fn in [algo_trend_break, algo_markov]:
+
+    # PRIMARY
+    for fn in [algo_5p_pattern, algo_streak_analysis, algo_pattern_match]:
         s = fn(results)
         if s: signals.append(s)
-    
+
+    # SECONDARY
+    for fn in [algo_momentum, algo_frequency_bias]:
+        s = fn(results)
+        if s: signals.append(s)
+
+    # AUXILIARY
+    for fn in [algo_trend_break, algo_markov, algo_markov_order3]:
+        s = fn(results)
+        if s: signals.append(s)
+
     s = algo_md5_deep(results, md5_db)
     if s: signals.append(s)
 
@@ -424,37 +510,51 @@ def compute_prediction(results, md5_db):
     st = sum(w for p, w, _ in signals if p == "Tài")
     sx = sum(w for p, w, _ in signals if p == "Xỉu")
     total = st + sx
-    
+
     if total == 0: return results[0], 50
-    
+
     if st > sx: pred = "Tài"
     elif sx > st: pred = "Xỉu"
     else: return _opp(results[0]), 50
 
-    # 🎯 Confidence: scale từ 50-90 dựa trên độ mạnh tín hiệu
+    # 🎯 Confidence: scale 50-90 dựa trên độ mạnh tín hiệu
     ratio = max(st, sx) / total
     conf = 50 + (ratio - 0.5) * 100
+
+    # Agreement bonus: nhiều signal đồng thuận → tăng confidence
+    n_signals = len(signals)
+    if n_signals >= 6:
+        conf += 8
+    elif n_signals >= 4:
+        conf += 5
+
     conf = int(max(MIN_CONFIDENCE, min(MAX_CONFIDENCE, conf)))
-    
     return pred, conf
 
 def apply_recovery(base_pred, conf, loss_streak, results):
-    """Tự động đảo kèo nếu gãy 2-3 tay"""
+    """Tự động đảo kèo thông minh nếu gãy 2-3 tay"""
     if loss_streak < 2:
         return base_pred, conf, False
     regime = _regime(results) if results else "balanced"
+
     if loss_streak == 2:
+        # Đang ở regime đảo → giữ nguyên để theo đảo
         if regime == "alternation":
             return base_pred, max(55, conf - 5), False
+        # Confidence rất cao → tin tưởng không đảo
+        if conf >= 82:
+            return base_pred, conf, False
         return _opp(base_pred), min(MAX_CONFIDENCE, max(conf, 75)), True
+
     if loss_streak >= 3:
         return _opp(base_pred), min(MAX_CONFIDENCE, conf + 12), True
     return base_pred, conf, False
 
 def compute_loss_streak(valid, md5_db):
+    """Đếm số tay thua liên tiếp gần nhất (tối đa 7 phiên)"""
     if len(valid) < 5: return 0
     streak = 0
-    for i in range(len(valid) - 1, len(valid) - 10, -1):
+    for i in range(len(valid) - 1, max(2, len(valid) - 8), -1):
         if i < 3: break
         hist = [v['result'] for v in valid[:i]][::-1]
         pred, _ = compute_prediction(hist, md5_db)
